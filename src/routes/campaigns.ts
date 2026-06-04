@@ -255,6 +255,7 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
     subject: campaign.subject,
     fromEmail: campaign.from_email,
     fromName: campaign.from_name,
+    configId: smtpConfig.id,
     configName: smtpConfig.name,
     campaignId,
     batchSize: campaign.batch_size,

@@ -21,6 +21,7 @@ export interface QueueJob {
   type: JobType
   status: JobStatus
   priority: number
+  config_id: string | null
   config_json: string
   contacts_json: string
   total_count: number
@@ -58,6 +59,7 @@ export interface EnqueueOptions {
   subject: string
   fromEmail: string
   fromName: string
+  configId?: string
   configName?: string
   notifyEmail?: string
 }
@@ -120,6 +122,7 @@ export class QueueDatabase {
         type TEXT NOT NULL DEFAULT 'batch',
         status TEXT NOT NULL DEFAULT 'pending',
         priority INTEGER NOT NULL DEFAULT 5,
+        config_id TEXT,
         config_json TEXT NOT NULL,
         contacts_json TEXT NOT NULL,
         html_content TEXT NOT NULL DEFAULT '',
@@ -179,6 +182,16 @@ export class QueueDatabase {
       CREATE INDEX IF NOT EXISTS idx_suppress_email ON suppression_list(email);
     `)
 
+    // MIGRATION: Add config_id column to existing jobs tables.
+    // CREATE TABLE IF NOT EXISTS won't add columns to a pre-existing data/queue.db,
+    // so add it idempotently (swallow "duplicate column" on re-run).
+    try {
+      this.db.exec('ALTER TABLE jobs ADD COLUMN config_id TEXT')
+      logger.debug('Added config_id column to jobs table')
+    } catch {
+      // Column already exists, ignore
+    }
+
     logger.info('Queue database initialized (data/queue.db)')
   }
 
@@ -203,10 +216,10 @@ export class QueueDatabase {
         `
       INSERT INTO jobs (
         id, campaign_id, user_id, type, status, priority,
-        config_json, contacts_json, html_content, subject, from_email, from_name,
+        config_id, config_json, contacts_json, html_content, subject, from_email, from_name,
         config_name, notify_email,
         total_count, batch_size, email_delay_sec, batch_delay_min, scheduled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
       )
       .run(
@@ -216,6 +229,7 @@ export class QueueDatabase {
         options.type || 'batch',
         options.scheduledAt ? 'pending' : 'pending',
         options.priority ?? 5,
+        options.configId || null,
         emailConfigJson,
         contactsJson,
         options.htmlContent,

@@ -155,21 +155,25 @@ class RoutingEngine {
   }
 
   private registerEventHandlers() {
+    // eventBus nests custom fields under `payload.data`; userId is top-level.
     eventBus.on('email_sent', (payload: any) => {
-      if (payload.configId && payload.userId) {
-        this.recordSend(payload.userId, payload.configId, payload.providerType || 'smtp', payload.configName || '', payload.sendTimeMs || 0, true)
+      const d = payload.data || {}
+      if (d.configId && payload.userId) {
+        this.recordSend(payload.userId, d.configId, d.providerType || 'smtp', d.configName || '', d.sendTimeMs || 0, true)
       }
     })
 
     eventBus.on('email_failed', (payload: any) => {
-      if (payload.configId && payload.userId) {
-        this.recordSend(payload.userId, payload.configId, payload.providerType || 'smtp', payload.configName || '', 0, false, payload.error)
+      const d = payload.data || {}
+      if (d.configId && payload.userId) {
+        this.recordSend(payload.userId, d.configId, d.providerType || 'smtp', d.configName || '', 0, false, d.error)
       }
     })
 
     eventBus.on('email_bounced', (payload: any) => {
-      if (payload.configId && payload.userId) {
-        this.recordBounce(payload.userId, payload.configId)
+      const d = payload.data || {}
+      if (d.configId && payload.userId) {
+        this.recordBounce(payload.userId, d.configId)
       }
     })
   }

@@ -46,6 +46,7 @@ export const AUTH = {
     '/api/track/click/',
     '/api/track/unsubscribe/',
     '/api/track/status',
+    '/api/tracking/', // Inbound tracking events from the CF worker (secret-auth, no session)
     '/health',
     '/public/',
     '/api/events/stream',
@@ -112,6 +113,10 @@ export const API = {
 export const TRACKING = {
   WORKER_URL: process.env.TRACKING_WORKER_URL || '',
   isConfigured: () => !!process.env.TRACKING_WORKER_URL,
+  // Shared secret for the inbound /api/tracking/event endpoint. The worker
+  // POSTs tracking events server-to-server with header X-Tracking-Secret.
+  // Empty string = NOT configured -> the endpoint fails closed (rejects all).
+  TRACKING_SYNC_SECRET: process.env.TRACKING_SYNC_SECRET || '',
 } as const
 
 // Cookie Configuration

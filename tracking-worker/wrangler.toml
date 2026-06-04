@@ -2,6 +2,18 @@ name = "dispatch-tracker"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
+# Environment variables (non-secret)
+[vars]
+# Base URL of the Dispatch backend. When set (together with the TRACKING_SYNC_SECRET
+# secret), the worker fires a non-blocking POST to ${BACKEND_SYNC_URL}/api/tracking/event
+# on every open/click so the backend can react (scoring, automations).
+# Leave commented to disable (backward compatible — opens/clicks still record to D1).
+# BACKEND_SYNC_URL = "https://your-backend.example.com"
+
+# Shared secret for authenticating the backend sync callback (sent as the
+# X-Tracking-Secret header). DO NOT put it here — set it as an encrypted secret:
+#   wrangler secret put TRACKING_SYNC_SECRET
+
 # D1 Database binding
 [[d1_databases]]
 binding = "DB"

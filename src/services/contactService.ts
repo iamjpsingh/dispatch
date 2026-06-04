@@ -325,6 +325,21 @@ class ContactService {
     `).get(contactId, orgId) as Contact | null;
   }
 
+  /**
+   * Best-effort cross-org lookup by email (email is effectively unique per
+   * contact across the install). Used by inbound tracking events that only
+   * carry the recipient address, with no org/session context. Returns null if
+   * no contact matches. Email is normalized to match how it is stored
+   * (lowercased + trimmed on insert).
+   */
+  getContactByEmail(email: string): Contact | null {
+    const normalized = (email || '').toLowerCase().trim();
+    if (!normalized) return null;
+    return this.db.prepare(`
+      SELECT * FROM contacts WHERE email = ? ORDER BY created_at ASC LIMIT 1
+    `).get(normalized) as Contact | null;
+  }
+
   searchContacts(orgId: string, query: string, limit = 20): Contact[] {
     const q = `%${query}%`;
     return this.db.prepare(`

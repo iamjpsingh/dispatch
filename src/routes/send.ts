@@ -539,6 +539,7 @@ async function handleSmtpSend(c: Context, params: SmtpSendParams) {
     subject: subject.trim(),
     fromEmail,
     fromName,
+    configId: userConfig.id,
     configName: userConfig.name,
     notifyEmail: notifyEmail || undefined,
     batchSize: useBatch ? batchSize : contacts.length,

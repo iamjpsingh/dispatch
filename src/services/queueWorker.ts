@@ -10,6 +10,7 @@ import { FileService } from './fileService'
 import { logger } from '../utils/logger'
 import { htmlToText } from '../utils/htmlToText'
 import { createTransport, configFromRecord } from './transports'
+import { eventBus } from './eventBus'
 import type { EmailTransport } from './transports'
 import type { QueueDatabase, QueueJob } from './queueDatabase'
 import type { Contact } from '../types/index'
@@ -123,6 +124,12 @@ export class QueueWorker {
     // Create transport from config (supports SMTP, SES, Mailgun, SendGrid)
     const transport = createTransport(configFromRecord(emailConfig))
 
+    // Provider attribution for routing/provider-stats events.
+    // config_json holds a bare EmailConfig (no provider_type) for SMTP enqueues,
+    // so default to 'smtp'; honor an explicit type if a typed transport config was stored.
+    const providerType: string = emailConfig?.type || emailConfig?.provider_type || 'smtp'
+    const configName = job.config_name || ''
+
     const campaignId = job.campaign_id || d1Service.generateCampaignId()
     let sentCount = job.sent_count
     let failedCount = job.failed_count
@@ -172,14 +179,41 @@ export class QueueWorker {
       }
 
       // Attempt to send with retry
-      const success = await this.sendWithRetry(job, contact, campaignId, transport)
+      const result = await this.sendWithRetry(job, contact, campaignId, transport)
 
-      if (success) {
+      if (result.success) {
         sentCount++
         frequencyCapService.logSend(job.user_id, contact.Email, campaignId)
         graymailService.recordSend(job.user_id, contact.Email)
+
+        // Emit for provider routing stats (payload.configId / payload.userId etc.)
+        await eventBus.emit(
+          'email_sent',
+          job.user_id,
+          {
+            configId: job.config_id,
+            providerType,
+            configName,
+            sendTimeMs: result.sendTimeMs,
+          },
+          job.campaign_id ?? undefined,
+          undefined
+        )
       } else {
         failedCount++
+
+        await eventBus.emit(
+          'email_failed',
+          job.user_id,
+          {
+            configId: job.config_id,
+            providerType,
+            configName,
+            error: result.error ?? 'Unknown error',
+          },
+          job.campaign_id ?? undefined,
+          undefined
+        )
       }
 
       lastIndex = i + 1
@@ -224,11 +258,13 @@ export class QueueWorker {
     contact: Contact,
     campaignId: string,
     transport: EmailTransport
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; sendTimeMs: number; error?: string }> {
     let attempts = 0
     const maxAttempts = 4 // 1 initial + 3 retries for temporary errors
+    let lastError = ''
 
     while (attempts < maxAttempts) {
+      const sendStart = Date.now()
       try {
         // Personalize content
         let personalizedContent = FileService.replacePlaceholders(job.html_content || '', contact)
@@ -286,10 +322,11 @@ export class QueueWorker {
         })
 
         logger.debug(`[${job.id}] Sent to ${contact.Email} (${info.messageId})`)
-        return true
+        return { success: true, sendTimeMs: Date.now() - sendStart }
       } catch (error) {
         attempts++
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        lastError = errorMessage
         const errorType = retryEngine.classifyError(error instanceof Error ? error : errorMessage)
 
         logger.error(`[${job.id}] Failed ${contact.Email} (attempt ${attempts}, ${errorType}): ${errorMessage}`)
@@ -322,7 +359,7 @@ export class QueueWorker {
             subject: job.subject || '',
           })
 
-          return false
+          return { success: false, sendTimeMs: 0, error: lastError }
         }
 
         // Wait before retry
@@ -332,7 +369,7 @@ export class QueueWorker {
       }
     }
 
-    return false
+    return { success: false, sendTimeMs: 0, error: lastError || 'Unknown error' }
   }
 
   /**

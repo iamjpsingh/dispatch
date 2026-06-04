@@ -30,6 +30,10 @@
 export interface Env {
   DB: D1Database
   ALLOWED_ORIGINS?: string
+  // Optional backend callback for fire-and-forget open/click notifications.
+  // Both must be set for callbacks to fire; otherwise skipped silently (backward compatible).
+  BACKEND_SYNC_URL?: string
+  TRACKING_SYNC_SECRET?: string
 }
 
 // 1x1 transparent GIF
@@ -82,7 +86,7 @@ export default {
       // ========== TRACKING ENDPOINTS (public, no auth) ==========
       if (path.startsWith('/o/')) {
         const trackingId = path.slice(3)
-        ctx.waitUntil(recordOpen(env.DB, trackingId, request))
+        ctx.waitUntil(recordOpen(env, trackingId, request))
         return pixelResponse()
       }
 
@@ -90,7 +94,7 @@ export default {
         const trackingId = path.slice(3)
         const targetUrl = url.searchParams.get('url')
         if (!targetUrl) return new Response('Missing URL', { status: 400 })
-        ctx.waitUntil(recordClick(env.DB, trackingId, decodeURIComponent(targetUrl), request))
+        ctx.waitUntil(recordClick(env, trackingId, decodeURIComponent(targetUrl), request))
         return Response.redirect(decodeURIComponent(targetUrl), 302)
       }
 
@@ -661,14 +665,15 @@ async function handleDeleteConfig(
 // TRACKING HANDLERS
 // =============================================================================
 
-async function recordOpen(db: D1Database, trackingId: string, request: Request) {
+async function recordOpen(env: Env, trackingId: string, request: Request) {
+  const db = env.DB
   try {
     const meta = getRequestMeta(request)
 
     await db
       .prepare(
         `
-      UPDATE emails SET 
+      UPDATE emails SET
         status = CASE WHEN status = 'sent' THEN 'opened' ELSE status END,
         opened_at = COALESCE(opened_at, datetime('now')),
         open_count = open_count + 1
@@ -679,7 +684,7 @@ async function recordOpen(db: D1Database, trackingId: string, request: Request) 
       .run()
 
     const email = (await db
-      .prepare('SELECT id, campaign_id, recipient_email FROM emails WHERE tracking_id = ?')
+      .prepare('SELECT id, campaign_id, recipient_email, message_id FROM emails WHERE tracking_id = ?')
       .bind(trackingId)
       .first()) as any
 
@@ -708,20 +713,29 @@ async function recordOpen(db: D1Database, trackingId: string, request: Request) 
         .prepare('UPDATE campaigns SET opened_count = opened_count + 1 WHERE id = ?')
         .bind(email.campaign_id)
         .run()
+
+      // Fire-and-forget callback to backend (additive, never blocks the pixel)
+      await notifyBackend(env, {
+        type: 'open',
+        email: email.recipient_email,
+        campaignId: email.campaign_id,
+        messageId: email.message_id,
+      })
     }
   } catch (e) {
     console.error('Record open error:', e)
   }
 }
 
-async function recordClick(db: D1Database, trackingId: string, linkUrl: string, request: Request) {
+async function recordClick(env: Env, trackingId: string, linkUrl: string, request: Request) {
+  const db = env.DB
   try {
     const meta = getRequestMeta(request)
 
     await db
       .prepare(
         `
-      UPDATE emails SET 
+      UPDATE emails SET
         status = 'clicked',
         clicked_at = COALESCE(clicked_at, datetime('now')),
         click_count = click_count + 1
@@ -732,7 +746,7 @@ async function recordClick(db: D1Database, trackingId: string, linkUrl: string, 
       .run()
 
     const email = (await db
-      .prepare('SELECT id, campaign_id, recipient_email FROM emails WHERE tracking_id = ?')
+      .prepare('SELECT id, campaign_id, recipient_email, message_id FROM emails WHERE tracking_id = ?')
       .bind(trackingId)
       .first()) as any
 
@@ -762,9 +776,58 @@ async function recordClick(db: D1Database, trackingId: string, linkUrl: string, 
         .prepare('UPDATE campaigns SET clicked_count = clicked_count + 1 WHERE id = ?')
         .bind(email.campaign_id)
         .run()
+
+      // Fire-and-forget callback to backend (additive, never blocks the redirect)
+      await notifyBackend(env, {
+        type: 'click',
+        email: email.recipient_email,
+        campaignId: email.campaign_id,
+        messageId: email.message_id,
+        url: linkUrl,
+      })
     }
   } catch (e) {
     console.error('Record click error:', e)
+  }
+}
+
+// =============================================================================
+// BACKEND SYNC CALLBACK (fire-and-forget, additive, non-blocking)
+// =============================================================================
+
+interface BackendTrackingEvent {
+  type: 'open' | 'click'
+  email: string
+  campaignId?: string | null
+  messageId?: string | null
+  url?: string
+}
+
+/**
+ * Notifies the Dispatch backend of an open/click so it can react (scoring, automations).
+ * No-op unless BOTH env.BACKEND_SYNC_URL and env.TRACKING_SYNC_SECRET are configured.
+ * Always swallows errors — must never affect the user-facing pixel/redirect.
+ */
+async function notifyBackend(env: Env, event: BackendTrackingEvent): Promise<void> {
+  if (!env.BACKEND_SYNC_URL || !env.TRACKING_SYNC_SECRET) return
+  try {
+    const body: Record<string, unknown> = {
+      type: event.type,
+      email: event.email,
+      campaignId: event.campaignId ?? null,
+      messageId: event.messageId ?? null,
+    }
+    if (event.type === 'click') body.url = event.url
+    await fetch(`${env.BACKEND_SYNC_URL}/api/tracking/event`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tracking-Secret': env.TRACKING_SYNC_SECRET,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (e) {
+    console.error('Backend sync error:', e)
   }
 }
 

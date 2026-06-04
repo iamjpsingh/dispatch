@@ -124,6 +124,7 @@ class AutomationService {
     this.db.exec('PRAGMA journal_mode=WAL')
     this.db.exec('PRAGMA busy_timeout=5000')
     this.initSchema()
+    this.registerEventHandlers()
   }
 
   private initSchema() {
@@ -190,6 +191,12 @@ class AutomationService {
     try { this.db.exec('ALTER TABLE automations ADD COLUMN org_id TEXT') } catch {}
     try { this.db.exec('ALTER TABLE automations ADD COLUMN goal_condition TEXT') } catch {}
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_auto_org ON automations(org_id)')
+
+    // Decision-node wait state: which tracking event an enrollment is waiting
+    // for, and the Yes (true) step to jump to if that event arrives before the
+    // No-path timeout fires. (idempotent)
+    try { this.db.exec('ALTER TABLE automation_enrollments ADD COLUMN waiting_for_event TEXT') } catch {}
+    try { this.db.exec('ALTER TABLE automation_enrollments ADD COLUMN wait_true_step_id TEXT') } catch {}
 
     // Expand step_type CHECK constraint (SQLite doesn't support ALTER CHECK, so new types work via INSERT)
     // New types: send_whatsapp, filter, split_test, delay_until, http_request, score_change
@@ -650,19 +657,30 @@ class AutomationService {
       case 'form_submitted':
       case 'whatsapp_delivered':
       case 'whatsapp_read': {
-        // Decision nodes: check if event occurred, or schedule wait for No path
-        // For now, immediately evaluate — full event-driven decisions need event listeners
-        // TODO: Wire to actual tracking events via eventBus
+        // Decision nodes are event-driven with a timeout fallback:
+        //  - We park on the No (false) branch with a future next_action_at, so if
+        //    the awaited event NEVER arrives the timeout takes the No path.
+        //  - We persist (waiting_for_event, wait_true_step_id) so that when the
+        //    matching tracking event arrives, handleTrackingEvent() redirects the
+        //    enrollment to the Yes (true) branch and fires it immediately.
         const waitDuration = config.wait_duration || 1
         const waitUnit = config.wait_unit || 'days'
         const delayMs = this.unitToMs(waitDuration, waitUnit)
         const nextAt = new Date(Date.now() + delayMs).toISOString()
 
-        // Schedule: after wait period, take No path (contact didn't do the action)
-        // If event arrives before then, the event handler should advance to Yes path
+        const trueStepId = enrollment.true_step_id || enrollment.next_step_id
+
         this.db.prepare(`
-          UPDATE automation_enrollments SET current_step_id = ?, next_action_at = ? WHERE id = ?
-        `).run(enrollment.false_step_id || enrollment.next_step_id, nextAt, enrollment.id)
+          UPDATE automation_enrollments
+          SET current_step_id = ?, next_action_at = ?, waiting_for_event = ?, wait_true_step_id = ?
+          WHERE id = ?
+        `).run(
+          enrollment.false_step_id || enrollment.next_step_id,
+          nextAt,
+          enrollment.step_type,
+          trueStepId,
+          enrollment.id
+        )
         break
       }
 
@@ -790,6 +808,45 @@ class AutomationService {
       completed: row.completed || 0,
       exited: row.exited || 0,
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Event-driven decision advancement
+  // --------------------------------------------------------------------------
+
+  /**
+   * Advance any enrollments that are parked on a decision node waiting for the
+   * given tracking event for the given contact, onto their Yes (true) branch.
+   *
+   * Sets next_action_at = now so the next processDueActions() tick executes the
+   * Yes-branch step immediately, and clears the wait state so the No-path
+   * timeout no longer applies. Returns the number of enrollments advanced.
+   */
+  handleTrackingEvent(eventType: string, contactId: string): number {
+    const result = this.db.prepare(`
+      UPDATE automation_enrollments
+      SET current_step_id = wait_true_step_id,
+          next_action_at = datetime('now'),
+          waiting_for_event = NULL
+      WHERE contact_id = ?
+        AND waiting_for_event = ?
+        AND status = 'active'
+        AND wait_true_step_id IS NOT NULL
+    `).run(contactId, eventType)
+    return result.changes
+  }
+
+  /**
+   * Subscribe to tracking events so decision nodes can branch to Yes in real
+   * time. Registered once from the constructor (not startWorker, which may be
+   * called multiple times) to avoid duplicate handlers.
+   */
+  private registerEventHandlers(): void {
+    const advance = (eventType: string) => (e: { contactId?: string }) => {
+      if (e.contactId) this.handleTrackingEvent(eventType, e.contactId)
+    }
+    eventBus.on('email_opened', advance('email_opened'))
+    eventBus.on('email_clicked', advance('email_clicked'))
   }
 
   /**
