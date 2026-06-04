@@ -6,10 +6,15 @@ import { requireAuth, getOrgId } from '../middleware/auth'
 import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { campaignService, type CampaignLifecycleStatus, type CampaignType } from '../services/campaignService'
+import { templateService } from '../services/templateService'
+import { contactService } from '../services/contactService'
+import { d1UserDatabase, type D1SMTPConfig } from '../services/d1UserDatabase'
+import { queueEngine } from '../services/queueEngine'
 import { frequencyCapService } from '../services/frequencyCapService'
 import { graymailService } from '../services/graymailService'
 import { analyticsService } from '../services/analyticsService'
 import { success, error } from '../utils/response'
+import type { Contact, EmailConfig } from '../types/index'
 import { validateBody } from '../utils/validate'
 import { logger } from '../utils/logger'
 
@@ -179,14 +184,94 @@ app.post('/campaigns/:id/reschedule', requirePermission(PERMISSIONS.CAMPAIGNS_MA
   return success(c, { scheduled_at }, 'Campaign rescheduled')
 })
 
-app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  const user = requireAuth(c)
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const launched = campaignService.setStatus(orgId, campaignId, 'sending')
-  if (!launched) return error(c, 'Campaign not found', 404)
+  // 1. Load the campaign.
+  const campaign = campaignService.get(orgId, campaignId)
+  if (!campaign) return error(c, 'Campaign not found', 404)
 
-  return success(c, undefined, 'Campaign launched')
+  // 2. Only draft/scheduled/testing campaigns can be launched.
+  if (!['draft', 'scheduled', 'testing'].includes(campaign.status)) {
+    return error(c, 'Campaign cannot be launched in its current status', 400)
+  }
+
+  // 3. Resolve the HTML body: prefer the linked template, else fall back to draft_data.
+  let htmlContent = ''
+  if (campaign.template_id) {
+    const template = templateService.get(orgId, campaign.template_id)
+    if (template?.html_content) htmlContent = template.html_content
+  }
+  if (!htmlContent && campaign.draft_data) {
+    try {
+      const draft = JSON.parse(campaign.draft_data) as { html_content?: string }
+      if (draft?.html_content) htmlContent = draft.html_content
+    } catch {
+      // Ignore malformed draft data — treated as no content.
+    }
+  }
+  if (!htmlContent) return error(c, 'Campaign has no content', 400)
+
+  // 4. Resolve recipients from the campaign's contact list (note: singular list_id).
+  if (!campaign.list_id) return error(c, 'Campaign has no recipients', 400)
+  const { contacts: listContacts } = contactService.getContacts(orgId, campaign.list_id, { limit: 100000 })
+  const contacts: Contact[] = listContacts.map((contact) => ({
+    Email: contact.email,
+    FirstName: contact.first_name || undefined,
+    LastName: contact.last_name || undefined,
+    Company: contact.company || undefined,
+  }))
+  if (contacts.length === 0) return error(c, 'Campaign has no recipients', 400)
+
+  // 5. Resolve the SMTP config: the campaign's config_id if set, else the user's default.
+  const configId = (campaign as { config_id?: string | null }).config_id
+  let smtpConfig: D1SMTPConfig | null = null
+  if (configId) {
+    const configs = await d1UserDatabase.getUserSMTPConfigs(user.id)
+    smtpConfig = configs.find((config) => config.id === configId) || null
+  }
+  if (!smtpConfig) {
+    smtpConfig = await d1UserDatabase.getUserDefaultSMTPConfig(user.id)
+  }
+  if (!smtpConfig) return error(c, 'No email configuration found', 400)
+
+  const emailConfig: EmailConfig = {
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: !!smtpConfig.secure,
+    auth: {
+      user: smtpConfig.username || '',
+      pass: smtpConfig.password || '',
+    },
+  }
+
+  // 6. Enqueue a real send job — mirrors handleSmtpSend in send.ts.
+  const useBatch = contacts.length > campaign.batch_size
+  const jobId = queueEngine.enqueue(user.id, emailConfig, contacts, {
+    type: useBatch ? 'batch' : 'direct',
+    htmlContent,
+    subject: campaign.subject,
+    fromEmail: campaign.from_email,
+    fromName: campaign.from_name,
+    configName: smtpConfig.name,
+    campaignId,
+    batchSize: campaign.batch_size,
+    emailDelaySec: campaign.email_delay,
+    batchDelayMin: campaign.batch_delay,
+    priority: 5,
+  })
+
+  // 7. Link the job to the campaign and flip it to sending.
+  campaignService.setJobId(campaignId, jobId)
+  campaignService.setTotalRecipients(campaignId, contacts.length)
+  campaignService.setStatus(orgId, campaignId, 'sending')
+
+  logger.info(`Campaign ${campaignId} launched: job ${jobId}, ${contacts.length} recipients`)
+
+  // 8. Return the job id + recipient count.
+  return success(c, { jobId, recipientCount: contacts.length }, 'Campaign launched')
 })
 
 app.post('/campaigns/:id/pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
@@ -463,7 +548,7 @@ app.post('/campaigns/graymail/reset/:email', requirePermission(PERMISSIONS.CAMPA
 const RotationConfigSchema = z.object({
   mode: z.enum(['smart', 'manual', 'round_robin', 'weighted']),
   config_ids: z.array(z.string()).optional(),
-  weights: z.record(z.number()).optional(),
+  weights: z.record(z.string(), z.number()).optional(),
 })
 
 /** Set rotation config for a campaign */

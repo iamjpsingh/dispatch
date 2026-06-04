@@ -31,6 +31,10 @@ const CreateSMTPSchema = z.object({
   isDefault: z.boolean().optional(),
   is_default: z.boolean().optional(),
 })
+  .refine((d) => !!(d.fromEmail || d.from_email), {
+    message: 'from_email is required',
+    path: ['from_email'],
+  })
 
 const UpdateSMTPSchema = z.object({
   name: z.string().max(200).optional(),
@@ -158,6 +162,7 @@ app.post('/config/smtp', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) =
 
     return success(c, { configId }, '✅ Configuration saved')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error creating config:', err)
     return error(c, 'Failed to save configuration', 500)
   }
@@ -188,6 +193,7 @@ app.post('/config/create', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c)
 
     return success(c, { configId }, configId ? '✅ Created' : 'Failed')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error creating config:', err)
     return error(c, 'Failed to create', 500)
   }
@@ -219,6 +225,7 @@ app.put('/config/smtp/:configId', requirePermission(PERMISSIONS.SMTP_MANAGE), as
 
     return success(c, undefined, '✅ Configuration updated')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error updating config:', err)
     return error(c, 'Failed to update configuration', 500)
   }
@@ -239,6 +246,7 @@ app.post('/config/update/:configId', requirePermission(PERMISSIONS.SMTP_MANAGE),
 
     return success(c, undefined, updated ? '✅ Updated' : 'Not found')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error updating config:', err)
     return error(c, 'Failed to update', 500)
   }
@@ -264,6 +272,7 @@ app.delete('/config/smtp/:configId', requirePermission(PERMISSIONS.SMTP_MANAGE),
 
     return success(c, undefined, '✅ Configuration deleted')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error deleting config:', err)
     return error(c, 'Failed to delete configuration', 500)
   }
@@ -281,6 +290,7 @@ app.delete('/config/delete/:configId', requirePermission(PERMISSIONS.SMTP_MANAGE
     const deleted = await d1UserDatabase.deleteSMTPConfig(configId, user.id)
     return success(c, undefined, deleted ? '✅ Deleted' : 'Not found')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error deleting config:', err)
     return error(c, 'Failed to delete', 500)
   }
@@ -306,6 +316,7 @@ app.post('/config/smtp/:configId/default', requirePermission(PERMISSIONS.SMTP_MA
 
     return success(c, undefined, '✅ Default configuration updated')
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error setting default:', err)
     return error(c, 'Failed to set default', 500)
   }
@@ -333,6 +344,7 @@ app.post('/config/smtp/test', requirePermission(PERMISSIONS.SMTP_MANAGE), async 
       isValid ? '✅ Connection successful' : '❌ Connection failed'
     )
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Connection test error:', err)
     return error(c, 'Connection test failed', 500)
   }
@@ -372,6 +384,7 @@ app.post('/config/test/:configId', requirePermission(PERMISSIONS.SMTP_MANAGE), a
       isValid ? '✅ Success' : '❌ Failed'
     )
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Test error:', err)
     return error(c, 'Test failed', 500)
   }
@@ -417,6 +430,7 @@ app.post('/config/provider', requirePermission(PERMISSIONS.SMTP_MANAGE), async (
 
     return success(c, { configId }, `${providerType.toUpperCase()} configuration saved`)
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Error creating provider config:', err)
     return error(c, 'Failed to save configuration', 500)
   }
@@ -447,6 +461,7 @@ app.post('/config/provider/test/:configId', requirePermission(PERMISSIONS.SMTP_M
       isValid ? `${transport.name.toUpperCase()} connection verified` : `${transport.name.toUpperCase()} connection failed`
     )
   } catch (err) {
+    if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
     logger.error('Provider test error:', err)
     return error(c, 'Test failed', 500)
   }

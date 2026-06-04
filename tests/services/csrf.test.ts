@@ -10,8 +10,8 @@ function createApp() {
   app.post('/data', (c) => c.json({ ok: true }))
   app.put('/data', (c) => c.json({ ok: true }))
   app.delete('/data', (c) => c.json({ ok: true }))
-  app.post('/track/pixel', (c) => c.json({ ok: true }))
-  app.post('/webhooks/incoming', (c) => c.json({ ok: true }))
+  app.post('/api/track/pixel', (c) => c.json({ ok: true }))
+  app.post('/api/webhooks/incoming', (c) => c.json({ ok: true }))
   return app
 }
 
@@ -127,7 +127,7 @@ describe('CSRF middleware', () => {
 
   it('skips CSRF for tracking endpoints', async () => {
     const app = createApp()
-    const res = await app.fetch(new Request('http://localhost/track/pixel', {
+    const res = await app.fetch(new Request('http://localhost/api/track/pixel', {
       method: 'POST',
       body: '{}',
     }))
@@ -136,7 +136,7 @@ describe('CSRF middleware', () => {
 
   it('skips CSRF for webhook endpoints', async () => {
     const app = createApp()
-    const res = await app.fetch(new Request('http://localhost/webhooks/incoming', {
+    const res = await app.fetch(new Request('http://localhost/api/webhooks/incoming', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',

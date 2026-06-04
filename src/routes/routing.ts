@@ -76,7 +76,7 @@ app.get('/routing/config', async (c) => {
 // Update routing config
 app.put('/routing/config', async (c) => {
   const user = requireAuth(c)
-  const body = await validateBody(c, z.record(z.unknown()))
+  const body = await validateBody(c, z.record(z.string(), z.unknown()))
 
   routingEngine.updateRoutingConfig(user.id, body)
   return success(c, null, 'Routing config updated')

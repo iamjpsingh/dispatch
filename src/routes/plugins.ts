@@ -18,16 +18,16 @@ const InstallPluginSchema = z.object({
     version: z.string().optional(),
     description: z.string().optional(),
   }).passthrough(),
-  settings: z.record(z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 })
 
 const InstallProviderSchema = z.object({
   providerName: z.string().min(1, 'providerName is required'),
-  settings: z.record(z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 })
 
 const PluginSettingsSchema = z.object({
-  settings: z.record(z.unknown()),
+  settings: z.record(z.string(), z.unknown()),
 })
 
 const app = new Hono()

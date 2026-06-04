@@ -28,7 +28,7 @@ const CreateWebhookSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200),
   url: z.string().url('Invalid URL format'),
   events: z.array(z.string()).min(1, 'At least one event type is required'),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 })
 
 const UpdateWebhookSchema = CreateWebhookSchema.partial()

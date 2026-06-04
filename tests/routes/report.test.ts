@@ -24,6 +24,14 @@ vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }))
 
+// Bypass RBAC permission gates in route-handler unit tests.
+vi.mock('../../src/middleware/rbac', () => ({
+  requirePermission: () => (_c: any, next: any) => next(),
+  requireAnyPermission: () => (_c: any, next: any) => next(),
+  requireOrgMember: () => (_c: any, next: any) => next(),
+  requirePlatformAdmin: () => (_c: any, next: any) => next(),
+}))
+
 import { d1Service } from '../../src/services/d1Service'
 import { logService } from '../../src/services/logService'
 import reportRoutes from '../../src/routes/report'
@@ -34,9 +42,16 @@ function createApp() {
   const app = new Hono()
   app.use('*', async (c, next) => {
     c.user = TEST_USER as any
+    c.set('orgId', 'org-1')
     await next()
   })
   app.route('/', reportRoutes)
+  app.onError((err: any, c) => {
+    if (err?.name === 'AppError' && 'status' in err) {
+      return c.json({ success: false, message: err.message }, err.status)
+    }
+    return c.json({ success: false, message: 'Internal Server Error' }, 500)
+  })
   return app
 }
 

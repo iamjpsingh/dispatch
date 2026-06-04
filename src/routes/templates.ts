@@ -18,8 +18,8 @@ import { validateBody } from '../utils/validate'
 // ============================================================================
 
 const CreateTemplateSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(200),
-  html_content: z.string().min(1, 'HTML content is required'),
+  name: z.string().trim().min(1, 'Name is required').max(200),
+  html_content: z.string().trim().min(1, 'HTML content is required'),
   subject: z.string().max(500).optional(),
   category: z.string().max(50).optional(),
   description: z.string().max(1000).optional(),
@@ -29,14 +29,14 @@ const CreateTemplateSchema = z.object({
 const UpdateTemplateSchema = CreateTemplateSchema.partial()
 
 const PreviewSchema = z.object({
-  data: z.record(z.string()).optional(),
+  data: z.record(z.string(), z.string()).optional(),
   html: z.string().optional(),
 })
 
 const TestSendSchema = z.object({
   to: z.string().email().optional(),
   subject: z.string().max(500).optional(),
-  data: z.record(z.string()).optional(),
+  data: z.record(z.string(), z.string()).optional(),
 })
 
 const app = new Hono()

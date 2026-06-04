@@ -20,6 +20,15 @@ vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }))
 
+// Bypass RBAC permission gates in route-handler unit tests (authorization is
+// covered separately; these tests exercise handler logic, not the rbac layer).
+vi.mock('../../src/middleware/rbac', () => ({
+  requirePermission: () => (_c: any, next: any) => next(),
+  requireAnyPermission: () => (_c: any, next: any) => next(),
+  requireOrgMember: () => (_c: any, next: any) => next(),
+  requirePlatformAdmin: () => (_c: any, next: any) => next(),
+}))
+
 import { templateService, type TemplateCategory } from '../../src/services/templateService'
 import templateRoutes from '../../src/routes/templates'
 
@@ -29,9 +38,18 @@ function createApp() {
   const app = new Hono()
   app.use('*', async (c, next) => {
     ;(c as any).user = TEST_USER
+    c.set('orgId', 'org-1')
     await next()
   })
   app.route('/', templateRoutes)
+  // Replicate src/app.ts onError: route handlers throw AppError(status); without
+  // this handler those throws surface as uncaught 500s in the test harness.
+  app.onError((err: any, c) => {
+    if (err?.name === 'AppError' && 'status' in err) {
+      return c.json({ success: false, message: err.message }, err.status)
+    }
+    return c.json({ success: false, message: 'Internal Server Error' }, 500)
+  })
   return app
 }
 
@@ -94,7 +112,7 @@ describe('Template Routes', () => {
       await app.fetch(new Request('http://localhost/templates?category=newsletter&search=hello&page=2&limit=10'))
 
       expect(templateService.list).toHaveBeenCalledWith(
-        'user-1',
+        'org-1',
         expect.objectContaining({
           category: 'newsletter',
           search: 'hello',
@@ -156,7 +174,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('required')
+      expect(body.message).toContain('name')
     })
 
     it('returns 400 when html_content is missing', async () => {
@@ -171,7 +189,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('required')
+      expect(body.message).toContain('html_content')
     })
 
     it('returns 400 when name is empty whitespace', async () => {
@@ -367,7 +385,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(201)
       const body = await res.json()
       expect(body.success).toBe(true)
-      expect(templateService.duplicate).toHaveBeenCalledWith('user-1', 'tpl-1', 'Copy')
+      expect(templateService.duplicate).toHaveBeenCalledWith('org-1', 'user-1', 'tpl-1', 'Copy')
     })
 
     it('returns 404 when template not found', async () => {
@@ -466,7 +484,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('required')
+      expect(body.message).toContain('html')
     })
 
     it('renders with empty data when data is not provided', async () => {

@@ -12,6 +12,8 @@ vi.mock('../../src/services/campaignService', () => ({
     saveDraft: vi.fn(),
     schedule: vi.fn(),
     setStatus: vi.fn(),
+    setJobId: vi.fn(),
+    setTotalRecipients: vi.fn(),
     clone: vi.fn(),
     getDashboardStats: vi.fn(),
     getStats: vi.fn(),
@@ -21,11 +23,48 @@ vi.mock('../../src/services/campaignService', () => ({
   },
 }))
 
+vi.mock('../../src/services/templateService', () => ({
+  templateService: {
+    get: vi.fn(),
+  },
+}))
+
+vi.mock('../../src/services/contactService', () => ({
+  contactService: {
+    getContacts: vi.fn(),
+  },
+}))
+
+vi.mock('../../src/services/d1UserDatabase', () => ({
+  d1UserDatabase: {
+    getUserDefaultSMTPConfig: vi.fn(),
+    getUserSMTPConfigs: vi.fn(),
+  },
+}))
+
+vi.mock('../../src/services/queueEngine', () => ({
+  queueEngine: {
+    enqueue: vi.fn(),
+  },
+}))
+
 vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }))
 
+// Bypass RBAC permission gates in route-handler unit tests.
+vi.mock('../../src/middleware/rbac', () => ({
+  requirePermission: () => (_c: any, next: any) => next(),
+  requireAnyPermission: () => (_c: any, next: any) => next(),
+  requireOrgMember: () => (_c: any, next: any) => next(),
+  requirePlatformAdmin: () => (_c: any, next: any) => next(),
+}))
+
 import { campaignService } from '../../src/services/campaignService'
+import { templateService } from '../../src/services/templateService'
+import { contactService } from '../../src/services/contactService'
+import { d1UserDatabase } from '../../src/services/d1UserDatabase'
+import { queueEngine } from '../../src/services/queueEngine'
 import campaignRoutes from '../../src/routes/campaigns'
 
 const TEST_USER = { id: 'user-1', email: 'test@test.com', name: 'Test User' }
@@ -34,9 +73,16 @@ function createApp() {
   const app = new Hono()
   app.use('*', async (c, next) => {
     c.user = TEST_USER as any
+    c.set('orgId', 'org-1')
     await next()
   })
   app.route('/', campaignRoutes)
+  app.onError((err: any, c) => {
+    if (err?.name === 'AppError' && 'status' in err) {
+      return c.json({ success: false, message: err.message }, err.status)
+    }
+    return c.json({ success: false, message: 'Internal Server Error' }, 500)
+  })
   return app
 }
 
@@ -57,6 +103,34 @@ const SAMPLE_CAMPAIGN = {
   from_name: 'Sender',
   status: 'draft',
   type: 'regular',
+  created_at: '2025-01-01T00:00:00Z',
+}
+
+// A campaign in a launchable state with content + recipients wired up.
+const LAUNCHABLE_CAMPAIGN = {
+  ...SAMPLE_CAMPAIGN,
+  status: 'draft',
+  template_id: 'tpl-1',
+  list_id: 'list-1',
+  config_id: 'cfg-1',
+  batch_size: 20,
+  email_delay: 45,
+  batch_delay: 60,
+}
+
+const DEFAULT_SMTP_CONFIG = {
+  id: 'cfg-1',
+  user_id: 'user-1',
+  name: 'Primary SMTP',
+  host: 'smtp.example.com',
+  port: 587,
+  secure: false,
+  username: 'smtp-user',
+  password: 'smtp-pass',
+  from_email: 'sender@example.com',
+  from_name: 'Sender',
+  provider_type: 'smtp',
+  is_default: true,
   created_at: '2025-01-01T00:00:00Z',
 }
 
@@ -93,7 +167,7 @@ describe('Campaign Routes', () => {
       await app.fetch(new Request('http://localhost/campaigns?status=draft&type=regular&search=hello&page=2&limit=10'))
 
       expect(campaignService.list).toHaveBeenCalledWith(
-        'user-1',
+        'org-1',
         expect.objectContaining({
           status: 'draft',
           type: 'regular',
@@ -158,7 +232,7 @@ describe('Campaign Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('required')
+      expect(body.message).toContain('name')
     })
 
     it('returns 400 when subject is missing', async () => {
@@ -368,9 +442,27 @@ describe('Campaign Routes', () => {
   })
 
   describe('POST /campaigns/:id/launch', () => {
-    it('launches a campaign', async () => {
-      const app = createApp()
+    function wireLaunchableCampaign() {
+      vi.mocked(campaignService.get).mockReturnValue(LAUNCHABLE_CAMPAIGN as any)
+      vi.mocked(templateService.get).mockReturnValue({
+        id: 'tpl-1',
+        html_content: '<p>Hello {{FirstName}}</p>',
+      } as any)
+      vi.mocked(contactService.getContacts).mockReturnValue({
+        contacts: [
+          { id: 'con-1', email: 'recipient@example.com', first_name: 'Jane', last_name: 'Doe', company: 'Acme' },
+        ],
+        total: 1,
+      } as any)
+      vi.mocked(d1UserDatabase.getUserSMTPConfigs).mockResolvedValue([DEFAULT_SMTP_CONFIG] as any)
+      vi.mocked(d1UserDatabase.getUserDefaultSMTPConfig).mockResolvedValue(DEFAULT_SMTP_CONFIG as any)
+      vi.mocked(queueEngine.enqueue).mockReturnValue('job-x')
       vi.mocked(campaignService.setStatus).mockReturnValue(true)
+    }
+
+    it('enqueues a send job for the campaign recipients, links the job, and marks it sending', async () => {
+      const app = createApp()
+      wireLaunchableCampaign()
 
       const res = await app.fetch(new Request('http://localhost/campaigns/camp-1/launch', { method: 'POST' }))
 
@@ -378,11 +470,57 @@ describe('Campaign Routes', () => {
       const body = await res.json()
       expect(body.success).toBe(true)
       expect(body.message).toContain('launched')
+      expect(body.data.jobId).toBe('job-x')
+      expect(body.data.recipientCount).toBe(1)
+
+      // Enqueued with the right user, an email config, the recipient, and campaign-linked options.
+      expect(queueEngine.enqueue).toHaveBeenCalledTimes(1)
+      const [userId, emailConfig, contacts, options] = vi.mocked(queueEngine.enqueue).mock.calls[0]
+      expect(userId).toBe('user-1')
+      expect(emailConfig).toMatchObject({ host: 'smtp.example.com', auth: { user: 'smtp-user' } })
+      expect(contacts).toEqual([
+        expect.objectContaining({ Email: 'recipient@example.com', FirstName: 'Jane' }),
+      ])
+      expect(options).toMatchObject({ campaignId: 'camp-1', subject: 'Hello World' })
+
+      // Job is linked to the campaign and status flipped to sending.
+      expect(campaignService.setJobId).toHaveBeenCalledWith('camp-1', 'job-x')
+      expect(campaignService.setStatus).toHaveBeenCalledWith('org-1', 'camp-1', 'sending')
+    })
+
+    it('returns 400 when the campaign has no recipients', async () => {
+      const app = createApp()
+      wireLaunchableCampaign()
+      vi.mocked(contactService.getContacts).mockReturnValue({ contacts: [], total: 0 } as any)
+
+      const res = await app.fetch(new Request('http://localhost/campaigns/camp-1/launch', { method: 'POST' }))
+
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body.success).toBe(false)
+      expect(body.message).toContain('recipients')
+      expect(queueEngine.enqueue).not.toHaveBeenCalled()
+      expect(campaignService.setStatus).not.toHaveBeenCalledWith('org-1', 'camp-1', 'sending')
+    })
+
+    it('returns 400 when no email configuration exists', async () => {
+      const app = createApp()
+      wireLaunchableCampaign()
+      vi.mocked(d1UserDatabase.getUserSMTPConfigs).mockResolvedValue([])
+      vi.mocked(d1UserDatabase.getUserDefaultSMTPConfig).mockResolvedValue(null)
+
+      const res = await app.fetch(new Request('http://localhost/campaigns/camp-1/launch', { method: 'POST' }))
+
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body.success).toBe(false)
+      expect(body.message).toContain('configuration')
+      expect(queueEngine.enqueue).not.toHaveBeenCalled()
     })
 
     it('returns 404 when campaign not found', async () => {
       const app = createApp()
-      vi.mocked(campaignService.setStatus).mockReturnValue(false)
+      vi.mocked(campaignService.get).mockReturnValue(null)
 
       const res = await app.fetch(new Request('http://localhost/campaigns/nonexistent/launch', { method: 'POST' }))
 

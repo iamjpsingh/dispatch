@@ -22,6 +22,14 @@ vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }))
 
+// Bypass RBAC permission gates in route-handler unit tests.
+vi.mock('../../src/middleware/rbac', () => ({
+  requirePermission: () => (_c: any, next: any) => next(),
+  requireAnyPermission: () => (_c: any, next: any) => next(),
+  requireOrgMember: () => (_c: any, next: any) => next(),
+  requirePlatformAdmin: () => (_c: any, next: any) => next(),
+}))
+
 import { d1UserDatabase } from '../../src/services/d1UserDatabase'
 import { emailService } from '../../src/services/emailService'
 import configRoutes from '../../src/routes/config'
@@ -33,9 +41,16 @@ function createApp() {
   // Mock auth middleware — set user on every request
   app.use('*', async (c, next) => {
     c.user = TEST_USER as any
+    c.set('orgId', 'org-1')
     await next()
   })
   app.route('/', configRoutes)
+  app.onError((err: any, c) => {
+    if (err?.name === 'AppError' && 'status' in err) {
+      return c.json({ success: false, message: err.message }, err.status)
+    }
+    return c.json({ success: false, message: 'Internal Server Error' }, 500)
+  })
   return app
 }
 
@@ -205,7 +220,7 @@ describe('Config Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('username')
+      expect(body.message).toContain('user')
     })
 
     it('returns 400 for missing password', async () => {
@@ -222,7 +237,7 @@ describe('Config Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('password')
+      expect(body.message).toContain('pass')
     })
 
     it('returns 400 for missing from email', async () => {

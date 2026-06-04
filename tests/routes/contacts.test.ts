@@ -39,6 +39,14 @@ vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }))
 
+// Bypass RBAC permission gates in route-handler unit tests.
+vi.mock('../../src/middleware/rbac', () => ({
+  requirePermission: () => (_c: any, next: any) => next(),
+  requireAnyPermission: () => (_c: any, next: any) => next(),
+  requireOrgMember: () => (_c: any, next: any) => next(),
+  requirePlatformAdmin: () => (_c: any, next: any) => next(),
+}))
+
 import { contactService } from '../../src/services/contactService'
 import { validationService } from '../../src/services/validationService'
 import contactRoutes from '../../src/routes/contacts'
@@ -49,9 +57,16 @@ function createApp() {
   const app = new Hono()
   app.use('*', async (c, next) => {
     c.user = TEST_USER as any
+    c.set('orgId', 'org-1')
     await next()
   })
   app.route('/', contactRoutes)
+  app.onError((err: any, c) => {
+    if (err?.name === 'AppError' && 'status' in err) {
+      return c.json({ success: false, message: err.message }, err.status)
+    }
+    return c.json({ success: false, message: 'Internal Server Error' }, 500)
+  })
   return app
 }
 
@@ -99,7 +114,7 @@ describe('Contacts Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('required')
+      expect(body.message).toContain('name')
     })
 
     it('returns 400 when name is empty string', async () => {
@@ -212,7 +227,7 @@ describe('Contacts Routes', () => {
       )
 
       expect(contactService.getContacts).toHaveBeenCalledWith(
-        'user-1',
+        'org-1',
         'list-1',
         expect.objectContaining({
           search: 'alice',
@@ -251,7 +266,7 @@ describe('Contacts Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('Email')
+      expect(body.message).toContain('email')
     })
 
     it('returns 409 for duplicate email', async () => {

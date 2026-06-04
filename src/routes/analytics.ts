@@ -30,7 +30,7 @@ const RecordEventSchema = z.object({
 const SeedSchema = z.object({
   campaignId: z.string().min(1, 'campaignId is required'),
   campaignName: z.string().optional(),
-  stats: z.record(z.unknown()),
+  stats: z.record(z.string(), z.unknown()),
 })
 
 const app = new Hono()
@@ -225,7 +225,7 @@ const ALLOWED_FILTERS = [
 const CustomReportSchema = z.object({
   name: z.string().max(200).optional(),
   columns: z.array(z.string()).min(1, 'At least one column required'),
-  filters: z.record(z.union([z.string(), z.number()])).optional(),
+  filters: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
   sort_by: z.string().optional(),
   sort_order: z.enum(['asc', 'desc']).optional(),
   limit: z.number().int().min(1).max(500).optional(),

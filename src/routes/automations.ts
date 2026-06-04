@@ -16,10 +16,10 @@ import { validateBody } from '../utils/validate'
 const CreateAutomationSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200),
   trigger_type: z.string().min(1, 'trigger_type is required'),
-  trigger_config: z.record(z.unknown()).optional(),
+  trigger_config: z.record(z.string(), z.unknown()).optional(),
   steps: z.array(z.object({
     type: z.string(),
-    config: z.record(z.unknown()).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
     delay_minutes: z.number().optional(),
   })).optional(),
 })

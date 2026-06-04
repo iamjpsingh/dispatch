@@ -31,7 +31,7 @@ const EmailSchema = z.object({ email: z.string().email('Valid email is required'
 
 const UpdateOrgSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  settings: z.record(z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 })
 
 const AddMemberSchema = z.object({

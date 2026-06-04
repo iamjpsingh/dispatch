@@ -18,7 +18,7 @@ import { validateBody } from '../utils/validate'
 // ============================================================================
 
 const CreateListSchema = z.object({
-  name: z.string().min(1, 'List name is required').max(200),
+  name: z.string().trim().min(1, 'List name is required').max(200),
   description: z.string().max(1000).optional(),
 })
 
@@ -34,7 +34,7 @@ const AddContactSchema = z.object({
   company: z.string().max(200).optional(),
   phone: z.string().max(50).optional(),
   tags: z.array(z.string()).optional(),
-  custom_fields: z.record(z.string()).optional(),
+  custom_fields: z.record(z.string(), z.string()).optional(),
 })
 
 const MergeSchema = z.object({
