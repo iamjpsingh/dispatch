@@ -1,63 +1,26 @@
 {
   "name": "dispatch",
   "version": "3.0.0",
-  "description": "Open-source email marketing and automation platform",
-  "main": "src/app.ts",
-  "scripts": {
-    "dev": "bun run --watch src/app.ts",
-    "build": "bun build src/app.ts --outdir=dist",
-    "start": "bun run src/app.ts",
-    "clean": "rm -rf dist uploads/* logs/* data/users.db",
-    "reset-db": "rm -f data/users.db data/scheduler.db",
-    "test": "bunx vitest run",
-    "lint": "bunx eslint src/ --ext .ts",
-    "format": "bunx prettier --write src/",
-    "create-admin": "bun run scripts/create-admin.ts",
-    "reset-all": "rm -f data/dispatch.db data/logs.db data/queue.db data/contacts.db data/campaigns.db data/templates.db data/segments.db data/webhooks.db data/automations.db data/apikeys.db data/analytics.db data/routing.db data/warmup.db data/plugins.db",
-    "dispatch": "bun run bin/dispatch.ts"
-  },
-  "keywords": [
-    "email",
-    "bulk-email",
-    "smtp",
-    "nodemailer",
-    "bun",
-    "typescript",
-    "authentication",
-    "user-management"
-  ],
-  "author": "Your Name",
+  "description": "Open-source bulk email campaign platform",
+  "private": true,
   "license": "MIT",
-  "dependencies": {
-    "argon2": "^0.31.2",
-    "csv-stringify": "^6.4.4",
-    "dotenv": "^16.3.1",
-    "hono": "^3.12.0",
-    "mjml": "^4.18.0",
-    "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.8",
-    "xlsx": "^0.18.5",
-    "zod": "^4.3.6"
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "bunx prettier --write ."
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/multer": "^1.4.11",
-    "@types/nodemailer": "^6.4.14",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "@vitest/coverage-v8": "^4.0.18",
-    "better-sqlite3": "^12.6.2",
-    "bun-types": "^1.3.5",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.4.0",
-    "shadcn": "^4.1.0",
-    "shadcn-vue": "^2.4.3",
-    "typescript": "^5.3.3",
-    "vitest": "^3.0.0"
+    "turbo": "^2.9.16",
+    "typescript": "^5.3.3"
   },
-  "engines": {
-    "node": ">=18.0.0",
-    "bun": ">=1.0.0"
-  }
+  "engines": { "bun": ">=1.1.0" }
 }
