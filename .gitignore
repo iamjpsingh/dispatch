@@ -40,4 +40,12 @@ uploads/*
 # data folder
 data/*
 !data/.gitkeep
-uploads/*
+
+# monorepo: nested runtime dirs + turbo cache (apps/*/data, apps/*/uploads, apps/*/logs)
+**/data/
+**/uploads/
+**/logs/
+*.db
+*.db-shm
+*.db-wal
+.turbo

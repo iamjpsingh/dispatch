@@ -4,6 +4,7 @@
   "description": "Open-source bulk email campaign platform",
   "private": true,
   "license": "MIT",
+  "packageManager": "bun@1.2.2",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "turbo run dev",
