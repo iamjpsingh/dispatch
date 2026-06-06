@@ -1,65 +1,36 @@
-# =============================================================================
-# Dispatch - Multi-stage Docker Build
-# Stage 1: Build Vue 3 frontend with Vite
-# Stage 2: Production Bun + Hono backend serving the built frontend
-# =============================================================================
+# syntax=docker/dockerfile:1
+# Dispatch — multi-stage monorepo build (Bun workspaces).
+# Default entrypoint = api; the worker service overrides CMD in docker-compose.
 
-# ---------------------------------------------------------------------------
-# Stage 1: Frontend Build
-# ---------------------------------------------------------------------------
-FROM oven/bun:1 AS frontend-build
-
-WORKDIR /app/frontend
-
-# Copy dependency manifests first for layer caching
-COPY frontend/package.json frontend/bun.lock ./
-
-# Install all dependencies (including devDependencies for build tooling)
+# ---- deps: install the whole workspace once (cached) ----
+FROM oven/bun:1 AS deps
+WORKDIR /app
+COPY package.json bun.lock turbo.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY apps/tracking-worker/package.json ./apps/tracking-worker/
+COPY packages/shared/package.json ./packages/shared/
 RUN bun install --frozen-lockfile
 
-# Copy frontend source
-COPY frontend/ ./
+# ---- web build (Vite SPA) ----
+FROM deps AS web-build
+COPY packages/shared ./packages/shared
+COPY apps/web ./apps/web
+RUN cd apps/web && bunx vite build
 
-# Build the Vue 3 SPA (vue-tsc type-check + vite build)
-# Output goes to /app/frontend/dist/
-RUN bunx vue-tsc -b && bunx vite build
-
-# ---------------------------------------------------------------------------
-# Stage 2: Backend Production Image
-# ---------------------------------------------------------------------------
-FROM oven/bun:1 AS backend
-
+# ---- runtime: api (also used by the worker service via CMD override) ----
+FROM oven/bun:1 AS api
 WORKDIR /app
-
-# Copy dependency manifests first for layer caching
-COPY package.json bun.lock ./
-
-# Install production dependencies only
-RUN bun install --production --frozen-lockfile
-
-# Copy backend source code
-COPY src/ ./src/
-COPY tsconfig.json ./
-
-# Copy public assets (sample files)
-COPY public/samples/ ./public/samples/
-
-# Copy the built frontend from stage 1 into dist/frontend/
-# The backend can serve these as static files
-COPY --from=frontend-build /app/frontend/dist/ ./dist/frontend/
-
-# Create persistent directories for SQLite databases, logs, and uploads
+ENV NODE_ENV=production PORT=5500
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json bun.lock turbo.json ./
+COPY packages/shared ./packages/shared
+COPY apps/api ./apps/api
+# Serve the built SPA from the api (static assets)
+COPY --from=web-build /app/apps/web/dist ./apps/web/dist
+WORKDIR /app/apps/api
 RUN mkdir -p data logs uploads
-
-# Expose the backend port
-EXPOSE 3000
-
-# Set production environment
-ENV NODE_ENV=production
-
-# Health check against the /health endpoint
+EXPOSE 5500
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD bun -e "fetch('http://localhost:3000/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
-
-# Start the application
-CMD ["bun", "run", "src/app.ts"]
+  CMD bun -e "fetch('http://localhost:5500/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+CMD ["bun", "run", "index.ts"]
