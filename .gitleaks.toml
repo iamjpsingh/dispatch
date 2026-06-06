@@ -1,0 +1,13 @@
+title = "Dispatch gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore binary SQLite dev DBs (some were committed in early history, then untracked) — they are not real secrets."
+paths = [
+  '''.*\.db$''',
+  '''.*\.db-shm$''',
+  '''.*\.db-wal$''',
+  '''bun\.lock$''',
+]
