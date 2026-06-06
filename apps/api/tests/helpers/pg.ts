@@ -1,4 +1,5 @@
 import { drizzle } from 'drizzle-orm/pglite'
+import { migrate } from 'drizzle-orm/pglite/migrator'
 import { PGlite } from '@electric-sql/pglite'
 import * as schema from '../../src/db/pg/schema'
 
@@ -13,3 +14,10 @@ export function freshDb() {
 }
 
 export type TestDb = ReturnType<typeof freshDb>
+
+/** Fresh PGlite with all generated migrations applied — for schema/service tests. */
+export async function freshDbMigrated(): Promise<TestDb> {
+  const db = freshDb()
+  await migrate(db, { migrationsFolder: './src/db/pg/migrations' })
+  return db
+}
