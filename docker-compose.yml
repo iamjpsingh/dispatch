@@ -4,14 +4,9 @@
 #
 # Copy .env.example to .env first. The DATABASE_URL / REDIS_URL / S3_* below point
 # at the in-compose services; override in .env for managed/external services.
-
-# Project name — groups every container/network/volume under "dispatch":
-#   containers -> dispatch-postgres-1, dispatch-api-1, dispatch-worker-1, ...
-#   network    -> dispatch_default      volumes -> dispatch_pgdata, dispatch_valkeydata, ...
-# Namespaced, so it won't collide with other compose projects. Address services by
-# service name (not container name): `docker compose logs -f api`.
-name: dispatch
-
+# Project/group name defaults to this folder ("dispatch") -> containers become
+# dispatch-postgres-1, dispatch-api-1, etc. To rename without losing your volumes/data,
+# set COMPOSE_PROJECT_NAME in .env rather than hardcoding a name here.
 services:
   postgres:
     image: postgres:17-alpine
