@@ -33,7 +33,7 @@ CREATE TABLE "organizations" (
 	"slug" text NOT NULL,
 	"plan" text DEFAULT 'free' NOT NULL,
 	"status" text DEFAULT 'active' NOT NULL,
-	"settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"settings" text DEFAULT '{}' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "organizations_slug_unique" UNIQUE("slug")
@@ -54,8 +54,8 @@ CREATE TABLE "roles" (
 	"org_id" text,
 	"name" text NOT NULL,
 	"description" text,
-	"is_system" boolean DEFAULT false NOT NULL,
-	"permissions" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"is_system" integer DEFAULT 0 NOT NULL,
+	"permissions" text DEFAULT '[]' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "uq_roles_org_name" UNIQUE("org_id","name")
@@ -98,7 +98,7 @@ CREATE TABLE "user_permissions" (
 	"org_id" text NOT NULL,
 	"user_id" text NOT NULL,
 	"permission" text NOT NULL,
-	"granted" boolean DEFAULT true NOT NULL,
+	"granted" integer DEFAULT 1 NOT NULL,
 	"granted_by" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "uq_user_perm" UNIQUE("org_id","user_id","permission")
@@ -111,7 +111,7 @@ CREATE TABLE "users" (
 	"name" text NOT NULL,
 	"password_hash" text NOT NULL,
 	"status" text DEFAULT 'active' NOT NULL,
-	"is_platform_admin" boolean DEFAULT false NOT NULL,
+	"is_platform_admin" integer DEFAULT 0 NOT NULL,
 	"last_login_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,

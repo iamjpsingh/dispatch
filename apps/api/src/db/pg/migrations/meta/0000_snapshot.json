@@ -1,5 +1,5 @@
 {
-  "id": "e0c9baeb-a323-4557-8cb0-53cd9496cd80",
+  "id": "f74477c7-b307-4cd4-9509-e8c86d4900be",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -396,10 +396,10 @@
         },
         "settings": {
           "name": "settings",
-          "type": "jsonb",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'{}'::jsonb"
+          "default": "'{}'"
         },
         "created_at": {
           "name": "created_at",
@@ -596,17 +596,17 @@
         },
         "is_system": {
           "name": "is_system",
-          "type": "boolean",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": 0
         },
         "permissions": {
           "name": "permissions",
-          "type": "jsonb",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'[]'::jsonb"
+          "default": "'[]'"
         },
         "created_at": {
           "name": "created_at",
@@ -1064,10 +1064,10 @@
         },
         "granted": {
           "name": "granted",
-          "type": "boolean",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": true
+          "default": 1
         },
         "granted_by": {
           "name": "granted_by",
@@ -1206,10 +1206,10 @@
         },
         "is_platform_admin": {
           "name": "is_platform_admin",
-          "type": "boolean",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": 0
         },
         "last_login_at": {
           "name": "last_login_at",
