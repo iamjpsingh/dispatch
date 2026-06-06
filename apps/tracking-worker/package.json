@@ -10,7 +10,8 @@
     "db:local": "wrangler d1 execute dispatch --local --file=schema.sql",
     "tail": "wrangler tail",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
