@@ -1,0 +1,40 @@
+{
+  "name": "@dispatch/api",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "bun run --watch index.ts",
+    "start": "bun run index.ts",
+    "build": "bun build index.ts --outdir=dist --target=bun",
+    "typecheck": "bunx tsc --noEmit",
+    "lint": "bunx eslint src --ext .ts",
+    "test": "bunx vitest run",
+    "test:coverage": "bunx vitest run --coverage",
+    "create-admin": "bun run scripts/create-admin.ts",
+    "dispatch": "bun run bin/dispatch.ts",
+    "reset-all": "rm -f data/dispatch.db data/logs.db data/queue.db data/contacts.db data/campaigns.db data/templates.db data/segments.db data/webhooks.db data/automations.db data/apikeys.db data/analytics.db data/routing.db data/warmup.db data/plugins.db"
+  },
+  "dependencies": {
+    "argon2": "^0.31.2",
+    "csv-stringify": "^6.4.4",
+    "dotenv": "^16.3.1",
+    "hono": "^3.12.0",
+    "mjml": "^4.18.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.8",
+    "xlsx": "^0.18.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/multer": "^1.4.11",
+    "@types/nodemailer": "^6.4.14",
+    "@vitest/coverage-v8": "^4.0.18",
+    "better-sqlite3": "^12.6.2",
+    "bun-types": "^1.3.5",
+    "typescript": "^5.3.3",
+    "vitest": "^3.0.0"
+  }
+}
