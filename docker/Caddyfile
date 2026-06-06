@@ -1,0 +1,4 @@
+# Replace :80 with your-domain.com to get automatic HTTPS from Caddy.
+:80 {
+	reverse_proxy api:5500
+}
