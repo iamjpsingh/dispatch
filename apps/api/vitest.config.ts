@@ -9,6 +9,8 @@ export default defineConfig({
     // pipeline. Map it to a better-sqlite3-backed shim (test-only).
     alias: {
       'bun:sqlite': fileURLToPath(new URL('./tests/helpers/bun-sqlite.ts', import.meta.url)),
+      // drizzle-orm/bun-sql is Bun-only; under vitest (Node) tests inject a PGlite db instead.
+      'drizzle-orm/bun-sql': fileURLToPath(new URL('./tests/helpers/bun-sql-shim.ts', import.meta.url)),
     },
     server: {
       deps: { external: ['better-sqlite3'] },

@@ -1,16 +1,27 @@
 // Postgres data-layer client (P2).
-// Prod runs on Bun's native SQL driver. Tests use an isolated PGlite instance via
-// tests/helpers/pg.ts#freshDb (embedded Postgres, no Docker) — see the P2 design doc.
+// Prod: Bun-native SQL, constructed lazily on first use.
+// Tests: a PGlite-backed db is injected via __setTestDb (see tests/helpers/pg.ts), and
+// vitest aliases 'drizzle-orm/bun-sql' to a stub so Node never loads the Bun-only module.
 import { drizzle } from 'drizzle-orm/bun-sql'
+import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import * as schema from './schema'
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? 'postgres://dispatch:dispatch@localhost:5432/dispatch'
+export type Db = PgDatabase<PgQueryResultHKT, typeof schema>
 
-export const db = drizzle(DATABASE_URL, { schema })
-export type Db = typeof db
+let _prod: Db | null = null
+let _test: Db | null = null
 
-/** Accessor for the singleton Postgres/Drizzle client (prod). */
+/** TEST ONLY — inject a PGlite-backed db so getDb() returns it. Pass null to clear. */
+export function __setTestDb(db: Db | null): void {
+  _test = db
+}
+
+/** The singleton Postgres/Drizzle client (test db if injected, else lazy prod bun-sql). */
 export function getDb(): Db {
-  return db
+  if (_test) return _test
+  if (!_prod) {
+    const url = process.env.DATABASE_URL ?? 'postgres://dispatch:dispatch@localhost:5432/dispatch'
+    _prod = drizzle(url, { schema }) as unknown as Db
+  }
+  return _prod
 }
