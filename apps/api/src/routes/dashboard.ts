@@ -15,7 +15,7 @@ import { logger } from '../utils/logger'
 // ============================================================================
 
 interface SchedulerServiceLike {
-  getScheduledJobs(): Array<{ status: string; [key: string]: unknown }>
+  getScheduledJobs(): Promise<Array<{ status: string | null; [key: string]: unknown }>>
 }
 
 // Lazy-loaded services
@@ -43,7 +43,7 @@ app.get('/dashboard/stats', async (c) => {
 
   try {
     const scheduler = getSchedulerService()
-    const scheduledJobs = scheduler?.getScheduledJobs() ?? []
+    const scheduledJobs = (await scheduler?.getScheduledJobs()) ?? []
     const allLogs = logService.getLogs() ?? []
 
     // Queue stats from persistent engine
@@ -100,7 +100,7 @@ app.get('/dashboard/poll-status', async (c) => {
 
   try {
     const scheduler = getSchedulerService()
-    const scheduledJobs = scheduler?.getScheduledJobs() ?? []
+    const scheduledJobs = (await scheduler?.getScheduledJobs()) ?? []
 
     const queueStats = await queueEngine.getStats(user.id)
     const hasActiveJobs = queueStats.running > 0
@@ -166,7 +166,7 @@ app.get('/dashboard/data', async (c) => {
 
   try {
     const scheduler = getSchedulerService()
-    const scheduledJobs = (scheduler?.getScheduledJobs() ?? [])
+    const scheduledJobs = ((await scheduler?.getScheduledJobs()) ?? [])
       .filter((j) => j.status === 'scheduled' || j.status === 'running')
       .slice(0, 5)
 

@@ -11,27 +11,39 @@ import { Worker } from 'bullmq'
 import { boot } from './src/boot'
 import { createRedisConnection } from './src/services/queue/redis'
 import { SEND_QUEUE, type SendBatchData } from './src/services/queue/sendQueue'
+import { SCHEDULER_QUEUE, type ScheduledRunData } from './src/services/queue/schedulerQueue'
 import { processSendBatch } from './src/services/queue/processor'
+import { processScheduledRun } from './src/services/queue/schedulerProcessor'
 import { BATCH_DEFAULTS } from './src/config'
 import { logger } from './src/utils/logger'
 
 await boot()
 
 const connection = createRedisConnection()
-const worker = new Worker<SendBatchData>(
+
+const sendWorker = new Worker<SendBatchData>(
   SEND_QUEUE,
   async (job) => {
     await processSendBatch(job.data.jobId, job.data.batchIndex)
   },
   { connection, concurrency: BATCH_DEFAULTS.MAX_CONCURRENT_JOBS }
 )
+sendWorker.on('ready', () => logger.startup(`📨 Send worker ready (concurrency ${BATCH_DEFAULTS.MAX_CONCURRENT_JOBS})`))
+sendWorker.on('failed', (job, err) => logger.error(`Send batch ${job?.id} failed: ${err.message}`))
 
-worker.on('ready', () => logger.startup(`📨 Send worker ready (concurrency ${BATCH_DEFAULTS.MAX_CONCURRENT_JOBS})`))
-worker.on('failed', (job, err) => logger.error(`Send batch ${job?.id} failed: ${err.message}`))
+const schedulerWorker = new Worker<ScheduledRunData>(
+  SCHEDULER_QUEUE,
+  async (job) => {
+    await processScheduledRun(job.data.scheduledJobId)
+  },
+  { connection }
+)
+schedulerWorker.on('ready', () => logger.startup('⏰ Scheduler worker ready'))
+schedulerWorker.on('failed', (job, err) => logger.error(`Scheduled run ${job?.id} failed: ${err.message}`))
 
 async function shutdown(signal: string) {
-  logger.info(`${signal} received — closing send worker (waiting for in-flight batches)...`)
-  await worker.close() // stop accepting new jobs, finish in-flight, then close
+  logger.info(`${signal} received — closing workers (waiting for in-flight jobs)...`)
+  await Promise.all([sendWorker.close(), schedulerWorker.close()]) // stop intake, finish in-flight
   connection.disconnect()
   process.exit(0)
 }

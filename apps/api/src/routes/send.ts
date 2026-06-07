@@ -348,8 +348,8 @@ app.post('/parse-excel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async 
 // Scheduled Jobs
 // ============================================================================
 
-app.get('/scheduled-jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
-  const jobs = schedulerService.getScheduledJobs()
+app.get('/scheduled-jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
+  const jobs = await schedulerService.getScheduledJobs()
   return success(c, jobs)
 })
 
