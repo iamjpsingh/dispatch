@@ -1,9 +1,8 @@
-// src/services/segmentService.ts - Contact Segmentation (Static & Dynamic)
+// src/services/segmentService.ts - Contact Segmentation (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
-import { logger } from '../utils/logger'
+import { and, eq, inArray, desc, count } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { segments, segment_contacts } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 
 // ============================================================================
@@ -50,170 +49,141 @@ export type SegmentCondition =
 // ============================================================================
 
 class SegmentService {
-  private db: Database
-
-  constructor() {
-    const dbPath = './data/segments.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS segments (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        type TEXT DEFAULT 'dynamic' CHECK (type IN ('static', 'dynamic')),
-        rules_json TEXT,
-        contact_count INTEGER DEFAULT 0,
-        last_calculated_at TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_seg_user ON segments(user_id);
-      CREATE INDEX IF NOT EXISTS idx_seg_type ON segments(type);
-
-      CREATE TABLE IF NOT EXISTS segment_contacts (
-        segment_id TEXT NOT NULL,
-        contact_id TEXT NOT NULL,
-        added_at TEXT DEFAULT (datetime('now')),
-        PRIMARY KEY (segment_id, contact_id),
-        FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_sc_segment ON segment_contacts(segment_id);
-      CREATE INDEX IF NOT EXISTS idx_sc_contact ON segment_contacts(contact_id);
-    `)
-
-    // Add org_id to existing tables (idempotent)
-    try { this.db.exec('ALTER TABLE segments ADD COLUMN org_id TEXT') } catch {}
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_seg_org ON segments(org_id)')
-
-    logger.info('Segments database initialized (data/segments.db)')
-  }
-
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(orgId: string, userId: string, input: SegmentInput): Segment {
+  async create(orgId: string, userId: string, input: SegmentInput): Promise<Segment> {
+    const db = getDb()
     const id = generateId('seg')
 
-    this.db.prepare(`
-      INSERT INTO segments (id, org_id, user_id, name, description, type, rules_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId, input.name,
-      input.description || null,
-      input.type || 'dynamic',
-      input.rules ? JSON.stringify(input.rules) : null
-    )
+    await db.insert(segments).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: input.name,
+      description: input.description ?? null,
+      type: input.type || 'dynamic',
+      rules_json: input.rules ? JSON.stringify(input.rules) : null,
+    })
 
-    return this.db.prepare('SELECT * FROM segments WHERE id = ?').get(id) as Segment
+    const [row] = await db.select().from(segments).where(eq(segments.id, id)).limit(1)
+    return row as Segment
   }
 
-  get(orgId: string, segmentId: string): Segment | null {
-    return this.db.prepare(`
-      SELECT * FROM segments WHERE id = ? AND org_id = ?
-    `).get(segmentId, orgId) as Segment | null
+  async get(orgId: string, segmentId: string): Promise<Segment | null> {
+    const [row] = await getDb()
+      .select()
+      .from(segments)
+      .where(and(eq(segments.id, segmentId), eq(segments.org_id, orgId)))
+      .limit(1)
+    return (row as Segment) ?? null
   }
 
-  update(orgId: string, segmentId: string, updates: Partial<SegmentInput>): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, segmentId: string, updates: Partial<SegmentInput>): Promise<boolean> {
+    const values: Partial<typeof segments.$inferInsert> = {}
 
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.description !== undefined) { sets.push('description = ?'); params.push(updates.description) }
-    if (updates.type !== undefined) { sets.push('type = ?'); params.push(updates.type) }
-    if (updates.rules !== undefined) { sets.push('rules_json = ?'); params.push(JSON.stringify(updates.rules)) }
+    if (updates.name !== undefined) values.name = updates.name
+    if (updates.description !== undefined) values.description = updates.description
+    if (updates.type !== undefined) values.type = updates.type
+    if (updates.rules !== undefined) values.rules_json = JSON.stringify(updates.rules)
 
-    if (sets.length === 0) return false
+    if (Object.keys(values).length === 0) return false
 
-    sets.push("updated_at = datetime('now')")
-    params.push(segmentId, orgId)
+    values.updated_at = new Date().toISOString()
 
-    const result = this.db.prepare(`
-      UPDATE segments SET ${sets.join(', ')} WHERE id = ? AND org_id = ?
-    `).run(...params)
+    const res = await getDb()
+      .update(segments)
+      .set(values)
+      .where(and(eq(segments.id, segmentId), eq(segments.org_id, orgId)))
+      .returning({ id: segments.id })
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  delete(orgId: string, segmentId: string): boolean {
-    const result = this.db.prepare(`
-      DELETE FROM segments WHERE id = ? AND org_id = ?
-    `).run(segmentId, orgId)
-    return result.changes > 0
+  async delete(orgId: string, segmentId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(segments)
+      .where(and(eq(segments.id, segmentId), eq(segments.org_id, orgId)))
+      .returning({ id: segments.id })
+    return res.length > 0
   }
 
-  list(orgId: string): Segment[] {
-    return this.db.prepare(`
-      SELECT * FROM segments WHERE org_id = ? ORDER BY updated_at DESC
-    `).all(orgId) as Segment[]
+  async list(orgId: string): Promise<Segment[]> {
+    const rows = await getDb()
+      .select()
+      .from(segments)
+      .where(eq(segments.org_id, orgId))
+      .orderBy(desc(segments.updated_at))
+    return rows as Segment[]
   }
 
   // --------------------------------------------------------------------------
   // Static Segment Members
   // --------------------------------------------------------------------------
 
-  addContacts(segmentId: string, contactIds: string[]): number {
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO segment_contacts (segment_id, contact_id) VALUES (?, ?)
-    `)
-
+  async addContacts(segmentId: string, contactIds: string[]): Promise<number> {
+    const db = getDb()
     let added = 0
-    const transaction = this.db.transaction(() => {
+
+    await db.transaction(async (tx) => {
       for (const contactId of contactIds) {
-        const result = stmt.run(segmentId, contactId)
-        if (result.changes > 0) added++
+        const res = await tx
+          .insert(segment_contacts)
+          .values({ segment_id: segmentId, contact_id: contactId })
+          .onConflictDoNothing()
+          .returning({ contact_id: segment_contacts.contact_id })
+        if (res.length > 0) added++
       }
     })
 
-    transaction()
-    this.updateContactCount(segmentId)
+    await this.updateContactCount(segmentId)
     return added
   }
 
-  removeContacts(segmentId: string, contactIds: string[]): number {
-    const placeholders = contactIds.map(() => '?').join(',')
-    const result = this.db.prepare(`
-      DELETE FROM segment_contacts WHERE segment_id = ? AND contact_id IN (${placeholders})
-    `).run(segmentId, ...contactIds)
+  async removeContacts(segmentId: string, contactIds: string[]): Promise<number> {
+    if (contactIds.length === 0) {
+      await this.updateContactCount(segmentId)
+      return 0
+    }
+    const res = await getDb()
+      .delete(segment_contacts)
+      .where(and(eq(segment_contacts.segment_id, segmentId), inArray(segment_contacts.contact_id, contactIds)))
+      .returning({ contact_id: segment_contacts.contact_id })
 
-    this.updateContactCount(segmentId)
-    return result.changes
+    await this.updateContactCount(segmentId)
+    return res.length
   }
 
-  getStaticMembers(segmentId: string, limit = 100, offset = 0): string[] {
-    const rows = this.db.prepare(`
-      SELECT contact_id FROM segment_contacts WHERE segment_id = ? LIMIT ? OFFSET ?
-    `).all(segmentId, limit, offset) as { contact_id: string }[]
+  async getStaticMembers(segmentId: string, limit = 100, offset = 0): Promise<string[]> {
+    const rows = await getDb()
+      .select({ contact_id: segment_contacts.contact_id })
+      .from(segment_contacts)
+      .where(eq(segment_contacts.segment_id, segmentId))
+      .limit(limit)
+      .offset(offset)
 
-    return rows.map(r => r.contact_id)
+    return rows.map((r) => r.contact_id)
   }
 
-  private updateContactCount(segmentId: string) {
-    this.db.prepare(`
-      UPDATE segments SET contact_count = (
-        SELECT COUNT(*) FROM segment_contacts WHERE segment_id = ?
-      ), last_calculated_at = datetime('now') WHERE id = ?
-    `).run(segmentId, segmentId)
+  private async updateContactCount(segmentId: string): Promise<void> {
+    const db = getDb()
+    const [c] = await db.select({ value: count() }).from(segment_contacts).where(eq(segment_contacts.segment_id, segmentId))
+    await db
+      .update(segments)
+      .set({ contact_count: c?.value ?? 0, last_calculated_at: new Date().toISOString() })
+      .where(eq(segments.id, segmentId))
   }
 
   // --------------------------------------------------------------------------
-  // Dynamic Segment Query Builder
+  // Dynamic Segment Query Builder (pure — builds a WHERE fragment for the
+  // contacts query; no DB access, so these stay synchronous)
+  //
+  // TODO(P2.x wire-up): the fragment below is still SQLite-flavored — '?' placeholders
+  // and json_extract(custom_fields, '$.key'). Before it is EXECUTED against the Postgres
+  // contacts table it MUST be ported to numbered ($n) placeholders / Drizzle sql`` and
+  // (custom_fields::jsonb ->> 'key'). Currently only echoed as a preview string
+  // (previewCount returns 0), never run — so this is dormant, not a live bug.
   // --------------------------------------------------------------------------
 
   /**
@@ -289,10 +259,9 @@ class SegmentService {
    * Preview dynamic segment size (estimate contact count)
    */
   previewCount(rules: SegmentRules): number {
-    const { sql, params } = this.buildQuery(rules)
-    // Note: This queries against the contacts.db, not segments.db
-    // In practice, the caller should use this SQL against the contacts database
-    // For now return 0 - actual count requires cross-db query
+    this.buildQuery(rules)
+    // Actual count requires running buildQuery's fragment against the contacts
+    // table; wired up in a later sub-stage. For now return 0.
     return 0
   }
 }

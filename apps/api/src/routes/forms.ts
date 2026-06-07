@@ -42,7 +42,7 @@ app.post('/forms', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => 
   const body = await validateBody(c, CreateFormSchema)
 
   // Verify list exists
-  const list = contactService.getList(orgId, body.list_id)
+  const list = await contactService.getList(orgId, body.list_id)
   if (!list) return error(c, 'List not found', 404)
 
   const form = formService.create(orgId, user.id, body)
@@ -170,7 +170,7 @@ app.post('/forms/:id/submit', async (c) => {
 
   if (contactData.email) {
     try {
-      contactService.addContact(form.org_id, form.user_id, form.list_id, {
+      await contactService.addContact(form.org_id, form.user_id, form.list_id, {
         email: contactData.email,
         first_name: contactData.first_name || '',
         last_name: contactData.last_name || '',
@@ -198,12 +198,12 @@ app.post('/forms/:id/submit', async (c) => {
       .map((a: any) => a.tag)
     if (tagsToAdd.length > 0) {
       try {
-        const result = contactService.getContacts(form.org_id, form.list_id, {
+        const result = await contactService.getContacts(form.org_id, form.list_id, {
           search: contactData.email, limit: 1,
         })
         const match = result.contacts.find(ct => ct.email === contactData.email)
         if (match) {
-          contactService.tagContacts(form.org_id, [match.id], tagsToAdd)
+          await contactService.tagContacts(form.org_id, [match.id], tagsToAdd)
         }
       } catch {
         // Non-critical
@@ -286,7 +286,7 @@ app.post('/forms/:id/webhook', async (c) => {
 
   if (contactData.email) {
     try {
-      contactService.addContact(form.org_id, form.user_id, form.list_id, {
+      await contactService.addContact(form.org_id, form.user_id, form.list_id, {
         email: contactData.email,
         first_name: contactData.first_name || '',
         last_name: contactData.last_name || '',
@@ -303,9 +303,9 @@ app.post('/forms/:id/webhook', async (c) => {
     for (const action of actions) {
       if (action.type === 'add_tag' && action.tag) {
         try {
-          const result = contactService.getContacts(form.org_id, form.list_id, { search: contactData.email, limit: 1 })
+          const result = await contactService.getContacts(form.org_id, form.list_id, { search: contactData.email, limit: 1 })
           const match = result.contacts.find(ct => ct.email === contactData.email)
-          if (match) contactService.tagContacts(form.org_id, [match.id], [action.tag])
+          if (match) await contactService.tagContacts(form.org_id, [match.id], [action.tag])
         } catch { /* non-critical */ }
       }
     }

@@ -415,7 +415,7 @@ class AutomationService {
    * Process all due enrollment actions. Called by worker interval.
    * Returns number of enrollments processed.
    */
-  processDueActions(): number {
+  async processDueActions(): Promise<number> {
     const due = this.db.prepare(`
       SELECT e.*, s.step_type, s.config_json, s.next_step_id, s.true_step_id, s.false_step_id, a.org_id
       FROM automation_enrollments e
@@ -431,13 +431,13 @@ class AutomationService {
     for (const enrollment of due) {
       try {
         // Check goal condition before executing step
-        if (this.checkGoal(enrollment)) {
+        if (await this.checkGoal(enrollment)) {
           this.exitWithGoal(enrollment.id, enrollment.automation_id)
           processed++
           continue
         }
 
-        this.executeStep(enrollment)
+        await this.executeStep(enrollment)
         processed++
       } catch (err) {
         logger.error(`Automation step error for enrollment ${enrollment.id}:`, err)
@@ -447,7 +447,7 @@ class AutomationService {
     return processed
   }
 
-  private executeStep(enrollment: AutomationEnrollment & { step_type: StepType; config_json: string; next_step_id: string | null; true_step_id: string | null; false_step_id: string | null; org_id: string }): void {
+  private async executeStep(enrollment: AutomationEnrollment & { step_type: StepType; config_json: string; next_step_id: string | null; true_step_id: string | null; false_step_id: string | null; org_id: string }): Promise<void> {
     const config = JSON.parse(enrollment.config_json)
 
     switch (enrollment.step_type) {
@@ -465,7 +465,7 @@ class AutomationService {
 
       case 'send_whatsapp': {
         // Send WhatsApp template message to contact
-        const waContact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+        const waContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         const customFields = waContact?.custom_fields ? JSON.parse(waContact.custom_fields) : {}
         const phone = waContact?.phone || customFields.phone || customFields.phone_number || null
         if (phone && config.config_id && config.template_name) {
@@ -498,7 +498,7 @@ class AutomationService {
 
       case 'condition': {
         // Evaluate condition against contact data
-        const contact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+        const contact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         if (contact) {
           const result = evaluateCondition(contact, { field: config.field, operator: config.operator, value: config.value })
           this.advanceToNext(enrollment.id, result ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
@@ -511,7 +511,7 @@ class AutomationService {
 
       case 'filter': {
         // Filter is like condition but only has one output (pass or exit)
-        const filterContact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+        const filterContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         if (filterContact && evaluateCondition(filterContact, { field: config.field, operator: config.operator, value: config.value })) {
           this.advanceToNext(enrollment.id, enrollment.next_step_id)
         } else {
@@ -543,7 +543,7 @@ class AutomationService {
         // Wait until a specific date or contact field date
         let targetDate: string
         if (config.field) {
-          const dateContact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+          const dateContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
           const customFields = dateContact ? JSON.parse(dateContact.custom_fields || '{}') : {}
           targetDate = customFields[config.field] || new Date().toISOString()
         } else {
@@ -618,7 +618,7 @@ class AutomationService {
 
       case 'has_tag': {
         // Condition: check if contact has a specific tag
-        const tagContact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+        const tagContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         const tags = tagContact?.tags ? tagContact.tags.split(',').map((t: string) => t.trim().toLowerCase()) : []
         const hasTag = tags.includes((config.tag || '').toLowerCase())
         this.advanceToNext(enrollment.id, hasTag ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
@@ -634,7 +634,7 @@ class AutomationService {
 
       case 'score_check': {
         // Condition: check engagement score against threshold
-        const scoreContact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+        const scoreContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         const score = scoreContact?.engagement_score || 0
         const threshold = config.value || 0
         let scoreResult = false
@@ -731,7 +731,7 @@ class AutomationService {
    * Check if a contact has achieved the automation's goal.
    * If goal is met, the enrollment should exit early.
    */
-  private checkGoal(enrollment: { id: string; automation_id: string; contact_id: string; org_id: string }): boolean {
+  private async checkGoal(enrollment: { id: string; automation_id: string; contact_id: string; org_id: string }): Promise<boolean> {
     const automation = this.db.prepare('SELECT goal_condition FROM automations WHERE id = ?').get(enrollment.automation_id) as any
     if (!automation?.goal_condition) return false
 
@@ -739,7 +739,7 @@ class AutomationService {
       const goal = JSON.parse(automation.goal_condition) as { field: string; operator: string; value: string }
       if (!goal.field) return false
 
-      const contact = contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
+      const contact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
       if (!contact) return false
 
       return evaluateCondition(contact, goal)
@@ -855,8 +855,8 @@ class AutomationService {
   startWorker(intervalMs = 60000): void {
     if (this.workerInterval) return
 
-    this.workerInterval = setInterval(() => {
-      const processed = this.processDueActions()
+    this.workerInterval = setInterval(async () => {
+      const processed = await this.processDueActions()
       if (processed > 0) {
         logger.debug(`Automation worker processed ${processed} actions`)
       }

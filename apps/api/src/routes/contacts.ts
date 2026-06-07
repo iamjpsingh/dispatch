@@ -75,13 +75,13 @@ app.post('/contacts/lists', requirePermission(PERMISSIONS.CONTACTS_MANAGE), asyn
   const orgId = getOrgId(c)
   const { name, description } = await validateBody(c, CreateListSchema)
 
-  const list = contactService.createList(orgId, user.id, name.trim(), description)
+  const list = await contactService.createList(orgId, user.id, name.trim(), description)
   return success(c, list, 'Contact list created')
 })
 
-app.get('/contacts/lists', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/lists', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const lists = contactService.getLists(orgId)
+  const lists = await contactService.getLists(orgId)
   return success(c, { lists })
 })
 
@@ -90,16 +90,16 @@ app.put('/contacts/lists/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), a
   const listId = c.req.param('id')
   const body = await validateBody(c, UpdateListSchema)
 
-  const updated = contactService.updateList(orgId, listId, body.name, body.description)
+  const updated = await contactService.updateList(orgId, listId, body.name, body.description)
   if (!updated) return error(c, 'List not found', 404)
   return success(c, undefined, 'List updated')
 })
 
-app.delete('/contacts/lists/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), (c) => {
+app.delete('/contacts/lists/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const listId = c.req.param('id')
 
-  const deleted = contactService.deleteList(orgId, listId)
+  const deleted = await contactService.deleteList(orgId, listId)
   if (!deleted) return error(c, 'List not found', 404)
   return success(c, undefined, 'List deleted')
 })
@@ -108,7 +108,7 @@ app.delete('/contacts/lists/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE)
 // Search (must be before :listId param route)
 // ============================================================================
 
-app.get('/contacts/search', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/search', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const q = c.req.query('q') || ''
 
@@ -116,7 +116,7 @@ app.get('/contacts/search', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) =>
     return success(c, { contacts: [] })
   }
 
-  const contacts = contactService.searchContacts(orgId, q)
+  const contacts = await contactService.searchContacts(orgId, q)
   return success(c, { contacts })
 })
 
@@ -124,9 +124,9 @@ app.get('/contacts/search', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) =>
 // Import History (must be before :listId param route)
 // ============================================================================
 
-app.get('/contacts/import-history', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/import-history', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const history = contactService.getImportHistory(orgId)
+  const history = await contactService.getImportHistory(orgId)
   return success(c, { history })
 })
 
@@ -134,9 +134,9 @@ app.get('/contacts/import-history', requirePermission(PERMISSIONS.CONTACTS_VIEW)
 // Deduplication (must be before :listId param route)
 // ============================================================================
 
-app.get('/contacts/duplicates', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/duplicates', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const duplicates = contactService.findDuplicates(orgId)
+  const duplicates = await contactService.findDuplicates(orgId)
   return success(c, { duplicates, total: duplicates.length })
 })
 
@@ -144,7 +144,7 @@ app.post('/contacts/merge', requirePermission(PERMISSIONS.CONTACTS_MANAGE), asyn
   const orgId = getOrgId(c)
   const { primary_id, merge_ids } = await validateBody(c, MergeSchema)
 
-  const merged = contactService.mergeContacts(orgId, primary_id, merge_ids)
+  const merged = await contactService.mergeContacts(orgId, primary_id, merge_ids)
   if (!merged) return error(c, 'Merge failed — contact not found', 404)
   return success(c, undefined, `Merged ${merge_ids.length} contact(s) into primary`)
 })
@@ -173,7 +173,7 @@ app.post('/contacts/validate-single', requirePermission(PERMISSIONS.CONTACTS_MAN
 // Contacts CRUD (parameterized routes after specific routes)
 // ============================================================================
 
-app.get('/contacts/:listId', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/:listId', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const listId = c.req.param('listId')
 
@@ -187,7 +187,7 @@ app.get('/contacts/:listId', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) =
     sort_order: c.req.query('sort_order') as 'asc' | 'desc' | undefined,
   }
 
-  const { contacts, total } = contactService.getContacts(orgId, listId, filters)
+  const { contacts, total } = await contactService.getContacts(orgId, listId, filters)
   const page = filters.page || 1
   const limit = filters.limit || 50
 
@@ -214,7 +214,7 @@ app.post('/contacts/:listId', requirePermission(PERMISSIONS.CONTACTS_MANAGE), as
   const body = await validateBody(c, AddContactSchema)
 
   try {
-    const contact = contactService.addContact(orgId, user.id, listId, body)
+    const contact = await contactService.addContact(orgId, user.id, listId, body)
     return success(c, contact, 'Contact added')
   } catch (err: any) {
     if (err.message?.includes('UNIQUE')) {
@@ -229,7 +229,7 @@ app.put('/contacts/item/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), as
   const contactId = c.req.param('id')
   const body = await validateBody(c, AddContactSchema.partial())
 
-  const updated = contactService.updateContact(orgId, contactId, body)
+  const updated = await contactService.updateContact(orgId, contactId, body)
   if (!updated) return error(c, 'Contact not found', 404)
   return success(c, undefined, 'Contact updated')
 })
@@ -242,7 +242,7 @@ app.post('/contacts/bulk/delete', requirePermission(PERMISSIONS.CONTACTS_MANAGE)
   const orgId = getOrgId(c)
   const { ids } = await validateBody(c, BulkDeleteSchema)
 
-  const deleted = contactService.deleteContacts(orgId, ids)
+  const deleted = await contactService.deleteContacts(orgId, ids)
   return success(c, { deleted }, `${deleted} contact(s) deleted`)
 })
 
@@ -250,7 +250,7 @@ app.post('/contacts/bulk/tag', requirePermission(PERMISSIONS.CONTACTS_MANAGE), a
   const orgId = getOrgId(c)
   const { ids, tags } = await validateBody(c, BulkTagSchema)
 
-  const updated = contactService.tagContacts(orgId, ids, tags)
+  const updated = await contactService.tagContacts(orgId, ids, tags)
   return success(c, { updated }, `${updated} contact(s) tagged`)
 })
 
@@ -258,7 +258,7 @@ app.post('/contacts/bulk/move', requirePermission(PERMISSIONS.CONTACTS_MANAGE), 
   const orgId = getOrgId(c)
   const { ids, target_list_id } = await validateBody(c, BulkMoveSchema)
 
-  const moved = contactService.moveContacts(orgId, ids, target_list_id)
+  const moved = await contactService.moveContacts(orgId, ids, target_list_id)
   return success(c, { moved }, `${moved} contact(s) moved`)
 })
 
@@ -317,13 +317,13 @@ app.post('/contacts/:listId/import', requirePermission(PERMISSIONS.CONTACTS_IMPO
   }
 
   // Import
-  const result = contactService.importContacts(orgId, user.id, listId, rows, fieldMapping, {
+  const result = await contactService.importContacts(orgId, user.id, listId, rows, fieldMapping, {
     skipDuplicates,
     source: `import_${format}`,
   })
 
   // Record history
-  contactService.recordImport(orgId, user.id, listId, file.name, format, result, fieldMapping)
+  await contactService.recordImport(orgId, user.id, listId, file.name, format, result, fieldMapping)
 
   return success(
     c,
@@ -336,13 +336,13 @@ app.post('/contacts/:listId/import', requirePermission(PERMISSIONS.CONTACTS_IMPO
 // Contact Activity Timeline
 // ============================================================================
 
-app.get('/contacts/timeline/:contactId', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/timeline/:contactId', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const contactId = c.req.param('contactId')
   const limit = parseInt(c.req.query('limit') || '50')
 
   // Get contact first to verify access
-  const contact = contactService.getContact(orgId, contactId)
+  const contact = await contactService.getContact(orgId, contactId)
   if (!contact) return error(c, 'Contact not found', 404)
 
   // Aggregate events from scoring engine
@@ -389,11 +389,11 @@ const PreferenceSchema = z.object({
 })
 
 /** Get email preferences for a contact */
-app.get('/contacts/preferences/:contactId', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/preferences/:contactId', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const contactId = c.req.param('contactId')
 
-  const contact = contactService.getContact(orgId, contactId)
+  const contact = await contactService.getContact(orgId, contactId)
   if (!contact) return error(c, 'Contact not found', 404)
 
   const pref = preferenceCenterService.getPreference(orgId, contact.email)
@@ -412,7 +412,7 @@ app.put('/contacts/preferences/:contactId', requirePermission(PERMISSIONS.CONTAC
   const contactId = c.req.param('contactId')
   const body = await validateBody(c, PreferenceSchema)
 
-  const contact = contactService.getContact(orgId, contactId)
+  const contact = await contactService.getContact(orgId, contactId)
   if (!contact) return error(c, 'Contact not found', 404)
 
   if (body.preference === 'paused') {

@@ -216,7 +216,7 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
 
   // 4. Resolve recipients from the campaign's contact list (note: singular list_id).
   if (!campaign.list_id) return error(c, 'Campaign has no recipients', 400)
-  const { contacts: listContacts } = contactService.getContacts(orgId, campaign.list_id, { limit: 100000 })
+  const { contacts: listContacts } = await contactService.getContacts(orgId, campaign.list_id, { limit: 100000 })
   const contacts: Contact[] = listContacts.map((contact) => ({
     Email: contact.email,
     FirstName: contact.first_name || undefined,

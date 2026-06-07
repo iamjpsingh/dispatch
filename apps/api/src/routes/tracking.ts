@@ -91,7 +91,7 @@ app.post('/tracking/event', async (c) => {
   const mappedType = TYPE_MAP[type]
 
   // --- Resolve contact (best-effort, cross-org) ---------------------------
-  const contact = contactService.getContactByEmail(email)
+  const contact = await contactService.getContactByEmail(email)
   if (!contact) {
     // Nothing to advance — acknowledge so the worker doesn't retry.
     return c.json({ ok: true, matched: false })

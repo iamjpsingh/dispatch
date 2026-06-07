@@ -433,11 +433,11 @@ app.get('/analytics/campaigns/:id/referrers', requirePermission(PERMISSIONS.ANAL
 // ============================================================================
 
 /** Full recipient engagement profile */
-app.get('/analytics/contacts/:contactId/profile', requirePermission(PERMISSIONS.ANALYTICS_VIEW), (c) => {
+app.get('/analytics/contacts/:contactId/profile', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const contactId = c.req.param('contactId')
 
-  const contact = contactService.getContact(orgId, contactId)
+  const contact = await contactService.getContact(orgId, contactId)
   if (!contact) return error(c, 'Contact not found', 404)
 
   // Get timeline events
