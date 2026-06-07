@@ -34,9 +34,9 @@ const app = new Hono()
 // Automation CRUD
 // ============================================================================
 
-app.get('/automations', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), (c) => {
+app.get('/automations', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const automations = automationService.list(orgId)
+  const automations = await automationService.list(orgId)
   return success(c, { automations })
 })
 
@@ -45,18 +45,18 @@ app.post('/automations', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), asyn
   const orgId = getOrgId(c)
   const body = await validateBody(c, CreateAutomationSchema)
 
-  const automation = automationService.create(orgId, user.id, body)
+  const automation = await automationService.create(orgId, user.id, body)
   return success(c, automation, 'Automation created', 201)
 })
 
-app.get('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), (c) => {
+app.get('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  const steps = automationService.getSteps(automationId)
+  const steps = await automationService.getSteps(automationId)
   return success(c, { ...automation, steps })
 })
 
@@ -65,17 +65,17 @@ app.put('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), a
   const automationId = c.req.param('id')
   const body = await validateBody(c, CreateAutomationSchema.partial())
 
-  const updated = automationService.update(orgId, automationId, body)
+  const updated = await automationService.update(orgId, automationId, body)
   if (!updated) return error(c, 'Automation not found or cannot be edited while active', 404)
 
   return success(c, undefined, 'Automation updated')
 })
 
-app.delete('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), (c) => {
+app.delete('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const deleted = automationService.delete(orgId, automationId)
+  const deleted = await automationService.delete(orgId, automationId)
   if (!deleted) return error(c, 'Automation not found or is currently active', 404)
 
   return success(c, undefined, 'Automation deleted')
@@ -85,31 +85,31 @@ app.delete('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE)
 // Automation Lifecycle
 // ============================================================================
 
-app.post('/automations/:id/activate', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), (c) => {
+app.post('/automations/:id/activate', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const activated = automationService.activate(orgId, automationId)
+  const activated = await automationService.activate(orgId, automationId)
   if (!activated) return error(c, 'Automation not found or cannot be activated', 404)
 
   return success(c, undefined, 'Automation activated')
 })
 
-app.post('/automations/:id/pause', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), (c) => {
+app.post('/automations/:id/pause', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const paused = automationService.pause(orgId, automationId)
+  const paused = await automationService.pause(orgId, automationId)
   if (!paused) return error(c, 'Automation not found or not active', 404)
 
   return success(c, undefined, 'Automation paused')
 })
 
-app.post('/automations/:id/deactivate', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), (c) => {
+app.post('/automations/:id/deactivate', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const deactivated = automationService.deactivate(orgId, automationId)
+  const deactivated = await automationService.deactivate(orgId, automationId)
   if (!deactivated) return error(c, 'Automation not found', 404)
 
   return success(c, undefined, 'Automation deactivated')
@@ -119,16 +119,16 @@ app.post('/automations/:id/deactivate', requirePermission(PERMISSIONS.AUTOMATION
 // Enrollments
 // ============================================================================
 
-app.get('/automations/:id/enrollments', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), (c) => {
+app.get('/automations/:id/enrollments', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
   const limit = parseInt(c.req.query('limit') || '50')
   const offset = parseInt(c.req.query('offset') || '0')
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  const enrollments = automationService.getEnrollments(automationId, limit, offset)
+  const enrollments = await automationService.getEnrollments(automationId, limit, offset)
   return success(c, { enrollments })
 })
 
@@ -137,24 +137,24 @@ app.post('/automations/:id/enroll', requirePermission(PERMISSIONS.AUTOMATIONS_MA
   const automationId = c.req.param('id')
   const { contact_id } = await validateBody(c, EnrollSchema)
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  const enrolled = automationService.enrollContact(automationId, contact_id)
+  const enrolled = await automationService.enrollContact(automationId, contact_id)
   if (!enrolled) return error(c, 'Could not enroll contact (already enrolled or no steps)', 400)
 
   return success(c, undefined, 'Contact enrolled')
 })
 
-app.delete('/automations/:id/enrollments/:contactId', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), (c) => {
+app.delete('/automations/:id/enrollments/:contactId', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
   const contactId = c.req.param('contactId')
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  const exited = automationService.exitContact(automationId, contactId, 'manual')
+  const exited = await automationService.exitContact(automationId, contactId, 'manual')
   if (!exited) return error(c, 'Enrollment not found or not active', 404)
 
   return success(c, undefined, 'Contact removed from automation')
@@ -164,14 +164,14 @@ app.delete('/automations/:id/enrollments/:contactId', requirePermission(PERMISSI
 // Automation Stats
 // ============================================================================
 
-app.get('/automations/:id/stats', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), (c) => {
+app.get('/automations/:id/stats', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  const stats = automationService.getStats(automationId)
+  const stats = await automationService.getStats(automationId)
   return success(c, stats)
 })
 
@@ -191,22 +191,22 @@ app.put('/automations/:id/goal', requirePermission(PERMISSIONS.AUTOMATIONS_MANAG
   const automationId = c.req.param('id')
   const body = await validateBody(c, GoalSchema)
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  automationService.update(orgId, automationId, { goal_condition: JSON.stringify(body) })
+  await automationService.update(orgId, automationId, { goal_condition: JSON.stringify(body) })
   return success(c, undefined, 'Goal condition set')
 })
 
 /** Remove goal condition */
-app.delete('/automations/:id/goal', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), (c) => {
+app.delete('/automations/:id/goal', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const automationId = c.req.param('id')
 
-  const automation = automationService.get(orgId, automationId)
+  const automation = await automationService.get(orgId, automationId)
   if (!automation) return error(c, 'Automation not found', 404)
 
-  automationService.update(orgId, automationId, { goal_condition: null })
+  await automationService.update(orgId, automationId, { goal_condition: null })
   return success(c, undefined, 'Goal condition removed')
 })
 

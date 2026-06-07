@@ -1,8 +1,8 @@
-// src/services/automationService.ts - Email Marketing Automation (Drip Sequences)
+// src/services/automationService.ts - Email Marketing Automation (Drip Sequences) (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, asc, desc, lte, inArray, isNotNull, count, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { automations, automation_steps, automation_enrollments } from '../db/pg/schema'
 import { eventBus } from './eventBus'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
@@ -104,307 +104,254 @@ export interface FlowEdge {
   label?: 'true' | 'false' | 'default'
 }
 
+const now = () => new Date().toISOString()
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class AutomationService {
-  private db: Database
   private workerInterval: ReturnType<typeof setInterval> | null = null
 
   constructor() {
-    const dbPath = './data/automations.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
     this.registerEventHandlers()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS automations (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        trigger_type TEXT NOT NULL CHECK (trigger_type IN (
-          'list_join', 'tag_added', 'score_change', 'date_field', 'manual', 'api'
-        )),
-        trigger_config TEXT NOT NULL DEFAULT '{}',
-        entry_list_id TEXT,
-        status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'paused', 'completed')),
-        enrolled_count INTEGER DEFAULT 0,
-        completed_count INTEGER DEFAULT 0,
-        flow_json TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_auto_user ON automations(user_id);
-      CREATE INDEX IF NOT EXISTS idx_auto_status ON automations(status);
-
-      CREATE TABLE IF NOT EXISTS automation_steps (
-        id TEXT PRIMARY KEY,
-        automation_id TEXT NOT NULL,
-        step_order INTEGER NOT NULL,
-        step_type TEXT NOT NULL CHECK (step_type IN (
-          'send_email', 'wait', 'condition', 'update_contact', 'add_tag',
-          'remove_tag', 'move_to_list', 'webhook', 'end'
-        )),
-        config_json TEXT NOT NULL DEFAULT '{}',
-        next_step_id TEXT,
-        true_step_id TEXT,
-        false_step_id TEXT,
-        FOREIGN KEY (automation_id) REFERENCES automations(id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_as_automation ON automation_steps(automation_id);
-
-      CREATE TABLE IF NOT EXISTS automation_enrollments (
-        id TEXT PRIMARY KEY,
-        automation_id TEXT NOT NULL,
-        contact_id TEXT NOT NULL,
-        current_step_id TEXT,
-        status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed', 'exited')),
-        enrolled_at TEXT DEFAULT (datetime('now')),
-        next_action_at TEXT,
-        completed_at TEXT,
-        exit_reason TEXT,
-        FOREIGN KEY (automation_id) REFERENCES automations(id),
-        UNIQUE(automation_id, contact_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_ae_automation ON automation_enrollments(automation_id);
-      CREATE INDEX IF NOT EXISTS idx_ae_next ON automation_enrollments(next_action_at) WHERE status = 'active';
-      CREATE INDEX IF NOT EXISTS idx_ae_contact ON automation_enrollments(contact_id);
-    `)
-
-    // Add columns to existing tables (idempotent)
-    try { this.db.exec('ALTER TABLE automations ADD COLUMN org_id TEXT') } catch {}
-    try { this.db.exec('ALTER TABLE automations ADD COLUMN goal_condition TEXT') } catch {}
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_auto_org ON automations(org_id)')
-
-    // Decision-node wait state: which tracking event an enrollment is waiting
-    // for, and the Yes (true) step to jump to if that event arrives before the
-    // No-path timeout fires. (idempotent)
-    try { this.db.exec('ALTER TABLE automation_enrollments ADD COLUMN waiting_for_event TEXT') } catch {}
-    try { this.db.exec('ALTER TABLE automation_enrollments ADD COLUMN wait_true_step_id TEXT') } catch {}
-
-    // Expand step_type CHECK constraint (SQLite doesn't support ALTER CHECK, so new types work via INSERT)
-    // New types: send_whatsapp, filter, split_test, delay_until, http_request, score_change
-
-    logger.info('Automations database initialized (data/automations.db)')
   }
 
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(orgId: string, userId: string, input: AutomationInput): Automation {
+  async create(orgId: string, userId: string, input: AutomationInput): Promise<Automation> {
+    const db = getDb()
     const id = generateId('auto')
 
-    this.db.prepare(`
-      INSERT INTO automations (id, org_id, user_id, name, description, trigger_type, trigger_config, entry_list_id, flow_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId, input.name,
-      input.description || null,
-      input.trigger_type,
-      JSON.stringify(input.trigger_config || {}),
-      input.entry_list_id || null,
-      JSON.stringify(input.flow || { nodes: [], edges: [] })
-    )
+    await db.insert(automations).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: input.name,
+      description: input.description || null,
+      trigger_type: input.trigger_type,
+      trigger_config: JSON.stringify(input.trigger_config || {}),
+      entry_list_id: input.entry_list_id || null,
+      flow_json: JSON.stringify(input.flow || { nodes: [], edges: [] }),
+    })
 
-    return this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id) as Automation
+    const [row] = await db.select().from(automations).where(eq(automations.id, id)).limit(1)
+    return row as Automation
   }
 
-  get(orgId: string, automationId: string): Automation | null {
-    return this.db.prepare(`
-      SELECT * FROM automations WHERE id = ? AND org_id = ?
-    `).get(automationId, orgId) as Automation | null
+  async get(orgId: string, automationId: string): Promise<Automation | null> {
+    const [row] = await getDb()
+      .select()
+      .from(automations)
+      .where(and(eq(automations.id, automationId), eq(automations.org_id, orgId)))
+      .limit(1)
+    return (row as Automation) ?? null
   }
 
-  update(orgId: string, automationId: string, updates: Partial<AutomationInput> & { goal_condition?: string | null; flow_json?: string }): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, automationId: string, updates: Partial<AutomationInput> & { goal_condition?: string | null; flow_json?: string }): Promise<boolean> {
+    const u = updates
+    const values: Partial<typeof automations.$inferInsert> = {}
 
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.description !== undefined) { sets.push('description = ?'); params.push(updates.description) }
-    if (updates.trigger_type !== undefined) { sets.push('trigger_type = ?'); params.push(updates.trigger_type) }
-    if (updates.trigger_config !== undefined) { sets.push('trigger_config = ?'); params.push(JSON.stringify(updates.trigger_config)) }
-    if (updates.entry_list_id !== undefined) { sets.push('entry_list_id = ?'); params.push(updates.entry_list_id) }
-    if (updates.flow !== undefined) { sets.push('flow_json = ?'); params.push(JSON.stringify(updates.flow)) }
-    if (updates.flow_json !== undefined) { sets.push('flow_json = ?'); params.push(updates.flow_json) }
-    if (updates.goal_condition !== undefined) { sets.push('goal_condition = ?'); params.push(updates.goal_condition) }
+    if (u.name !== undefined) values.name = u.name
+    if (u.description !== undefined) values.description = u.description
+    if (u.trigger_type !== undefined) values.trigger_type = u.trigger_type
+    if (u.trigger_config !== undefined) values.trigger_config = JSON.stringify(u.trigger_config)
+    if (u.entry_list_id !== undefined) values.entry_list_id = u.entry_list_id
+    if (u.flow !== undefined) values.flow_json = JSON.stringify(u.flow)
+    if (u.flow_json !== undefined) values.flow_json = u.flow_json
+    if (u.goal_condition !== undefined) values.goal_condition = u.goal_condition
 
-    if (sets.length === 0) return false
+    if (Object.keys(values).length === 0) return false
 
-    sets.push("updated_at = datetime('now')")
-    params.push(automationId, orgId)
+    values.updated_at = now()
 
-    const result = this.db.prepare(`
-      UPDATE automations SET ${sets.join(', ')} WHERE id = ? AND org_id = ? AND status IN ('draft', 'paused')
-    `).run(...params)
-
-    return result.changes > 0
+    const res = await getDb()
+      .update(automations)
+      .set(values)
+      .where(and(eq(automations.id, automationId), eq(automations.org_id, orgId), inArray(automations.status, ['draft', 'paused'])))
+      .returning({ id: automations.id })
+    return res.length > 0
   }
 
-  delete(orgId: string, automationId: string): boolean {
-    const result = this.db.prepare(`
-      DELETE FROM automations WHERE id = ? AND org_id = ? AND status IN ('draft', 'completed')
-    `).run(automationId, orgId)
-    return result.changes > 0
+  async delete(orgId: string, automationId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(automations)
+      .where(and(eq(automations.id, automationId), eq(automations.org_id, orgId), inArray(automations.status, ['draft', 'completed'])))
+      .returning({ id: automations.id })
+    return res.length > 0
   }
 
-  list(orgId: string): Automation[] {
-    return this.db.prepare(`
-      SELECT * FROM automations WHERE org_id = ? ORDER BY updated_at DESC
-    `).all(orgId) as Automation[]
+  async list(orgId: string): Promise<Automation[]> {
+    const rows = await getDb()
+      .select()
+      .from(automations)
+      .where(eq(automations.org_id, orgId))
+      .orderBy(desc(automations.updated_at))
+    return rows as Automation[]
   }
 
   // --------------------------------------------------------------------------
   // Lifecycle
   // --------------------------------------------------------------------------
 
-  activate(orgId: string, automationId: string): boolean {
+  async activate(orgId: string, automationId: string): Promise<boolean> {
     // First, compile flow into steps
-    const automation = this.get(orgId, automationId)
+    const automation = await this.get(orgId, automationId)
     if (!automation) return false
 
     const flow: AutomationFlow = JSON.parse(automation.flow_json)
-    this.compileFlowToSteps(automationId, flow)
+    await this.compileFlowToSteps(automationId, flow)
 
-    const result = this.db.prepare(`
-      UPDATE automations SET status = 'active', updated_at = datetime('now')
-      WHERE id = ? AND org_id = ? AND status IN ('draft', 'paused')
-    `).run(automationId, orgId)
+    const res = await getDb()
+      .update(automations)
+      .set({ status: 'active', updated_at: now() })
+      .where(and(eq(automations.id, automationId), eq(automations.org_id, orgId), inArray(automations.status, ['draft', 'paused'])))
+      .returning({ id: automations.id })
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  pause(orgId: string, automationId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE automations SET status = 'paused', updated_at = datetime('now')
-      WHERE id = ? AND org_id = ? AND status = 'active'
-    `).run(automationId, orgId)
-    return result.changes > 0
+  async pause(orgId: string, automationId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(automations)
+      .set({ status: 'paused', updated_at: now() })
+      .where(and(eq(automations.id, automationId), eq(automations.org_id, orgId), eq(automations.status, 'active')))
+      .returning({ id: automations.id })
+    return res.length > 0
   }
 
-  deactivate(orgId: string, automationId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE automations SET status = 'completed', updated_at = datetime('now')
-      WHERE id = ? AND org_id = ?
-    `).run(automationId, orgId)
-    return result.changes > 0
+  async deactivate(orgId: string, automationId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(automations)
+      .set({ status: 'completed', updated_at: now() })
+      .where(and(eq(automations.id, automationId), eq(automations.org_id, orgId)))
+      .returning({ id: automations.id })
+    return res.length > 0
   }
 
   // --------------------------------------------------------------------------
   // Enrollment
   // --------------------------------------------------------------------------
 
-  enrollContact(automationId: string, contactId: string): boolean {
-    const firstStep = this.db.prepare(`
-      SELECT id FROM automation_steps WHERE automation_id = ? ORDER BY step_order ASC LIMIT 1
-    `).get(automationId) as { id: string } | null
+  async enrollContact(automationId: string, contactId: string): Promise<boolean> {
+    const db = getDb()
+
+    const [firstStep] = await db
+      .select({ id: automation_steps.id })
+      .from(automation_steps)
+      .where(eq(automation_steps.automation_id, automationId))
+      .orderBy(asc(automation_steps.step_order))
+      .limit(1)
 
     if (!firstStep) return false
 
     const id = generateId('enr')
 
-    try {
-      this.db.prepare(`
-        INSERT INTO automation_enrollments (id, automation_id, contact_id, current_step_id, next_action_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-      `).run(id, automationId, contactId, firstStep.id)
+    // UNIQUE(automation_id, contact_id) — ignore duplicate enrollments.
+    const inserted = await db
+      .insert(automation_enrollments)
+      .values({
+        id,
+        automation_id: automationId,
+        contact_id: contactId,
+        current_step_id: firstStep.id,
+        next_action_at: now(),
+      })
+      .onConflictDoNothing({ target: [automation_enrollments.automation_id, automation_enrollments.contact_id] })
+      .returning({ id: automation_enrollments.id })
 
-      this.db.prepare(`
-        UPDATE automations SET enrolled_count = enrolled_count + 1 WHERE id = ?
-      `).run(automationId)
-
-      return true
-    } catch {
+    if (inserted.length === 0) {
       // Duplicate enrollment
       return false
     }
+
+    await db
+      .update(automations)
+      .set({ enrolled_count: sql`${automations.enrolled_count} + 1` })
+      .where(eq(automations.id, automationId))
+
+    return true
   }
 
-  exitContact(automationId: string, contactId: string, reason: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE automation_enrollments
-      SET status = 'exited', exit_reason = ?, completed_at = datetime('now')
-      WHERE automation_id = ? AND contact_id = ? AND status = 'active'
-    `).run(reason, automationId, contactId)
-    return result.changes > 0
+  async exitContact(automationId: string, contactId: string, reason: string): Promise<boolean> {
+    const res = await getDb()
+      .update(automation_enrollments)
+      .set({ status: 'exited', exit_reason: reason, completed_at: now() })
+      .where(and(
+        eq(automation_enrollments.automation_id, automationId),
+        eq(automation_enrollments.contact_id, contactId),
+        eq(automation_enrollments.status, 'active'),
+      ))
+      .returning({ id: automation_enrollments.id })
+    return res.length > 0
   }
 
-  getEnrollments(automationId: string, limit = 50, offset = 0): AutomationEnrollment[] {
-    return this.db.prepare(`
-      SELECT * FROM automation_enrollments WHERE automation_id = ?
-      ORDER BY enrolled_at DESC LIMIT ? OFFSET ?
-    `).all(automationId, limit, offset) as AutomationEnrollment[]
+  async getEnrollments(automationId: string, limit = 50, offset = 0): Promise<AutomationEnrollment[]> {
+    const rows = await getDb()
+      .select()
+      .from(automation_enrollments)
+      .where(eq(automation_enrollments.automation_id, automationId))
+      .orderBy(desc(automation_enrollments.enrolled_at))
+      .limit(limit)
+      .offset(offset)
+    return rows as AutomationEnrollment[]
   }
 
   // --------------------------------------------------------------------------
   // Steps
   // --------------------------------------------------------------------------
 
-  getSteps(automationId: string): AutomationStep[] {
-    return this.db.prepare(`
-      SELECT * FROM automation_steps WHERE automation_id = ? ORDER BY step_order
-    `).all(automationId) as AutomationStep[]
+  async getSteps(automationId: string): Promise<AutomationStep[]> {
+    const rows = await getDb()
+      .select()
+      .from(automation_steps)
+      .where(eq(automation_steps.automation_id, automationId))
+      .orderBy(asc(automation_steps.step_order))
+    return rows as AutomationStep[]
   }
 
-  private compileFlowToSteps(automationId: string, flow: AutomationFlow): void {
+  private async compileFlowToSteps(automationId: string, flow: AutomationFlow): Promise<void> {
+    const db = getDb()
+
     // Clear existing steps
-    this.db.prepare('DELETE FROM automation_steps WHERE automation_id = ?').run(automationId)
+    await db.delete(automation_steps).where(eq(automation_steps.automation_id, automationId))
 
     if (!flow.nodes || flow.nodes.length === 0) return
 
-    const stmt = this.db.prepare(`
-      INSERT INTO automation_steps (id, automation_id, step_order, step_type, config_json, next_step_id, true_step_id, false_step_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    const rows: (typeof automation_steps.$inferInsert)[] = []
 
-    const transaction = this.db.transaction(() => {
-      for (let i = 0; i < flow.nodes.length; i++) {
-        const node = flow.nodes[i]
-        const stepId = `step_${automationId}_${i}`
+    for (let i = 0; i < flow.nodes.length; i++) {
+      const node = flow.nodes[i]
+      const stepId = `step_${automationId}_${i}`
 
-        // Find outgoing edges
-        const defaultEdge = flow.edges.find(e => e.from === node.id && (!e.label || e.label === 'default'))
-        const trueEdge = flow.edges.find(e => e.from === node.id && e.label === 'true')
-        const falseEdge = flow.edges.find(e => e.from === node.id && e.label === 'false')
+      // Find outgoing edges
+      const defaultEdge = flow.edges.find(e => e.from === node.id && (!e.label || e.label === 'default'))
+      const trueEdge = flow.edges.find(e => e.from === node.id && e.label === 'true')
+      const falseEdge = flow.edges.find(e => e.from === node.id && e.label === 'false')
 
-        // Map edge targets to step IDs
-        const findStepId = (nodeId: string) => {
-          const idx = flow.nodes.findIndex(n => n.id === nodeId)
-          return idx >= 0 ? `step_${automationId}_${idx}` : null
-        }
-
-        const { id: _, type, ...config } = node as any
-
-        stmt.run(
-          stepId,
-          automationId,
-          i,
-          type,
-          JSON.stringify(config),
-          defaultEdge ? findStepId(defaultEdge.to) : null,
-          trueEdge ? findStepId(trueEdge.to) : null,
-          falseEdge ? findStepId(falseEdge.to) : null
-        )
+      // Map edge targets to step IDs
+      const findStepId = (nodeId: string) => {
+        const idx = flow.nodes.findIndex(n => n.id === nodeId)
+        return idx >= 0 ? `step_${automationId}_${idx}` : null
       }
-    })
 
-    transaction()
+      const { id: _, type, ...config } = node as any
+
+      rows.push({
+        id: stepId,
+        automation_id: automationId,
+        step_order: i,
+        step_type: type,
+        config_json: JSON.stringify(config),
+        next_step_id: defaultEdge ? findStepId(defaultEdge.to) : null,
+        true_step_id: trueEdge ? findStepId(trueEdge.to) : null,
+        false_step_id: falseEdge ? findStepId(falseEdge.to) : null,
+      })
+    }
+
+    await db.insert(automation_steps).values(rows)
   }
 
   // --------------------------------------------------------------------------
@@ -416,15 +363,30 @@ class AutomationService {
    * Returns number of enrollments processed.
    */
   async processDueActions(): Promise<number> {
-    const due = this.db.prepare(`
-      SELECT e.*, s.step_type, s.config_json, s.next_step_id, s.true_step_id, s.false_step_id, a.org_id
-      FROM automation_enrollments e
-      JOIN automation_steps s ON e.current_step_id = s.id
-      JOIN automations a ON e.automation_id = a.id
-      WHERE e.status = 'active' AND e.next_action_at <= datetime('now')
-      ORDER BY e.next_action_at
-      LIMIT 100
-    `).all() as (AutomationEnrollment & { step_type: StepType; config_json: string; next_step_id: string | null; true_step_id: string | null; false_step_id: string | null; org_id: string })[]
+    const due = await getDb()
+      .select({
+        id: automation_enrollments.id,
+        automation_id: automation_enrollments.automation_id,
+        contact_id: automation_enrollments.contact_id,
+        current_step_id: automation_enrollments.current_step_id,
+        status: automation_enrollments.status,
+        enrolled_at: automation_enrollments.enrolled_at,
+        next_action_at: automation_enrollments.next_action_at,
+        completed_at: automation_enrollments.completed_at,
+        exit_reason: automation_enrollments.exit_reason,
+        step_type: automation_steps.step_type,
+        config_json: automation_steps.config_json,
+        next_step_id: automation_steps.next_step_id,
+        true_step_id: automation_steps.true_step_id,
+        false_step_id: automation_steps.false_step_id,
+        org_id: automations.org_id,
+      })
+      .from(automation_enrollments)
+      .innerJoin(automation_steps, eq(automation_enrollments.current_step_id, automation_steps.id))
+      .innerJoin(automations, eq(automation_enrollments.automation_id, automations.id))
+      .where(and(eq(automation_enrollments.status, 'active'), lte(automation_enrollments.next_action_at, now())))
+      .orderBy(asc(automation_enrollments.next_action_at))
+      .limit(100) as (AutomationEnrollment & { step_type: StepType; config_json: string; next_step_id: string | null; true_step_id: string | null; false_step_id: string | null; org_id: string })[]
 
     let processed = 0
 
@@ -432,7 +394,7 @@ class AutomationService {
       try {
         // Check goal condition before executing step
         if (await this.checkGoal(enrollment)) {
-          this.exitWithGoal(enrollment.id, enrollment.automation_id)
+          await this.exitWithGoal(enrollment.id, enrollment.automation_id)
           processed++
           continue
         }
@@ -460,7 +422,7 @@ class AutomationService {
           templateId: config.templateId,
           subject: config.subject,
         })
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
 
       case 'send_whatsapp': {
@@ -479,7 +441,7 @@ class AutomationService {
         } else {
           logger.warn(`WhatsApp step skipped: missing phone/config for contact ${enrollment.contact_id}`)
         }
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
       }
 
@@ -490,9 +452,10 @@ class AutomationService {
         const nextAt = new Date(Date.now() + delayMs).toISOString()
 
         // Move to next step but schedule the action time
-        this.db.prepare(`
-          UPDATE automation_enrollments SET current_step_id = ?, next_action_at = ? WHERE id = ?
-        `).run(enrollment.next_step_id, nextAt, enrollment.id)
+        await getDb()
+          .update(automation_enrollments)
+          .set({ current_step_id: enrollment.next_step_id, next_action_at: nextAt })
+          .where(eq(automation_enrollments.id, enrollment.id))
         break
       }
 
@@ -501,10 +464,10 @@ class AutomationService {
         const contact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         if (contact) {
           const result = evaluateCondition(contact, { field: config.field, operator: config.operator, value: config.value })
-          this.advanceToNext(enrollment.id, result ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
+          await this.advanceToNext(enrollment.id, result ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
         } else {
           // Contact not found — take false branch
-          this.advanceToNext(enrollment.id, enrollment.false_step_id || enrollment.next_step_id)
+          await this.advanceToNext(enrollment.id, enrollment.false_step_id || enrollment.next_step_id)
         }
         break
       }
@@ -513,12 +476,13 @@ class AutomationService {
         // Filter is like condition but only has one output (pass or exit)
         const filterContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         if (filterContact && evaluateCondition(filterContact, { field: config.field, operator: config.operator, value: config.value })) {
-          this.advanceToNext(enrollment.id, enrollment.next_step_id)
+          await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         } else {
           // Filtered out — exit automation
-          this.db.prepare(`
-            UPDATE automation_enrollments SET status = 'exited', exit_reason = 'filtered', completed_at = datetime('now') WHERE id = ?
-          `).run(enrollment.id)
+          await getDb()
+            .update(automation_enrollments)
+            .set({ status: 'exited', exit_reason: 'filtered', completed_at: now() })
+            .where(eq(automation_enrollments.id, enrollment.id))
         }
         break
       }
@@ -535,7 +499,7 @@ class AutomationService {
         }
         // For split tests, step has multiple next_step references encoded in config
         const nextSteps: string[] = config.next_steps || []
-        this.advanceToNext(enrollment.id, nextSteps[chosenIndex] || enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, nextSteps[chosenIndex] || enrollment.next_step_id)
         break
       }
 
@@ -550,11 +514,12 @@ class AutomationService {
           targetDate = config.date || new Date().toISOString()
         }
         if (new Date(targetDate) <= new Date()) {
-          this.advanceToNext(enrollment.id, enrollment.next_step_id)
+          await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         } else {
-          this.db.prepare(`
-            UPDATE automation_enrollments SET next_action_at = ? WHERE id = ?
-          `).run(targetDate, enrollment.id)
+          await getDb()
+            .update(automation_enrollments)
+            .set({ next_action_at: targetDate })
+            .where(eq(automation_enrollments.id, enrollment.id))
         }
         break
       }
@@ -569,7 +534,7 @@ class AutomationService {
             body: config.bodyTemplate || JSON.stringify({ contactId: enrollment.contact_id }),
           }).catch((err) => logger.error('HTTP request node error:', err))
         }
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
       }
 
@@ -582,7 +547,7 @@ class AutomationService {
           amount: config.amount || 0,
           reason: config.reason || 'automation',
         })
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
       }
 
@@ -599,7 +564,7 @@ class AutomationService {
           stepType: enrollment.step_type,
           config,
         })
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
 
       case 'send_notification': {
@@ -612,7 +577,7 @@ class AutomationService {
           subject: config.subject,
           message: config.message,
         })
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
       }
 
@@ -621,14 +586,14 @@ class AutomationService {
         const tagContact = await contactService.getContact(enrollment.org_id || '', enrollment.contact_id)
         const tags = tagContact?.tags ? tagContact.tags.split(',').map((t: string) => t.trim().toLowerCase()) : []
         const hasTag = tags.includes((config.tag || '').toLowerCase())
-        this.advanceToNext(enrollment.id, hasTag ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
+        await this.advanceToNext(enrollment.id, hasTag ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
         break
       }
 
       case 'in_list': {
         // Condition: check if contact is in a specific list
         const inListResult = config.list_id ? true : false // Simplified — would need contactService.isInList()
-        this.advanceToNext(enrollment.id, inListResult ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
+        await this.advanceToNext(enrollment.id, inListResult ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
         break
       }
 
@@ -645,7 +610,7 @@ class AutomationService {
           case 'less_equal': scoreResult = score <= threshold; break
           case 'equals': scoreResult = score === threshold; break
         }
-        this.advanceToNext(enrollment.id, scoreResult ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
+        await this.advanceToNext(enrollment.id, scoreResult ? (enrollment.true_step_id || enrollment.next_step_id) : (enrollment.false_step_id || enrollment.next_step_id))
         break
       }
 
@@ -670,36 +635,37 @@ class AutomationService {
 
         const trueStepId = enrollment.true_step_id || enrollment.next_step_id
 
-        this.db.prepare(`
-          UPDATE automation_enrollments
-          SET current_step_id = ?, next_action_at = ?, waiting_for_event = ?, wait_true_step_id = ?
-          WHERE id = ?
-        `).run(
-          enrollment.false_step_id || enrollment.next_step_id,
-          nextAt,
-          enrollment.step_type,
-          trueStepId,
-          enrollment.id
-        )
+        await getDb()
+          .update(automation_enrollments)
+          .set({
+            current_step_id: enrollment.false_step_id || enrollment.next_step_id,
+            next_action_at: nextAt,
+            waiting_for_event: enrollment.step_type,
+            wait_true_step_id: trueStepId,
+          })
+          .where(eq(automation_enrollments.id, enrollment.id))
         break
       }
 
       case 'send_window': {
         // Only proceed during specific hours/days
-        const now = new Date()
-        const hour = now.getHours()
+        const nowDate = new Date()
+        const hour = nowDate.getHours()
         const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
-        const today = dayNames[now.getDay()]
+        const today = dayNames[nowDate.getDay()]
         const startHour = config.start_hour ?? 0
         const endHour = config.end_hour ?? 23
         const allowedDays = config.days ? config.days.split(',').map((d: string) => d.trim().toLowerCase()) : dayNames
 
         if (hour >= startHour && hour <= endHour && allowedDays.includes(today)) {
-          this.advanceToNext(enrollment.id, enrollment.next_step_id)
+          await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         } else {
           // Wait 1 hour and check again
           const nextCheck = new Date(Date.now() + 3600000).toISOString()
-          this.db.prepare(`UPDATE automation_enrollments SET next_action_at = ? WHERE id = ?`).run(nextCheck, enrollment.id)
+          await getDb()
+            .update(automation_enrollments)
+            .set({ next_action_at: nextCheck })
+            .where(eq(automation_enrollments.id, enrollment.id))
         }
         break
       }
@@ -713,16 +679,18 @@ class AutomationService {
             body: JSON.stringify({ contactId: enrollment.contact_id, automationId: enrollment.automation_id }),
           }).catch(() => {})
         }
-        this.advanceToNext(enrollment.id, enrollment.next_step_id)
+        await this.advanceToNext(enrollment.id, enrollment.next_step_id)
         break
 
       case 'end':
-        this.db.prepare(`
-          UPDATE automation_enrollments SET status = 'completed', completed_at = datetime('now') WHERE id = ?
-        `).run(enrollment.id)
-        this.db.prepare(`
-          UPDATE automations SET completed_count = completed_count + 1 WHERE id = ?
-        `).run(enrollment.automation_id)
+        await getDb()
+          .update(automation_enrollments)
+          .set({ status: 'completed', completed_at: now() })
+          .where(eq(automation_enrollments.id, enrollment.id))
+        await getDb()
+          .update(automations)
+          .set({ completed_count: sql`${automations.completed_count} + 1` })
+          .where(eq(automations.id, enrollment.automation_id))
         break
     }
   }
@@ -732,7 +700,11 @@ class AutomationService {
    * If goal is met, the enrollment should exit early.
    */
   private async checkGoal(enrollment: { id: string; automation_id: string; contact_id: string; org_id: string }): Promise<boolean> {
-    const automation = this.db.prepare('SELECT goal_condition FROM automations WHERE id = ?').get(enrollment.automation_id) as any
+    const [automation] = await getDb()
+      .select({ goal_condition: automations.goal_condition })
+      .from(automations)
+      .where(eq(automations.id, enrollment.automation_id))
+      .limit(1)
     if (!automation?.goal_condition) return false
 
     try {
@@ -751,32 +723,34 @@ class AutomationService {
   /**
    * Exit an enrollment because the goal was achieved.
    */
-  private exitWithGoal(enrollmentId: string, automationId: string): void {
-    this.db.prepare(`
-      UPDATE automation_enrollments
-      SET status = 'exited', exit_reason = 'goal_achieved', completed_at = datetime('now')
-      WHERE id = ?
-    `).run(enrollmentId)
+  private async exitWithGoal(enrollmentId: string, automationId: string): Promise<void> {
+    await getDb()
+      .update(automation_enrollments)
+      .set({ status: 'exited', exit_reason: 'goal_achieved', completed_at: now() })
+      .where(eq(automation_enrollments.id, enrollmentId))
 
-    this.db.prepare(`
-      UPDATE automations SET completed_count = completed_count + 1 WHERE id = ?
-    `).run(automationId)
+    await getDb()
+      .update(automations)
+      .set({ completed_count: sql`${automations.completed_count} + 1` })
+      .where(eq(automations.id, automationId))
 
     logger.info(`[Automation] Enrollment ${enrollmentId} exited — goal achieved`)
   }
 
-  private advanceToNext(enrollmentId: string, nextStepId: string | null): void {
+  private async advanceToNext(enrollmentId: string, nextStepId: string | null): Promise<void> {
     if (!nextStepId) {
       // No next step - complete the enrollment
-      this.db.prepare(`
-        UPDATE automation_enrollments SET status = 'completed', completed_at = datetime('now') WHERE id = ?
-      `).run(enrollmentId)
+      await getDb()
+        .update(automation_enrollments)
+        .set({ status: 'completed', completed_at: now() })
+        .where(eq(automation_enrollments.id, enrollmentId))
       return
     }
 
-    this.db.prepare(`
-      UPDATE automation_enrollments SET current_step_id = ?, next_action_at = datetime('now') WHERE id = ?
-    `).run(nextStepId, enrollmentId)
+    await getDb()
+      .update(automation_enrollments)
+      .set({ current_step_id: nextStepId, next_action_at: now() })
+      .where(eq(automation_enrollments.id, enrollmentId))
   }
 
   private unitToMs(duration: number, unit: string): number {
@@ -792,21 +766,22 @@ class AutomationService {
   // Stats
   // --------------------------------------------------------------------------
 
-  getStats(automationId: string): { enrolled: number; active: number; completed: number; exited: number } {
-    const row = this.db.prepare(`
-      SELECT
-        COUNT(*) as enrolled,
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'exited' THEN 1 ELSE 0 END) as exited
-      FROM automation_enrollments WHERE automation_id = ?
-    `).get(automationId) as any
+  async getStats(automationId: string): Promise<{ enrolled: number; active: number; completed: number; exited: number }> {
+    const [row] = await getDb()
+      .select({
+        enrolled: count(),
+        active: sql<number>`sum(case when ${automation_enrollments.status} = 'active' then 1 else 0 end)::int`,
+        completed: sql<number>`sum(case when ${automation_enrollments.status} = 'completed' then 1 else 0 end)::int`,
+        exited: sql<number>`sum(case when ${automation_enrollments.status} = 'exited' then 1 else 0 end)::int`,
+      })
+      .from(automation_enrollments)
+      .where(eq(automation_enrollments.automation_id, automationId))
 
     return {
-      enrolled: row.enrolled || 0,
-      active: row.active || 0,
-      completed: row.completed || 0,
-      exited: row.exited || 0,
+      enrolled: row?.enrolled || 0,
+      active: row?.active || 0,
+      completed: row?.completed || 0,
+      exited: row?.exited || 0,
     }
   }
 
@@ -822,18 +797,22 @@ class AutomationService {
    * Yes-branch step immediately, and clears the wait state so the No-path
    * timeout no longer applies. Returns the number of enrollments advanced.
    */
-  handleTrackingEvent(eventType: string, contactId: string): number {
-    const result = this.db.prepare(`
-      UPDATE automation_enrollments
-      SET current_step_id = wait_true_step_id,
-          next_action_at = datetime('now'),
-          waiting_for_event = NULL
-      WHERE contact_id = ?
-        AND waiting_for_event = ?
-        AND status = 'active'
-        AND wait_true_step_id IS NOT NULL
-    `).run(contactId, eventType)
-    return result.changes
+  async handleTrackingEvent(eventType: string, contactId: string): Promise<number> {
+    const res = await getDb()
+      .update(automation_enrollments)
+      .set({
+        current_step_id: sql`${automation_enrollments.wait_true_step_id}`,
+        next_action_at: now(),
+        waiting_for_event: null,
+      })
+      .where(and(
+        eq(automation_enrollments.contact_id, contactId),
+        eq(automation_enrollments.waiting_for_event, eventType),
+        eq(automation_enrollments.status, 'active'),
+        isNotNull(automation_enrollments.wait_true_step_id),
+      ))
+      .returning({ id: automation_enrollments.id })
+    return res.length
   }
 
   /**
@@ -843,7 +822,7 @@ class AutomationService {
    */
   private registerEventHandlers(): void {
     const advance = (eventType: string) => (e: { contactId?: string }) => {
-      if (e.contactId) this.handleTrackingEvent(eventType, e.contactId)
+      if (e.contactId) void this.handleTrackingEvent(eventType, e.contactId)
     }
     eventBus.on('email_opened', advance('email_opened'))
     eventBus.on('email_clicked', advance('email_clicked'))
