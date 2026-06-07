@@ -250,7 +250,7 @@ app.onError((err, c) => {
 // Initialization
 // ============================================================================
 
-async function initialize() {
+export async function startBackgroundWorkers() {
   // Create required directories
   const dirs = Object.values(DIRECTORIES)
   await Promise.all(dirs.map((dir) => !existsSync(dir) && mkdir(dir, { recursive: true })))
@@ -282,26 +282,18 @@ async function initialize() {
   logger.startup('✅ Ready\n')
 }
 
-await initialize()
-
 // ============================================================================
-// Graceful Shutdown
+// Background worker lifecycle (started/stopped by index.ts; never at import)
 // ============================================================================
 
-function shutdown(signal: string) {
-  logger.info(`${signal} received — shutting down gracefully...`)
-
+export function stopBackgroundWorkers() {
   // Stop workers first (no new jobs picked up)
   queueEngine.stopWorker()
   automationService.stopWorker()
   warmupService.stopWorker()
 
-  logger.info('All workers stopped. Goodbye.')
-  process.exit(0)
+  logger.info('All workers stopped.')
 }
-
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
 
 // ============================================================================
 // Export
