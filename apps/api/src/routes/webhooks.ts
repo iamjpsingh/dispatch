@@ -43,9 +43,9 @@ const app = new Hono()
 // Webhook CRUD
 // ============================================================================
 
-app.get('/webhooks', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), (c) => {
+app.get('/webhooks', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const webhooks = webhookService.list(orgId)
+  const webhooks = await webhookService.list(orgId)
 
   // Hide secrets in list view
   const safe = webhooks.map(w => ({ ...w, secret: w.secret.substring(0, 8) + '...' }))
@@ -57,15 +57,15 @@ app.post('/webhooks', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) 
   const orgId = getOrgId(c)
   const body = await validateBody(c, CreateWebhookSchema)
 
-  const webhook = webhookService.create(orgId, user.id, body)
+  const webhook = await webhookService.create(orgId, user.id, body)
   return success(c, webhook, 'Webhook created', 201)
 })
 
-app.get('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), (c) => {
+app.get('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const webhookId = c.req.param('id')
 
-  const webhook = webhookService.get(orgId, webhookId)
+  const webhook = await webhookService.get(orgId, webhookId)
   if (!webhook) return error(c, 'Webhook not found', 404)
 
   return success(c, webhook)
@@ -76,17 +76,17 @@ app.put('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (
   const webhookId = c.req.param('id')
   const body = await validateBody(c, UpdateWebhookSchema)
 
-  const updated = webhookService.update(orgId, webhookId, body)
+  const updated = await webhookService.update(orgId, webhookId, body)
   if (!updated) return error(c, 'Webhook not found', 404)
 
   return success(c, undefined, 'Webhook updated')
 })
 
-app.delete('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), (c) => {
+app.delete('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const webhookId = c.req.param('id')
 
-  const deleted = webhookService.delete(orgId, webhookId)
+  const deleted = await webhookService.delete(orgId, webhookId)
   if (!deleted) return error(c, 'Webhook not found', 404)
 
   return success(c, undefined, 'Webhook deleted')
@@ -101,7 +101,7 @@ app.post('/webhooks/:id/toggle', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE),
   const webhookId = c.req.param('id')
   const body = await validateBody(c, ToggleWebhookSchema)
 
-  const toggled = webhookService.toggleEnabled(orgId, webhookId, body.enabled)
+  const toggled = await webhookService.toggleEnabled(orgId, webhookId, body.enabled)
   if (!toggled) return error(c, 'Webhook not found', 404)
 
   return success(c, undefined, body.enabled ? 'Webhook enabled' : 'Webhook disabled')
@@ -119,27 +119,27 @@ app.post('/webhooks/:id/test', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), a
 // Webhook Logs
 // ============================================================================
 
-app.get('/webhooks/:id/logs', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), (c) => {
+app.get('/webhooks/:id/logs', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const webhookId = c.req.param('id')
   const limit = parseInt(c.req.query('limit') || '50')
   const offset = parseInt(c.req.query('offset') || '0')
 
-  const webhook = webhookService.get(orgId, webhookId)
+  const webhook = await webhookService.get(orgId, webhookId)
   if (!webhook) return error(c, 'Webhook not found', 404)
 
-  const logs = webhookService.getLogs(webhookId, limit, offset)
+  const logs = await webhookService.getLogs(webhookId, limit, offset)
   return success(c, { logs })
 })
 
-app.delete('/webhooks/:id/logs', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), (c) => {
+app.delete('/webhooks/:id/logs', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const webhookId = c.req.param('id')
 
-  const webhook = webhookService.get(orgId, webhookId)
+  const webhook = await webhookService.get(orgId, webhookId)
   if (!webhook) return error(c, 'Webhook not found', 404)
 
-  const cleared = webhookService.clearLogs(webhookId)
+  const cleared = await webhookService.clearLogs(webhookId)
   return success(c, { cleared }, `${cleared} log(s) cleared`)
 })
 

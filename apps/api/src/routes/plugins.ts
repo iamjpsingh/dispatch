@@ -37,7 +37,7 @@ app.get('/plugins', async (c) => {
   const user = requireAuth(c)
   const type = c.req.query('type') || undefined
   const status = c.req.query('status') || undefined
-  const plugins = pluginManager.list(user.id, { type, status })
+  const plugins = await pluginManager.list(user.id, { type, status })
   return success(c, { plugins })
 })
 
@@ -66,7 +66,7 @@ app.get('/plugins/hooks', async (c) => {
 app.get('/plugins/:id', async (c) => {
   const user = requireAuth(c)
   const pluginId = c.req.param('id')
-  const plugin = pluginManager.get(user.id, pluginId)
+  const plugin = await pluginManager.get(user.id, pluginId)
 
   if (!plugin) return error(c, 'Plugin not found', 404)
   return success(c, plugin)
@@ -78,7 +78,7 @@ app.post('/plugins', async (c) => {
   const body = await validateBody(c, InstallPluginSchema)
 
   try {
-    const plugin = pluginManager.install(user.id, {
+    const plugin = await pluginManager.install(user.id, {
       manifest: body.manifest,
       settings: body.settings,
     })
@@ -96,7 +96,7 @@ app.post('/plugins/providers/install', async (c) => {
   const user = requireAuth(c)
   const { providerName, settings } = await validateBody(c, InstallProviderSchema)
 
-  const plugin = pluginManager.installBuiltinProvider(user.id, providerName, settings || {})
+  const plugin = await pluginManager.installBuiltinProvider(user.id, providerName, settings || {})
 
   if (!plugin) {
     return error(c, `Provider "${providerName}" not found`, 404)
@@ -110,7 +110,7 @@ app.post('/plugins/:id/activate', async (c) => {
   const user = requireAuth(c)
   const pluginId = c.req.param('id')
 
-  if (!pluginManager.activate(user.id, pluginId)) {
+  if (!(await pluginManager.activate(user.id, pluginId))) {
     return error(c, 'Plugin not found', 404)
   }
 
@@ -122,7 +122,7 @@ app.post('/plugins/:id/disable', async (c) => {
   const user = requireAuth(c)
   const pluginId = c.req.param('id')
 
-  if (!pluginManager.disable(user.id, pluginId)) {
+  if (!(await pluginManager.disable(user.id, pluginId))) {
     return error(c, 'Plugin not found', 404)
   }
 
@@ -135,7 +135,7 @@ app.put('/plugins/:id/settings', async (c) => {
   const pluginId = c.req.param('id')
   const { settings } = await validateBody(c, PluginSettingsSchema)
 
-  if (!pluginManager.updateSettings(user.id, pluginId, settings)) {
+  if (!(await pluginManager.updateSettings(user.id, pluginId, settings))) {
     return error(c, 'Plugin not found', 404)
   }
 
@@ -147,7 +147,7 @@ app.delete('/plugins/:id', async (c) => {
   const user = requireAuth(c)
   const pluginId = c.req.param('id')
 
-  if (!pluginManager.uninstall(user.id, pluginId)) {
+  if (!(await pluginManager.uninstall(user.id, pluginId))) {
     return error(c, 'Plugin not found', 404)
   }
 

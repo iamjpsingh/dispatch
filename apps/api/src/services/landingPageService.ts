@@ -1,9 +1,8 @@
-// src/services/landingPageService.ts - Landing Page Management
+// src/services/landingPageService.ts - Landing Page Management (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
-import { logger } from '../utils/logger'
+import { and, eq, desc, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { landing_pages } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 
 // ============================================================================
@@ -103,52 +102,17 @@ h1{font-size:30px;margin-bottom:12px}p{font-size:16px;color:#555}`,
   },
 }
 
+const now = () => new Date().toISOString()
+
+function slugify(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+}
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class LandingPageService {
-  private db: Database
-
-  constructor() {
-    const dbPath = './data/pages.db'
-    const dbDir = dirname(dbPath)
-    if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true })
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS landing_pages (
-        id TEXT PRIMARY KEY,
-        org_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        slug TEXT NOT NULL,
-        title TEXT NOT NULL,
-        template TEXT NOT NULL DEFAULT 'lead_capture',
-        html_content TEXT NOT NULL DEFAULT '',
-        css_content TEXT NOT NULL DEFAULT '',
-        meta_description TEXT,
-        meta_image TEXT,
-        form_id TEXT,
-        tracking_enabled INTEGER DEFAULT 1,
-        published INTEGER DEFAULT 0,
-        visit_count INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(org_id, slug)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_lp_org ON landing_pages(org_id);
-      CREATE INDEX IF NOT EXISTS idx_lp_slug ON landing_pages(slug);
-      CREATE INDEX IF NOT EXISTS idx_lp_published ON landing_pages(published);
-    `)
-  }
-
   // --------------------------------------------------------------------------
   // Templates
   // --------------------------------------------------------------------------
@@ -161,98 +125,129 @@ class LandingPageService {
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(orgId: string, userId: string, input: LandingPageInput): LandingPage {
+  async create(orgId: string, userId: string, input: LandingPageInput): Promise<LandingPage> {
+    const db = getDb()
     const id = generateId('pg')
-    const slug = input.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    const slug = slugify(input.slug)
 
     // Check slug uniqueness within org
-    const existing = this.db.prepare('SELECT id FROM landing_pages WHERE org_id = ? AND slug = ?').get(orgId, slug)
-    if (existing) throw new Error(`Slug "${slug}" is already in use`)
+    const existing = await db
+      .select({ id: landing_pages.id })
+      .from(landing_pages)
+      .where(and(eq(landing_pages.org_id, orgId), eq(landing_pages.slug, slug)))
+      .limit(1)
+    if (existing.length > 0) throw new Error(`Slug "${slug}" is already in use`)
 
     const template = TEMPLATES[input.template || 'lead_capture']
     const htmlContent = input.html_content || template?.html || ''
     const cssContent = input.css_content || template?.css || ''
 
-    this.db.prepare(`
-      INSERT INTO landing_pages (id, org_id, user_id, slug, title, template, html_content, css_content, meta_description, meta_image, form_id, tracking_enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId, slug,
-      input.title,
-      input.template || 'lead_capture',
-      htmlContent,
-      cssContent,
-      input.meta_description || null,
-      input.meta_image || null,
-      input.form_id || null,
-      input.tracking_enabled !== false ? 1 : 0
-    )
+    await db.insert(landing_pages).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      slug,
+      title: input.title,
+      template: input.template || 'lead_capture',
+      html_content: htmlContent,
+      css_content: cssContent,
+      meta_description: input.meta_description || null,
+      meta_image: input.meta_image || null,
+      form_id: input.form_id || null,
+      tracking_enabled: input.tracking_enabled !== false ? 1 : 0,
+    })
 
-    return this.db.prepare('SELECT * FROM landing_pages WHERE id = ?').get(id) as LandingPage
+    const [row] = await db.select().from(landing_pages).where(eq(landing_pages.id, id)).limit(1)
+    return row as LandingPage
   }
 
-  list(orgId: string): LandingPage[] {
-    return this.db.prepare('SELECT * FROM landing_pages WHERE org_id = ? ORDER BY created_at DESC').all(orgId) as LandingPage[]
+  async list(orgId: string): Promise<LandingPage[]> {
+    const rows = await getDb()
+      .select()
+      .from(landing_pages)
+      .where(eq(landing_pages.org_id, orgId))
+      .orderBy(desc(landing_pages.created_at))
+    return rows as LandingPage[]
   }
 
-  get(pageId: string): LandingPage | null {
-    return this.db.prepare('SELECT * FROM landing_pages WHERE id = ?').get(pageId) as LandingPage | null
+  async get(pageId: string): Promise<LandingPage | null> {
+    const [row] = await getDb().select().from(landing_pages).where(eq(landing_pages.id, pageId)).limit(1)
+    return (row as LandingPage) ?? null
   }
 
-  getBySlug(slug: string): LandingPage | null {
-    return this.db.prepare('SELECT * FROM landing_pages WHERE slug = ? AND published = 1').get(slug) as LandingPage | null
+  async getBySlug(slug: string): Promise<LandingPage | null> {
+    const [row] = await getDb()
+      .select()
+      .from(landing_pages)
+      .where(and(eq(landing_pages.slug, slug), eq(landing_pages.published, 1)))
+      .limit(1)
+    return (row as LandingPage) ?? null
   }
 
-  update(orgId: string, pageId: string, updates: Partial<LandingPageInput>): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, pageId: string, updates: Partial<LandingPageInput>): Promise<boolean> {
+    const values: Partial<typeof landing_pages.$inferInsert> = {}
 
-    if (updates.title !== undefined) { sets.push('title = ?'); params.push(updates.title) }
+    if (updates.title !== undefined) values.title = updates.title
     if (updates.slug !== undefined) {
-      const slug = updates.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
-      const existing = this.db.prepare('SELECT id FROM landing_pages WHERE org_id = ? AND slug = ? AND id != ?').get(orgId, slug, pageId)
-      if (existing) throw new Error(`Slug "${slug}" is already in use`)
-      sets.push('slug = ?'); params.push(slug)
+      const slug = slugify(updates.slug)
+      const existing = await getDb()
+        .select({ id: landing_pages.id })
+        .from(landing_pages)
+        .where(and(eq(landing_pages.org_id, orgId), eq(landing_pages.slug, slug), sql`${landing_pages.id} != ${pageId}`))
+        .limit(1)
+      if (existing.length > 0) throw new Error(`Slug "${slug}" is already in use`)
+      values.slug = slug
     }
-    if (updates.html_content !== undefined) { sets.push('html_content = ?'); params.push(updates.html_content) }
-    if (updates.css_content !== undefined) { sets.push('css_content = ?'); params.push(updates.css_content) }
-    if (updates.meta_description !== undefined) { sets.push('meta_description = ?'); params.push(updates.meta_description) }
-    if (updates.meta_image !== undefined) { sets.push('meta_image = ?'); params.push(updates.meta_image) }
-    if (updates.form_id !== undefined) { sets.push('form_id = ?'); params.push(updates.form_id) }
-    if (updates.tracking_enabled !== undefined) { sets.push('tracking_enabled = ?'); params.push(updates.tracking_enabled ? 1 : 0) }
+    if (updates.html_content !== undefined) values.html_content = updates.html_content
+    if (updates.css_content !== undefined) values.css_content = updates.css_content
+    if (updates.meta_description !== undefined) values.meta_description = updates.meta_description
+    if (updates.meta_image !== undefined) values.meta_image = updates.meta_image
+    if (updates.form_id !== undefined) values.form_id = updates.form_id
+    if (updates.tracking_enabled !== undefined) values.tracking_enabled = updates.tracking_enabled ? 1 : 0
 
-    if (sets.length === 0) return false
+    if (Object.keys(values).length === 0) return false
 
-    sets.push("updated_at = datetime('now')")
-    params.push(pageId, orgId)
+    values.updated_at = now()
 
-    const result = this.db.prepare(`
-      UPDATE landing_pages SET ${sets.join(', ')} WHERE id = ? AND org_id = ?
-    `).run(...params)
-    return result.changes > 0
+    const res = await getDb()
+      .update(landing_pages)
+      .set(values)
+      .where(and(eq(landing_pages.id, pageId), eq(landing_pages.org_id, orgId)))
+      .returning({ id: landing_pages.id })
+    return res.length > 0
   }
 
-  publish(orgId: string, pageId: string): boolean {
-    const result = this.db.prepare(
-      "UPDATE landing_pages SET published = 1, updated_at = datetime('now') WHERE id = ? AND org_id = ?"
-    ).run(pageId, orgId)
-    return result.changes > 0
+  async publish(orgId: string, pageId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(landing_pages)
+      .set({ published: 1, updated_at: now() })
+      .where(and(eq(landing_pages.id, pageId), eq(landing_pages.org_id, orgId)))
+      .returning({ id: landing_pages.id })
+    return res.length > 0
   }
 
-  unpublish(orgId: string, pageId: string): boolean {
-    const result = this.db.prepare(
-      "UPDATE landing_pages SET published = 0, updated_at = datetime('now') WHERE id = ? AND org_id = ?"
-    ).run(pageId, orgId)
-    return result.changes > 0
+  async unpublish(orgId: string, pageId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(landing_pages)
+      .set({ published: 0, updated_at: now() })
+      .where(and(eq(landing_pages.id, pageId), eq(landing_pages.org_id, orgId)))
+      .returning({ id: landing_pages.id })
+    return res.length > 0
   }
 
-  delete(orgId: string, pageId: string): boolean {
-    const result = this.db.prepare('DELETE FROM landing_pages WHERE id = ? AND org_id = ?').run(pageId, orgId)
-    return result.changes > 0
+  async delete(orgId: string, pageId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(landing_pages)
+      .where(and(eq(landing_pages.id, pageId), eq(landing_pages.org_id, orgId)))
+      .returning({ id: landing_pages.id })
+    return res.length > 0
   }
 
-  incrementVisits(pageId: string): void {
-    this.db.prepare('UPDATE landing_pages SET visit_count = visit_count + 1 WHERE id = ?').run(pageId)
+  async incrementVisits(pageId: string): Promise<void> {
+    await getDb()
+      .update(landing_pages)
+      .set({ visit_count: sql`${landing_pages.visit_count} + 1` })
+      .where(eq(landing_pages.id, pageId))
   }
 
   // --------------------------------------------------------------------------

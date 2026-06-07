@@ -1,11 +1,9 @@
-// src/services/formService.ts - Universal Form Connector
+// src/services/formService.ts - Universal Form Connector (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
-import { logger } from '../utils/logger'
+import { and, eq, desc, count, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { form_endpoints, form_submissions } from '../db/pg/schema'
 import { generateId } from '../utils/id'
-import { eventBus } from './eventBus'
 
 // ============================================================================
 // Types
@@ -61,168 +59,146 @@ export interface FormInput {
   success_message?: string
 }
 
+const now = () => new Date().toISOString()
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class FormService {
-  private db: Database
-
-  constructor() {
-    const dbPath = './data/contacts.db' // Share DB with contacts
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS form_endpoints (
-        id TEXT PRIMARY KEY,
-        org_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        list_id TEXT NOT NULL,
-        field_mapping TEXT DEFAULT '{}',
-        required_fields TEXT DEFAULT '["email"]',
-        allowed_domains TEXT DEFAULT '[]',
-        redirect_url TEXT,
-        actions TEXT DEFAULT '[]',
-        double_optin INTEGER DEFAULT 0,
-        success_message TEXT DEFAULT 'Thank you for subscribing!',
-        submission_count INTEGER DEFAULT 0,
-        status TEXT DEFAULT 'active',
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_fe_org ON form_endpoints(org_id);
-      CREATE INDEX IF NOT EXISTS idx_fe_status ON form_endpoints(status);
-
-      CREATE TABLE IF NOT EXISTS form_submissions (
-        id TEXT PRIMARY KEY,
-        form_id TEXT NOT NULL,
-        data TEXT NOT NULL,
-        ip_address TEXT,
-        user_agent TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (form_id) REFERENCES form_endpoints(id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_fs_form ON form_submissions(form_id);
-    `)
-  }
-
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(orgId: string, userId: string, input: FormInput): FormEndpoint {
+  async create(orgId: string, userId: string, input: FormInput): Promise<FormEndpoint> {
+    const db = getDb()
     const id = generateId('frm')
 
-    this.db.prepare(`
-      INSERT INTO form_endpoints (id, org_id, user_id, name, list_id, field_mapping, required_fields, allowed_domains, redirect_url, actions, double_optin, success_message)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId,
-      input.name,
-      input.list_id,
-      JSON.stringify(input.field_mapping || { email: 'email', name: 'first_name' }),
-      JSON.stringify(input.required_fields || ['email']),
-      JSON.stringify(input.allowed_domains || []),
-      input.redirect_url || null,
-      JSON.stringify(input.actions || []),
-      input.double_optin ? 1 : 0,
-      input.success_message || 'Thank you for subscribing!'
-    )
+    await db.insert(form_endpoints).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: input.name,
+      list_id: input.list_id,
+      field_mapping: JSON.stringify(input.field_mapping || { email: 'email', name: 'first_name' }),
+      required_fields: JSON.stringify(input.required_fields || ['email']),
+      allowed_domains: JSON.stringify(input.allowed_domains || []),
+      redirect_url: input.redirect_url || null,
+      actions: JSON.stringify(input.actions || []),
+      double_optin: input.double_optin ? 1 : 0,
+      success_message: input.success_message || 'Thank you for subscribing!',
+    })
 
-    return this.db.prepare('SELECT * FROM form_endpoints WHERE id = ?').get(id) as FormEndpoint
+    const [row] = await db.select().from(form_endpoints).where(eq(form_endpoints.id, id)).limit(1)
+    return row as FormEndpoint
   }
 
-  list(orgId: string): FormEndpoint[] {
-    return this.db.prepare(`
-      SELECT * FROM form_endpoints WHERE org_id = ? ORDER BY created_at DESC
-    `).all(orgId) as FormEndpoint[]
+  async list(orgId: string): Promise<FormEndpoint[]> {
+    const rows = await getDb()
+      .select()
+      .from(form_endpoints)
+      .where(eq(form_endpoints.org_id, orgId))
+      .orderBy(desc(form_endpoints.created_at))
+    return rows as FormEndpoint[]
   }
 
-  get(formId: string): FormEndpoint | null {
-    return this.db.prepare('SELECT * FROM form_endpoints WHERE id = ?').get(formId) as FormEndpoint | null
+  async get(formId: string): Promise<FormEndpoint | null> {
+    const [row] = await getDb().select().from(form_endpoints).where(eq(form_endpoints.id, formId)).limit(1)
+    return (row as FormEndpoint) ?? null
   }
 
-  update(orgId: string, formId: string, updates: Partial<FormInput>): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, formId: string, updates: Partial<FormInput>): Promise<boolean> {
+    const u = updates
+    const values: Partial<typeof form_endpoints.$inferInsert> = {}
 
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.list_id !== undefined) { sets.push('list_id = ?'); params.push(updates.list_id) }
-    if (updates.field_mapping !== undefined) { sets.push('field_mapping = ?'); params.push(JSON.stringify(updates.field_mapping)) }
-    if (updates.required_fields !== undefined) { sets.push('required_fields = ?'); params.push(JSON.stringify(updates.required_fields)) }
-    if (updates.allowed_domains !== undefined) { sets.push('allowed_domains = ?'); params.push(JSON.stringify(updates.allowed_domains)) }
-    if (updates.redirect_url !== undefined) { sets.push('redirect_url = ?'); params.push(updates.redirect_url) }
-    if (updates.actions !== undefined) { sets.push('actions = ?'); params.push(JSON.stringify(updates.actions)) }
-    if (updates.double_optin !== undefined) { sets.push('double_optin = ?'); params.push(updates.double_optin ? 1 : 0) }
-    if (updates.success_message !== undefined) { sets.push('success_message = ?'); params.push(updates.success_message) }
+    if (u.name !== undefined) values.name = u.name
+    if (u.list_id !== undefined) values.list_id = u.list_id
+    if (u.field_mapping !== undefined) values.field_mapping = JSON.stringify(u.field_mapping)
+    if (u.required_fields !== undefined) values.required_fields = JSON.stringify(u.required_fields)
+    if (u.allowed_domains !== undefined) values.allowed_domains = JSON.stringify(u.allowed_domains)
+    if (u.redirect_url !== undefined) values.redirect_url = u.redirect_url
+    if (u.actions !== undefined) values.actions = JSON.stringify(u.actions)
+    if (u.double_optin !== undefined) values.double_optin = u.double_optin ? 1 : 0
+    if (u.success_message !== undefined) values.success_message = u.success_message
 
-    if (sets.length === 0) return false
+    if (Object.keys(values).length === 0) return false
 
-    sets.push("updated_at = datetime('now')")
-    params.push(formId, orgId)
+    values.updated_at = now()
 
-    const result = this.db.prepare(`
-      UPDATE form_endpoints SET ${sets.join(', ')} WHERE id = ? AND org_id = ?
-    `).run(...params)
-    return result.changes > 0
+    const res = await getDb()
+      .update(form_endpoints)
+      .set(values)
+      .where(and(eq(form_endpoints.id, formId), eq(form_endpoints.org_id, orgId)))
+      .returning({ id: form_endpoints.id })
+    return res.length > 0
   }
 
-  toggleStatus(orgId: string, formId: string): 'active' | 'paused' | null {
-    const form = this.db.prepare('SELECT status FROM form_endpoints WHERE id = ? AND org_id = ?').get(formId, orgId) as { status: string } | null
+  async toggleStatus(orgId: string, formId: string): Promise<'active' | 'paused' | null> {
+    const db = getDb()
+    const [form] = await db
+      .select({ status: form_endpoints.status })
+      .from(form_endpoints)
+      .where(and(eq(form_endpoints.id, formId), eq(form_endpoints.org_id, orgId)))
+      .limit(1)
     if (!form) return null
     const newStatus = form.status === 'active' ? 'paused' : 'active'
-    this.db.prepare("UPDATE form_endpoints SET status = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?").run(newStatus, formId, orgId)
+    await db
+      .update(form_endpoints)
+      .set({ status: newStatus, updated_at: now() })
+      .where(and(eq(form_endpoints.id, formId), eq(form_endpoints.org_id, orgId)))
     return newStatus as 'active' | 'paused'
   }
 
-  delete(orgId: string, formId: string): boolean {
-    const result = this.db.prepare('DELETE FROM form_endpoints WHERE id = ? AND org_id = ?').run(formId, orgId)
-    return result.changes > 0
+  async delete(orgId: string, formId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(form_endpoints)
+      .where(and(eq(form_endpoints.id, formId), eq(form_endpoints.org_id, orgId)))
+      .returning({ id: form_endpoints.id })
+    return res.length > 0
   }
 
   // --------------------------------------------------------------------------
   // Submissions
   // --------------------------------------------------------------------------
 
-  recordSubmission(formId: string, data: Record<string, unknown>, ipAddress?: string, userAgent?: string): FormSubmission {
+  async recordSubmission(formId: string, data: Record<string, unknown>, ipAddress?: string, userAgent?: string): Promise<FormSubmission> {
+    const db = getDb()
     const id = generateId('sub')
 
-    this.db.prepare(`
-      INSERT INTO form_submissions (id, form_id, data, ip_address, user_agent)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, formId, JSON.stringify(data), ipAddress || null, userAgent || null)
+    await db.insert(form_submissions).values({
+      id,
+      form_id: formId,
+      data: JSON.stringify(data),
+      ip_address: ipAddress || null,
+      user_agent: userAgent || null,
+    })
 
     // Increment submission count
-    this.db.prepare('UPDATE form_endpoints SET submission_count = submission_count + 1 WHERE id = ?').run(formId)
+    await db
+      .update(form_endpoints)
+      .set({ submission_count: sql`${form_endpoints.submission_count} + 1` })
+      .where(eq(form_endpoints.id, formId))
 
-    return this.db.prepare('SELECT * FROM form_submissions WHERE id = ?').get(id) as FormSubmission
+    const [row] = await db.select().from(form_submissions).where(eq(form_submissions.id, id)).limit(1)
+    return row as FormSubmission
   }
 
-  getSubmissions(formId: string, limit = 50, offset = 0): { submissions: FormSubmission[]; total: number } {
-    const total = (this.db.prepare('SELECT COUNT(*) as count FROM form_submissions WHERE form_id = ?').get(formId) as any).count
-    const submissions = this.db.prepare(`
-      SELECT * FROM form_submissions WHERE form_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(formId, limit, offset) as FormSubmission[]
+  async getSubmissions(formId: string, limit = 50, offset = 0): Promise<{ submissions: FormSubmission[]; total: number }> {
+    const db = getDb()
+    const [tot] = await db.select({ value: count() }).from(form_submissions).where(eq(form_submissions.form_id, formId))
+    const submissions = await db
+      .select()
+      .from(form_submissions)
+      .where(eq(form_submissions.form_id, formId))
+      .orderBy(desc(form_submissions.created_at))
+      .limit(limit)
+      .offset(offset)
 
-    return { submissions, total }
+    return { submissions: submissions as FormSubmission[], total: tot?.value ?? 0 }
   }
 
   // --------------------------------------------------------------------------
-  // Embed Code Generation
+  // Embed Code Generation (pure helper)
   // --------------------------------------------------------------------------
 
   getEmbedCode(form: FormEndpoint, workerUrl: string): { html: string; js: string; api: string } {

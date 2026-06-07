@@ -45,23 +45,23 @@ app.post('/pages', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) =>
   const body = await validateBody(c, CreatePageSchema)
 
   try {
-    const page = landingPageService.create(orgId, user.id, body)
+    const page = await landingPageService.create(orgId, user.id, body)
     return success(c, page, 'Landing page created')
   } catch (e: any) {
     return error(c, e.message || 'Failed to create page', 400)
   }
 })
 
-app.get('/pages', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/pages', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const pages = landingPageService.list(orgId)
+  const pages = await landingPageService.list(orgId)
   return success(c, { pages })
 })
 
-app.get('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const pageId = c.req.param('id')
-  const page = landingPageService.get(pageId)
+  const page = await landingPageService.get(pageId)
 
   if (!page || page.org_id !== orgId) return error(c, 'Page not found', 404)
   return success(c, page)
@@ -73,7 +73,7 @@ app.put('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c)
   const body = await validateBody(c, CreatePageSchema.partial())
 
   try {
-    const updated = landingPageService.update(orgId, pageId, body)
+    const updated = await landingPageService.update(orgId, pageId, body)
     if (!updated) return error(c, 'Page not found', 404)
     return success(c, undefined, 'Page updated')
   } catch (e: any) {
@@ -81,11 +81,11 @@ app.put('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c)
   }
 })
 
-app.delete('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.delete('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const pageId = c.req.param('id')
 
-  const deleted = landingPageService.delete(orgId, pageId)
+  const deleted = await landingPageService.delete(orgId, pageId)
   if (!deleted) return error(c, 'Page not found', 404)
   return success(c, undefined, 'Page deleted')
 })
@@ -94,25 +94,25 @@ app.delete('/pages/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) =>
 // Publish / Unpublish
 // ============================================================================
 
-app.post('/pages/:id/publish', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/pages/:id/publish', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const pageId = c.req.param('id')
 
-  const published = landingPageService.publish(orgId, pageId)
+  const published = await landingPageService.publish(orgId, pageId)
   if (!published) return error(c, 'Page not found', 404)
 
-  const page = landingPageService.get(pageId)
+  const page = await landingPageService.get(pageId)
   const workerUrl = TRACKING.WORKER_URL || ''
   const publicUrl = workerUrl ? `${workerUrl}/p/${page?.slug}` : `/p/${page?.slug}`
 
   return success(c, { url: publicUrl }, 'Page published')
 })
 
-app.post('/pages/:id/unpublish', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/pages/:id/unpublish', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const pageId = c.req.param('id')
 
-  const unpublished = landingPageService.unpublish(orgId, pageId)
+  const unpublished = await landingPageService.unpublish(orgId, pageId)
   if (!unpublished) return error(c, 'Page not found', 404)
   return success(c, undefined, 'Page unpublished')
 })
@@ -121,10 +121,10 @@ app.post('/pages/:id/unpublish', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE)
 // Preview
 // ============================================================================
 
-app.get('/pages/:id/preview', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/pages/:id/preview', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const pageId = c.req.param('id')
-  const page = landingPageService.get(pageId)
+  const page = await landingPageService.get(pageId)
 
   if (!page || page.org_id !== orgId) return error(c, 'Page not found', 404)
 

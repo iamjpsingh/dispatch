@@ -1,9 +1,11 @@
 // src/services/pluginManager.ts - Plugin System with Manifest-Based Lifecycle
-// Provider plugins, hook plugins, template plugins
+// Provider plugins, hook plugins, template plugins (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'fs'
-import { dirname, join } from 'path'
+import { existsSync, readFileSync, readdirSync } from 'fs'
+import { join } from 'path'
+import { and, eq, desc } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { plugins } from '../db/pg/schema'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 
@@ -104,156 +106,113 @@ const BUILT_IN_PROVIDERS: PluginManifest[] = [
   },
 ]
 
+const now = () => new Date().toISOString()
+const PLUGINS_DIR = './plugins'
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class PluginManager {
-  private db: Database
   private hookRegistry: Map<HookEvent, HookHandler[]> = new Map()
-  private pluginsDir: string = './plugins'
-
-  constructor() {
-    const dbPath = './data/plugins.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    if (!existsSync(this.pluginsDir)) {
-      mkdirSync(this.pluginsDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS plugins (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        version TEXT NOT NULL DEFAULT '1.0.0',
-        description TEXT,
-        author TEXT,
-        type TEXT NOT NULL CHECK (type IN ('provider', 'hook', 'template', 'analytics')),
-        status TEXT DEFAULT 'installed' CHECK (status IN ('installed', 'active', 'disabled', 'error')),
-        manifest_json TEXT NOT NULL,
-        settings_json TEXT DEFAULT '{}',
-        entry_path TEXT,
-        error_message TEXT,
-        installed_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_plugin_user ON plugins(user_id);
-      CREATE INDEX IF NOT EXISTS idx_plugin_type ON plugins(type);
-      CREATE INDEX IF NOT EXISTS idx_plugin_status ON plugins(status);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_name_user ON plugins(user_id, name);
-    `)
-
-    logger.info('Plugin manager initialized (data/plugins.db)')
-  }
 
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  install(userId: string, input: PluginInput): Plugin {
+  async install(userId: string, input: PluginInput): Promise<Plugin> {
+    const db = getDb()
     const id = generateId('plg')
 
-    this.db.prepare(`
-      INSERT INTO plugins (id, user_id, name, version, description, author, type, manifest_json, settings_json, entry_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, userId,
-      input.manifest.name,
-      input.manifest.version,
-      input.manifest.description,
-      input.manifest.author,
-      input.manifest.type,
-      JSON.stringify(input.manifest),
-      JSON.stringify(input.settings || {}),
-      input.manifest.entry || null
-    )
+    await db.insert(plugins).values({
+      id,
+      user_id: userId,
+      name: input.manifest.name,
+      version: input.manifest.version,
+      description: input.manifest.description,
+      author: input.manifest.author,
+      type: input.manifest.type,
+      manifest_json: JSON.stringify(input.manifest),
+      settings_json: JSON.stringify(input.settings || {}),
+      entry_path: input.manifest.entry || null,
+    })
 
-    return this.db.prepare('SELECT * FROM plugins WHERE id = ?').get(id) as Plugin
+    const [row] = await db.select().from(plugins).where(eq(plugins.id, id)).limit(1)
+    return row as Plugin
   }
 
-  get(userId: string, pluginId: string): Plugin | null {
-    return this.db.prepare(`
-      SELECT * FROM plugins WHERE id = ? AND user_id = ?
-    `).get(pluginId, userId) as Plugin | null
+  async get(userId: string, pluginId: string): Promise<Plugin | null> {
+    const [row] = await getDb()
+      .select()
+      .from(plugins)
+      .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
+      .limit(1)
+    return (row as Plugin) ?? null
   }
 
-  list(userId: string, filters?: { type?: string; status?: string }): Plugin[] {
-    const conditions: string[] = ['user_id = ?']
-    const params: any[] = [userId]
+  async list(userId: string, filters?: { type?: string; status?: string }): Promise<Plugin[]> {
+    const conditions = [eq(plugins.user_id, userId)]
+    if (filters?.type) conditions.push(eq(plugins.type, filters.type))
+    if (filters?.status) conditions.push(eq(plugins.status, filters.status))
 
-    if (filters?.type) {
-      conditions.push('type = ?')
-      params.push(filters.type)
-    }
-    if (filters?.status) {
-      conditions.push('status = ?')
-      params.push(filters.status)
-    }
-
-    return this.db.prepare(`
-      SELECT * FROM plugins WHERE ${conditions.join(' AND ')} ORDER BY installed_at DESC
-    `).all(...params) as Plugin[]
+    const rows = await getDb()
+      .select()
+      .from(plugins)
+      .where(and(...conditions))
+      .orderBy(desc(plugins.installed_at))
+    return rows as Plugin[]
   }
 
-  activate(userId: string, pluginId: string): boolean {
-    const plugin = this.get(userId, pluginId)
+  async activate(userId: string, pluginId: string): Promise<boolean> {
+    const plugin = await this.get(userId, pluginId)
     if (!plugin) return false
 
-    const result = this.db.prepare(`
-      UPDATE plugins SET status = 'active', error_message = NULL, updated_at = datetime('now')
-      WHERE id = ? AND user_id = ?
-    `).run(pluginId, userId)
+    const res = await getDb()
+      .update(plugins)
+      .set({ status: 'active', error_message: null, updated_at: now() })
+      .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
+      .returning({ id: plugins.id })
 
-    if (result.changes > 0) {
+    if (res.length > 0) {
       this.registerPluginHooks(plugin)
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  disable(userId: string, pluginId: string): boolean {
-    const plugin = this.get(userId, pluginId)
+  async disable(userId: string, pluginId: string): Promise<boolean> {
+    const plugin = await this.get(userId, pluginId)
     if (!plugin) return false
 
-    const result = this.db.prepare(`
-      UPDATE plugins SET status = 'disabled', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ?
-    `).run(pluginId, userId)
+    const res = await getDb()
+      .update(plugins)
+      .set({ status: 'disabled', updated_at: now() })
+      .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
+      .returning({ id: plugins.id })
 
-    if (result.changes > 0) {
+    if (res.length > 0) {
       this.unregisterPluginHooks(pluginId)
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  uninstall(userId: string, pluginId: string): boolean {
+  async uninstall(userId: string, pluginId: string): Promise<boolean> {
     this.unregisterPluginHooks(pluginId)
-    const result = this.db.prepare(`
-      DELETE FROM plugins WHERE id = ? AND user_id = ?
-    `).run(pluginId, userId)
-    return result.changes > 0
+    const res = await getDb()
+      .delete(plugins)
+      .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
+      .returning({ id: plugins.id })
+    return res.length > 0
   }
 
-  updateSettings(userId: string, pluginId: string, settings: Record<string, any>): boolean {
-    const result = this.db.prepare(`
-      UPDATE plugins SET settings_json = ?, updated_at = datetime('now')
-      WHERE id = ? AND user_id = ?
-    `).run(JSON.stringify(settings), pluginId, userId)
-    return result.changes > 0
+  async updateSettings(userId: string, pluginId: string, settings: Record<string, any>): Promise<boolean> {
+    const res = await getDb()
+      .update(plugins)
+      .set({ settings_json: JSON.stringify(settings), updated_at: now() })
+      .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
+      .returning({ id: plugins.id })
+    return res.length > 0
   }
 
   // --------------------------------------------------------------------------
@@ -296,10 +255,10 @@ class PluginManager {
         result = await handler.handler(result)
       } catch (err) {
         logger.error(`Plugin hook error (${handler.pluginName}/${event}):`, err)
-        this.db.prepare(`
-          UPDATE plugins SET status = 'error', error_message = ?, updated_at = datetime('now')
-          WHERE id = ?
-        `).run(err instanceof Error ? err.message : 'Hook execution failed', handler.pluginId)
+        await getDb()
+          .update(plugins)
+          .set({ status: 'error', error_message: err instanceof Error ? err.message : 'Hook execution failed', updated_at: now() })
+          .where(eq(plugins.id, handler.pluginId))
       }
     }
 
@@ -322,7 +281,7 @@ class PluginManager {
     return BUILT_IN_PROVIDERS
   }
 
-  installBuiltinProvider(userId: string, providerName: string, settings: Record<string, any>): Plugin | null {
+  async installBuiltinProvider(userId: string, providerName: string, settings: Record<string, any>): Promise<Plugin | null> {
     const manifest = BUILT_IN_PROVIDERS.find(p => p.name === providerName)
     if (!manifest) return null
 
@@ -330,19 +289,19 @@ class PluginManager {
   }
 
   // --------------------------------------------------------------------------
-  // Plugin Discovery
+  // Plugin Discovery (pure filesystem helper — no DB)
   // --------------------------------------------------------------------------
 
   discoverLocalPlugins(): PluginManifest[] {
     const discovered: PluginManifest[] = []
 
-    if (!existsSync(this.pluginsDir)) return discovered
+    if (!existsSync(PLUGINS_DIR)) return discovered
 
-    const entries = readdirSync(this.pluginsDir, { withFileTypes: true })
+    const entries = readdirSync(PLUGINS_DIR, { withFileTypes: true })
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
 
-      const manifestPath = join(this.pluginsDir, entry.name, 'manifest.json')
+      const manifestPath = join(PLUGINS_DIR, entry.name, 'manifest.json')
       if (!existsSync(manifestPath)) continue
 
       try {

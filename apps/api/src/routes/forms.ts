@@ -45,20 +45,20 @@ app.post('/forms', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => 
   const list = await contactService.getList(orgId, body.list_id)
   if (!list) return error(c, 'List not found', 404)
 
-  const form = formService.create(orgId, user.id, body)
+  const form = await formService.create(orgId, user.id, body)
   return success(c, form, 'Form endpoint created')
 })
 
-app.get('/forms', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/forms', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const forms = formService.list(orgId)
+  const forms = await formService.list(orgId)
   return success(c, { forms })
 })
 
-app.get('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const formId = c.req.param('id')
-  const form = formService.get(formId)
+  const form = await formService.get(formId)
 
   if (!form || form.org_id !== orgId) return error(c, 'Form not found', 404)
   return success(c, form)
@@ -69,16 +69,16 @@ app.put('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) 
   const formId = c.req.param('id')
   const body = await validateBody(c, CreateFormSchema.partial())
 
-  const updated = formService.update(orgId, formId, body)
+  const updated = await formService.update(orgId, formId, body)
   if (!updated) return error(c, 'Form not found', 404)
   return success(c, undefined, 'Form updated')
 })
 
-app.delete('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), (c) => {
+app.delete('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const formId = c.req.param('id')
 
-  const deleted = formService.delete(orgId, formId)
+  const deleted = await formService.delete(orgId, formId)
   if (!deleted) return error(c, 'Form not found', 404)
   return success(c, undefined, 'Form deleted')
 })
@@ -87,15 +87,15 @@ app.delete('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), (c) => 
 // Embed Code
 // ============================================================================
 
-app.get('/forms/:id/embed', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/forms/:id/embed', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const formId = c.req.param('id')
-  const form = formService.get(formId)
+  const form = await formService.get(formId)
 
   if (!form || form.org_id !== orgId) return error(c, 'Form not found', 404)
 
   const workerUrl = TRACKING.WORKER_URL || c.req.url.replace(/\/api\/forms\/.*/, '')
-  const embedCode = formService.getEmbedCode(form, workerUrl)
+  const embedCode = await formService.getEmbedCode(form, workerUrl)
   return success(c, embedCode)
 })
 
@@ -103,16 +103,16 @@ app.get('/forms/:id/embed', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) =>
 // Submissions (view from dashboard)
 // ============================================================================
 
-app.get('/forms/:id/submissions', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/forms/:id/submissions', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const formId = c.req.param('id')
-  const form = formService.get(formId)
+  const form = await formService.get(formId)
 
   if (!form || form.org_id !== orgId) return error(c, 'Form not found', 404)
 
   const limit = parseInt(c.req.query('limit') || '50')
   const offset = parseInt(c.req.query('offset') || '0')
-  const result = formService.getSubmissions(formId, limit, offset)
+  const result = await formService.getSubmissions(formId, limit, offset)
   return success(c, result)
 })
 
@@ -122,7 +122,7 @@ app.get('/forms/:id/submissions', requirePermission(PERMISSIONS.CONTACTS_VIEW), 
 
 app.post('/forms/:id/submit', async (c) => {
   const formId = c.req.param('id')
-  const form = formService.get(formId)
+  const form = await formService.get(formId)
 
   if (!form) return error(c, 'Form not found', 404)
   if (form.status !== 'active') return error(c, 'Form is not active', 403)
@@ -157,7 +157,7 @@ app.post('/forms/:id/submit', async (c) => {
   // Record submission
   const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || ''
   const ua = c.req.header('User-Agent') || ''
-  formService.recordSubmission(formId, data, ip, ua)
+  await formService.recordSubmission(formId, data, ip, ua)
 
   // Map fields and add contact to list
   const fieldMapping: Record<string, string> = JSON.parse(form.field_mapping || '{}')
@@ -223,11 +223,11 @@ app.post('/forms/:id/submit', async (c) => {
 // Toggle Form Status
 // ============================================================================
 
-app.post('/forms/:id/toggle', requirePermission(PERMISSIONS.CONTACTS_MANAGE), (c) => {
+app.post('/forms/:id/toggle', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const formId = c.req.param('id')
 
-  const newStatus = formService.toggleStatus(orgId, formId)
+  const newStatus = await formService.toggleStatus(orgId, formId)
   if (!newStatus) return error(c, 'Form not found', 404)
   return success(c, { status: newStatus }, `Form ${newStatus}`)
 })
@@ -238,7 +238,7 @@ app.post('/forms/:id/toggle', requirePermission(PERMISSIONS.CONTACTS_MANAGE), (c
 
 app.post('/forms/:id/webhook', async (c) => {
   const formId = c.req.param('id')
-  const form = formService.get(formId)
+  const form = await formService.get(formId)
 
   if (!form) return error(c, 'Form not found', 404)
   if (form.status !== 'active') return error(c, 'Form is not active', 403)
@@ -275,7 +275,7 @@ app.post('/forms/:id/webhook', async (c) => {
   // Record submission
   const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || ''
   const ua = c.req.header('User-Agent') || ''
-  formService.recordSubmission(formId, data, ip, ua)
+  await formService.recordSubmission(formId, data, ip, ua)
 
   // Map fields and add contact
   const fieldMapping: Record<string, string> = JSON.parse(form.field_mapping || '{}')
