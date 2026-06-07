@@ -50,6 +50,13 @@
       "when": 1780822227054,
       "tag": "0006_early_blur",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780843243979,
+      "tag": "0007_cute_silver_fox",
+      "breakpoints": true
     }
   ]
 }

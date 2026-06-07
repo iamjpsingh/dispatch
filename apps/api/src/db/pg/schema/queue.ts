@@ -108,6 +108,9 @@ export const scheduled_jobs = pgTable(
     subject: text('subject'),
     use_batch: integer('use_batch').default(0),
     config_name: text('config_name'),
+    // P4.3: BullMQ scheduling — repeatable (cron) vs one-shot (delayed) jobs.
+    cron_pattern: text('cron_pattern'),
+    is_repeating: integer('is_repeating').notNull().default(0),
   },
   (t) => [index('idx_sched_user').on(t.user_id), index('idx_sched_time').on(t.scheduled_time)]
 )
