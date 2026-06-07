@@ -60,16 +60,10 @@ describe('P4.C — queueStore (Postgres)', () => {
     expect(await queueStore.getJobs('user-3')).toEqual([])
   })
 
-  it('markRunning / updateProgress / completeJob mutate the row', async () => {
+  it('markRunning / completeJob mutate status + completed_at', async () => {
     await queueStore.insertJob(makeJob({ id: 'j1', total_count: 5 }))
     await queueStore.markRunning('j1')
     expect((await queueStore.getJob('j1'))!.status).toBe('running')
-
-    await queueStore.updateProgress('j1', 3, 2, 1)
-    const mid = await queueStore.getJob('j1')
-    expect(mid!.last_processed_index).toBe(3)
-    expect(mid!.sent_count).toBe(2)
-    expect(mid!.failed_count).toBe(1)
 
     await queueStore.completeJob('j1')
     const done = await queueStore.getJob('j1')
@@ -111,14 +105,41 @@ describe('P4.C — queueStore (Postgres)', () => {
     expect(j!.completed_at).toBeTruthy()
   })
 
-  it('addToDeadLetter + getDeadLetters (job-scoped)', async () => {
-    await queueStore.insertJob(makeJob({ id: 'j1' }))
+  it('addToDeadLetter + getDeadLetters (owner-scoped)', async () => {
+    await queueStore.insertJob(makeJob({ id: 'j1', user_id: 'user-1' }))
     await queueStore.addToDeadLetter('j1', 'bad@x.com', 'Bad', 'perm fail', 'permanent', 4)
-    const dls = await queueStore.getDeadLetters('j1')
+    const dls = await queueStore.getDeadLetters('user-1', 'j1')
     expect(dls).toHaveLength(1)
     expect(dls[0].recipient_email).toBe('bad@x.com')
     expect(dls[0].error_type).toBe('permanent')
     expect(dls[0].attempts).toBe(4)
+  })
+
+  describe('owner scoping (R9)', () => {
+    it('getJob with a userId only returns the owner\'s row', async () => {
+      await queueStore.insertJob(makeJob({ id: 'j1', user_id: 'user-1' }))
+      expect(await queueStore.getJob('j1', 'user-1')).toBeTruthy()
+      expect(await queueStore.getJob('j1', 'user-2')).toBeNull()
+      expect(await queueStore.getJob('j1')).toBeTruthy() // unscoped (worker) still works
+    })
+
+    it('transition with a userId is a no-op for a non-owner', async () => {
+      await queueStore.insertJob(makeJob({ id: 'j1', user_id: 'user-1', status: 'running' }))
+      expect(await queueStore.transition('j1', ['running'], 'cancelled', 'user-2')).toBe(false)
+      expect((await queueStore.getJob('j1'))!.status).toBe('running')
+      expect(await queueStore.transition('j1', ['running'], 'cancelled', 'user-1')).toBe(true)
+    })
+
+    it('getDeadLetters never returns another user\'s recipient PII', async () => {
+      await queueStore.insertJob(makeJob({ id: 'j1', user_id: 'user-1' }))
+      await queueStore.insertJob(makeJob({ id: 'j2', user_id: 'user-2' }))
+      await queueStore.addToDeadLetter('j1', 'mine@x.com', null, 'e', 'permanent', 1)
+      await queueStore.addToDeadLetter('j2', 'theirs@x.com', null, 'e', 'permanent', 1)
+      const mine = await queueStore.getDeadLetters('user-1')
+      expect(mine.map((d) => d.recipient_email)).toEqual(['mine@x.com'])
+      // even supplying the other user's job_id leaks nothing
+      expect(await queueStore.getDeadLetters('user-1', 'j2')).toEqual([])
+    })
   })
 
   it('getStats aggregates per-user counts + dead letters', async () => {

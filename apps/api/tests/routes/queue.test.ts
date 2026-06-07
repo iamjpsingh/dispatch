@@ -107,7 +107,7 @@ describe('Queue Routes', () => {
   describe('GET /queue/jobs', () => {
     it('returns a list of jobs for the user', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJobs).mockReturnValue([SAMPLE_JOB] as any)
+      vi.mocked(queueEngine.getJobs).mockResolvedValue([SAMPLE_JOB] as any)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs'))
 
@@ -124,7 +124,7 @@ describe('Queue Routes', () => {
 
     it('passes status filter to queueEngine', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJobs).mockReturnValue([])
+      vi.mocked(queueEngine.getJobs).mockResolvedValue([])
 
       await app.fetch(new Request('http://localhost/queue/jobs?status=pending'))
 
@@ -133,7 +133,7 @@ describe('Queue Routes', () => {
 
     it('passes limit and offset query params', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJobs).mockReturnValue([])
+      vi.mocked(queueEngine.getJobs).mockResolvedValue([])
 
       await app.fetch(new Request('http://localhost/queue/jobs?limit=10&offset=5'))
 
@@ -142,7 +142,7 @@ describe('Queue Routes', () => {
 
     it('returns empty array when no jobs exist', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJobs).mockReturnValue([])
+      vi.mocked(queueEngine.getJobs).mockResolvedValue([])
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs'))
 
@@ -159,7 +159,7 @@ describe('Queue Routes', () => {
   describe('GET /queue/jobs/:id', () => {
     it('returns a specific job', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJob).mockReturnValue(SAMPLE_JOB as any)
+      vi.mocked(queueEngine.getJob).mockResolvedValue(SAMPLE_JOB as any)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1'))
 
@@ -175,7 +175,7 @@ describe('Queue Routes', () => {
 
     it('returns 404 when job not found', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJob).mockReturnValue(undefined as any)
+      vi.mocked(queueEngine.getJob).mockResolvedValue(undefined as any)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/nonexistent'))
 
@@ -192,7 +192,7 @@ describe('Queue Routes', () => {
   describe('POST /queue/jobs/:id/pause', () => {
     it('pauses a running job', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.pause).mockReturnValue(true)
+      vi.mocked(queueEngine.pause).mockResolvedValue(true)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1/pause', { method: 'POST' }))
 
@@ -204,7 +204,7 @@ describe('Queue Routes', () => {
 
     it('returns 400 when job is not running', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.pause).mockReturnValue(false)
+      vi.mocked(queueEngine.pause).mockResolvedValue(false)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1/pause', { method: 'POST' }))
 
@@ -221,7 +221,7 @@ describe('Queue Routes', () => {
   describe('POST /queue/jobs/:id/resume', () => {
     it('resumes a paused job', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.resume).mockReturnValue(true)
+      vi.mocked(queueEngine.resume).mockResolvedValue(true)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1/resume', { method: 'POST' }))
 
@@ -233,7 +233,7 @@ describe('Queue Routes', () => {
 
     it('returns 400 when job is not paused', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.resume).mockReturnValue(false)
+      vi.mocked(queueEngine.resume).mockResolvedValue(false)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1/resume', { method: 'POST' }))
 
@@ -250,7 +250,7 @@ describe('Queue Routes', () => {
   describe('DELETE /queue/jobs/:id', () => {
     it('cancels a job', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.cancel).mockReturnValue(true)
+      vi.mocked(queueEngine.cancel).mockResolvedValue(true)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1', { method: 'DELETE' }))
 
@@ -262,7 +262,7 @@ describe('Queue Routes', () => {
 
     it('returns 400 when job cannot be cancelled', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.cancel).mockReturnValue(false)
+      vi.mocked(queueEngine.cancel).mockResolvedValue(false)
 
       const res = await app.fetch(new Request('http://localhost/queue/jobs/job-1', { method: 'DELETE' }))
 
@@ -279,7 +279,7 @@ describe('Queue Routes', () => {
   describe('GET /queue/stats', () => {
     it('returns queue statistics', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getStats).mockReturnValue(SAMPLE_STATS)
+      vi.mocked(queueEngine.getStats).mockResolvedValue(SAMPLE_STATS)
 
       const res = await app.fetch(new Request('http://localhost/queue/stats'))
 
@@ -299,7 +299,7 @@ describe('Queue Routes', () => {
     it('returns dead letters', async () => {
       const app = createApp()
       const deadLetters = [{ id: 'dl-1', job_id: 'job-1', email: 'bad@test.com', error: 'bounced' }]
-      vi.mocked(queueEngine.getDeadLetters).mockReturnValue(deadLetters)
+      vi.mocked(queueEngine.getDeadLetters).mockResolvedValue(deadLetters)
 
       const res = await app.fetch(new Request('http://localhost/queue/dead-letters'))
 
@@ -311,11 +311,11 @@ describe('Queue Routes', () => {
 
     it('passes job_id filter', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getDeadLetters).mockReturnValue([])
+      vi.mocked(queueEngine.getDeadLetters).mockResolvedValue([])
 
       await app.fetch(new Request('http://localhost/queue/dead-letters?job_id=job-1&limit=10'))
 
-      expect(queueEngine.getDeadLetters).toHaveBeenCalledWith('job-1', 10, 0)
+      expect(queueEngine.getDeadLetters).toHaveBeenCalledWith(TEST_USER_ID, 'job-1', 10, 0)
     })
   })
 
@@ -326,7 +326,7 @@ describe('Queue Routes', () => {
     it('returns suppression list', async () => {
       const app = createApp()
       const list = [{ email: 'spam@test.com', reason: 'bounce', source: 'auto' }]
-      vi.mocked(queueEngine.getSuppressionList).mockReturnValue(list)
+      vi.mocked(queueEngine.getSuppressionList).mockResolvedValue(list)
 
       const res = await app.fetch(new Request('http://localhost/queue/suppression'))
 
@@ -387,7 +387,7 @@ describe('Queue Routes', () => {
   describe('DELETE /queue/suppression/:email', () => {
     it('removes an email from the suppression list', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.unsuppress).mockReturnValue(true)
+      vi.mocked(queueEngine.unsuppress).mockResolvedValue(true)
 
       const res = await app.fetch(
         new Request('http://localhost/queue/suppression/bad@test.com', {
@@ -403,7 +403,7 @@ describe('Queue Routes', () => {
 
     it('returns 404 when email not in suppression list', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.unsuppress).mockReturnValue(false)
+      vi.mocked(queueEngine.unsuppress).mockResolvedValue(false)
 
       const res = await app.fetch(
         new Request('http://localhost/queue/suppression/unknown@test.com', {

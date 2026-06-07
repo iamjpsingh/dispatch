@@ -73,6 +73,13 @@ services:
       postgres: { condition: service_healthy }
       valkey: { condition: service_healthy }
       minio: { condition: service_healthy }
+    # Healthy only after boot() (incl. runMigrations) completes and the server serves
+    # /health — the worker depends on this so migrations land before it starts.
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:5500/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   worker:
@@ -95,6 +102,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       valkey: { condition: service_healthy }
+      api: { condition: service_healthy } # migrations run in api; wait for them
     restart: unless-stopped
 
   caddy:

@@ -138,7 +138,6 @@ export const COOKIE = {
 
 // Worker/Timing Constants
 export const WORKERS = {
-  QUEUE_POLL_INTERVAL: 5000,
   AUTOMATION_POLL_INTERVAL: 60000,
   WARMUP_POLL_INTERVAL: 86400000,
 } as const

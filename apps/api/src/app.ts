@@ -53,8 +53,6 @@ import pluginsRoutes from './routes/plugins'
 import adminRoutes from './routes/admin'
 import whatsappRoutes from './routes/whatsapp'
 
-// Queue Engine
-
 // Phase 2 Services (auto-initialize on import)
 import { automationService } from './services/automationService'
 

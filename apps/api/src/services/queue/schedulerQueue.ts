@@ -38,8 +38,13 @@ export async function addScheduledRun(scheduledJobId: string, runAt: Date): Prom
   )
 }
 
-/** Remove a not-yet-fired scheduled run (on cancel). */
+/** Remove a not-yet-fired scheduled run (on cancel). Best-effort: a job that is
+ * already firing (active/locked) can't be removed and BullMQ throws — ignore it. */
 export async function removeScheduledRun(scheduledJobId: string): Promise<void> {
-  const job = await getSchedulerQueue().getJob(scheduledJobId)
-  if (job) await job.remove()
+  try {
+    const job = await getSchedulerQueue().getJob(scheduledJobId)
+    if (job) await job.remove()
+  } catch {
+    // already active/locked — cancel is best-effort
+  }
 }

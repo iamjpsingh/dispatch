@@ -21,7 +21,10 @@ import { logger } from '../../utils/logger'
 import type { JobRow } from '../../db/pg/schema'
 import type { Contact } from '../../types/index'
 
-const TERMINAL = new Set(['paused', 'cancelled', 'completed'])
+// Statuses whose batches are discarded (consumed without sending). 'paused' is NOT
+// here — paused batches are deferred (re-queued) by the worker, never consumed, so
+// resume loses no recipients.
+const TERMINAL = new Set(['cancelled', 'completed', 'failed'])
 
 /**
  * Process one recipient batch of a campaign send. Safe to retry (BullMQ); per-recipient
@@ -87,12 +90,17 @@ export async function processSendBatch(jobId: string, batchIndex: number): Promi
     }
   }
 
-  const processedIndex = await queueStore.advanceProgress(jobId, sent + failed + skipped, sent, failed)
-  logger.debug(`[${job.id}] batch ${batchIndex}: ${sent} sent, ${failed} failed, ${skipped} skipped (${processedIndex}/${job.total_count})`)
-
-  if (processedIndex >= job.total_count) {
-    await queueStore.completeJob(jobId)
-    if (job.notify_email) await notifyCompletion(jobId)
+  // Mirror writes are best-effort AFTER the sends have happened: never rethrow here,
+  // or BullMQ would retry the whole batch and re-send everyone already sent.
+  try {
+    const processedIndex = await queueStore.advanceProgress(jobId, sent + failed + skipped, sent, failed)
+    logger.debug(`[${job.id}] batch ${batchIndex}: ${sent} sent, ${failed} failed, ${skipped} skipped (${processedIndex}/${job.total_count})`)
+    if (processedIndex >= job.total_count) {
+      await queueStore.completeJob(jobId)
+      if (job.notify_email) await notifyCompletion(jobId)
+    }
+  } catch (error) {
+    logger.error(`[${job.id}] batch ${batchIndex} progress mirror write failed (sends already done):`, error)
   }
 }
 

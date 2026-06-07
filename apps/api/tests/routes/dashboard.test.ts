@@ -83,8 +83,8 @@ describe('Dashboard Routes', () => {
       const app = createApp()
       vi.mocked(logService.getLogs).mockReturnValue([])
       vi.mocked(logService.getStats).mockReturnValue({ sent: 100, failed: 5, total: 105 })
-      vi.mocked(queueEngine.getStats).mockReturnValue(SAMPLE_QUEUE_STATS)
-      vi.mocked(queueEngine.getJobs).mockReturnValue([])
+      vi.mocked(queueEngine.getStats).mockResolvedValue(SAMPLE_QUEUE_STATS)
+      vi.mocked(queueEngine.getJobs).mockResolvedValue([])
 
       const res = await app.fetch(new Request('http://localhost/dashboard/stats'))
 
@@ -100,7 +100,7 @@ describe('Dashboard Routes', () => {
       const app = createApp()
       vi.mocked(logService.getLogs).mockReturnValue([])
       vi.mocked(logService.getStats).mockReturnValue({ sent: 0, failed: 0, total: 0 })
-      vi.mocked(queueEngine.getStats).mockReturnValue(SAMPLE_QUEUE_STATS)
+      vi.mocked(queueEngine.getStats).mockResolvedValue(SAMPLE_QUEUE_STATS)
       vi.mocked(queueEngine.getJobs).mockImplementation((_userId: string, status?: string) => {
         if (status === 'running') return [SAMPLE_JOB] as any
         return []
@@ -137,7 +137,7 @@ describe('Dashboard Routes', () => {
   describe('GET /dashboard/poll-status', () => {
     it('returns poll status with active jobs', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getStats).mockReturnValue({
+      vi.mocked(queueEngine.getStats).mockResolvedValue({
         ...SAMPLE_QUEUE_STATS,
         running: 2,
         pending: 1,
@@ -156,7 +156,7 @@ describe('Dashboard Routes', () => {
 
     it('returns slower polling for pending-only jobs', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getStats).mockReturnValue({
+      vi.mocked(queueEngine.getStats).mockResolvedValue({
         ...SAMPLE_QUEUE_STATS,
         running: 0,
         pending: 3,
@@ -174,7 +174,7 @@ describe('Dashboard Routes', () => {
 
     it('returns no-poll when idle', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getStats).mockReturnValue({
+      vi.mocked(queueEngine.getStats).mockResolvedValue({
         ...SAMPLE_QUEUE_STATS,
         running: 0,
         pending: 0,
@@ -211,7 +211,7 @@ describe('Dashboard Routes', () => {
   describe('GET /dashboard/data', () => {
     it('returns dashboard data with jobs', async () => {
       const app = createApp()
-      vi.mocked(queueEngine.getJobs).mockReturnValue([SAMPLE_JOB] as any)
+      vi.mocked(queueEngine.getJobs).mockResolvedValue([SAMPLE_JOB] as any)
 
       const res = await app.fetch(new Request('http://localhost/dashboard/data'))
 

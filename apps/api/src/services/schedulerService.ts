@@ -6,7 +6,6 @@ import { schedulerStore } from './queue/schedulerStore'
 import { addScheduledRun, removeScheduledRun } from './queue/schedulerQueue'
 import { logger } from '../utils/logger'
 import type { EmailJob, BatchConfig } from '../types/index'
-import type { ScheduledJobRow } from '../db/pg/schema'
 
 class SchedulerService {
   async scheduleJob(
@@ -40,7 +39,7 @@ class SchedulerService {
     return jobId
   }
 
-  async getScheduledJobs(): Promise<ScheduledJobRow[]> {
+  async getScheduledJobs() {
     return schedulerStore.getActive()
   }
 

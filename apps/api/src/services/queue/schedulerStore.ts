@@ -17,9 +17,28 @@ export const schedulerStore = {
     return r ?? null
   },
 
-  async getActive(): Promise<ScheduledJobRow[]> {
+  /**
+   * Active jobs for the UI — SAFE projection only. NEVER selects email_job /
+   * batch_config: those JSON blobs hold the EmailConfig (plaintext SMTP creds) and
+   * the full recipient list, which must never reach the browser (R9). Use get() for
+   * the internal processor path that needs the blobs.
+   */
+  async getActive() {
     return getDb()
-      .select()
+      .select({
+        id: scheduled_jobs.id,
+        user_id: scheduled_jobs.user_id,
+        scheduled_time: scheduled_jobs.scheduled_time,
+        status: scheduled_jobs.status,
+        contact_count: scheduled_jobs.contact_count,
+        subject: scheduled_jobs.subject,
+        use_batch: scheduled_jobs.use_batch,
+        notify_email: scheduled_jobs.notify_email,
+        config_name: scheduled_jobs.config_name,
+        cron_pattern: scheduled_jobs.cron_pattern,
+        is_repeating: scheduled_jobs.is_repeating,
+        created_at: scheduled_jobs.created_at,
+      })
       .from(scheduled_jobs)
       .where(inArray(scheduled_jobs.status, ['scheduled', 'running']))
       .orderBy(asc(scheduled_jobs.scheduled_time))

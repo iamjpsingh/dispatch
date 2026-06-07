@@ -46,6 +46,10 @@ export async function enqueueCampaign(row: NewJobRow, batchSize: number): Promis
   const total = row.total_count ?? 0
   const batchCount = Math.ceil(total / size) || 1
 
+  // Honor inter-batch pacing: stagger batch i to start ~i * batch_delay_min minutes
+  // out (BullMQ delay), so the configured deliverability throttle is enforced.
+  const batchDelayMs = Math.max(0, row.batch_delay_min ?? 0) * 60_000
+
   const queue = getSendQueue()
   await queue.addBulk(
     Array.from({ length: batchCount }, (_, batchIndex) => ({
@@ -53,6 +57,7 @@ export async function enqueueCampaign(row: NewJobRow, batchSize: number): Promis
       data: { jobId: row.id, batchIndex },
       opts: {
         jobId: `${row.id}-b${batchIndex}`,
+        delay: batchIndex * batchDelayMs,
         attempts: 4,
         backoff: { type: 'exponential' as const, delay: 5000 },
         removeOnComplete: 1000,

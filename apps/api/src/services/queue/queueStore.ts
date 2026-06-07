@@ -14,8 +14,10 @@ export const queueStore = {
     await getDb().insert(jobs).values(row)
   },
 
-  async getJob(jobId: string): Promise<JobRow | null> {
-    const [row] = await getDb().select().from(jobs).where(eq(jobs.id, jobId)).limit(1)
+  // userId scopes the read to its owner (routes pass it; the internal worker omits it).
+  async getJob(jobId: string, userId?: string): Promise<JobRow | null> {
+    const where = userId ? and(eq(jobs.id, jobId), eq(jobs.user_id, userId)) : eq(jobs.id, jobId)
+    const [row] = await getDb().select().from(jobs).where(where).limit(1)
     return row ?? null
   },
 
@@ -25,31 +27,12 @@ export const queueStore = {
   },
 
   async markRunning(jobId: string): Promise<void> {
-    // Guarded: never resurrect a terminal job (a straggler batch must not flip
-    // a completed/cancelled job back to running).
+    // Guarded: never resurrect a terminal job, and never flip a just-paused job back
+    // to running (a straggler batch racing a pause must not un-pause it).
     await getDb()
       .update(jobs)
       .set({ status: 'running', started_at: sql`coalesce(${jobs.started_at}, now())`, updated_at: new Date().toISOString() })
-      .where(and(eq(jobs.id, jobId), notInArray(jobs.status, ['completed', 'failed', 'cancelled'])))
-  },
-
-  async updateProgress(
-    jobId: string,
-    lastProcessedIndex: number,
-    sentCount: number,
-    failedCount: number,
-    lastError?: string
-  ): Promise<void> {
-    await getDb()
-      .update(jobs)
-      .set({
-        last_processed_index: lastProcessedIndex,
-        sent_count: sentCount,
-        failed_count: failedCount,
-        last_error: lastError ?? null,
-        updated_at: new Date().toISOString(),
-      })
-      .where(eq(jobs.id, jobId))
+      .where(and(eq(jobs.id, jobId), notInArray(jobs.status, ['completed', 'failed', 'cancelled', 'paused'])))
   },
 
   /** Atomically add to the progress counters (for concurrent per-batch processing). Returns the new processed index. */
@@ -80,13 +63,18 @@ export const queueStore = {
       .where(eq(jobs.id, jobId))
   },
 
-  /** Conditional status transition (only when current status is in `from`). Returns whether a row changed. */
-  async transition(jobId: string, from: JobStatus[], to: JobStatus): Promise<boolean> {
+  /**
+   * Conditional status transition (only when current status is in `from`). userId
+   * scopes it to the owner (routes pass it). Returns whether a row changed.
+   */
+  async transition(jobId: string, from: JobStatus[], to: JobStatus, userId?: string): Promise<boolean> {
     const extra = to === 'cancelled' ? { completed_at: new Date().toISOString() } : {}
+    const conds = [eq(jobs.id, jobId), inArray(jobs.status, from)]
+    if (userId) conds.push(eq(jobs.user_id, userId))
     const changed = await getDb()
       .update(jobs)
       .set({ status: to, updated_at: new Date().toISOString(), ...extra })
-      .where(and(eq(jobs.id, jobId), inArray(jobs.status, from)))
+      .where(and(...conds))
       .returning({ id: jobs.id })
     return changed.length > 0
   },
@@ -111,12 +99,30 @@ export const queueStore = {
     })
   },
 
-  async getDeadLetters(jobId?: string, limit = 50, offset = 0): Promise<DeadLetterRow[]> {
-    const q = getDb().select().from(dead_letters)
-    const rows = jobId
-      ? await q.where(eq(dead_letters.job_id, jobId)).orderBy(desc(dead_letters.created_at)).limit(limit).offset(offset)
-      : await q.orderBy(desc(dead_letters.created_at)).limit(limit).offset(offset)
-    return rows
+  // Owner-scoped: joins jobs and filters by user_id so a caller can only ever read
+  // dead letters (recipient PII) for their own jobs (R9). jobId optionally narrows.
+  async getDeadLetters(userId: string, jobId?: string, limit = 50, offset = 0): Promise<DeadLetterRow[]> {
+    const conds = [eq(jobs.user_id, userId)]
+    if (jobId) conds.push(eq(dead_letters.job_id, jobId))
+    return getDb()
+      .select({
+        id: dead_letters.id,
+        job_id: dead_letters.job_id,
+        recipient_email: dead_letters.recipient_email,
+        recipient_name: dead_letters.recipient_name,
+        error_message: dead_letters.error_message,
+        error_code: dead_letters.error_code,
+        error_type: dead_letters.error_type,
+        attempts: dead_letters.attempts,
+        created_at: dead_letters.created_at,
+        last_attempt_at: dead_letters.last_attempt_at,
+      })
+      .from(dead_letters)
+      .innerJoin(jobs, eq(dead_letters.job_id, jobs.id))
+      .where(and(...conds))
+      .orderBy(desc(dead_letters.created_at))
+      .limit(limit)
+      .offset(offset)
   },
 
   async getStats(userId: string): Promise<QueueStats> {

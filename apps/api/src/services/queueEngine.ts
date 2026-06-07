@@ -61,20 +61,20 @@ class QueueEngine {
   // Job control (status flags the worker honors at batch start)
   // --------------------------------------------------------------------------
 
-  async pause(jobId: string): Promise<boolean> {
-    const ok = await queueStore.transition(jobId, ['pending', 'running'], 'paused')
+  async pause(jobId: string, userId?: string): Promise<boolean> {
+    const ok = await queueStore.transition(jobId, ['pending', 'running'], 'paused', userId)
     if (ok) logger.info(`Job paused: ${jobId}`)
     return ok
   }
 
-  async resume(jobId: string): Promise<boolean> {
-    const ok = await queueStore.transition(jobId, ['paused'], 'pending')
+  async resume(jobId: string, userId?: string): Promise<boolean> {
+    const ok = await queueStore.transition(jobId, ['paused'], 'pending', userId)
     if (ok) logger.info(`Job resumed: ${jobId}`)
     return ok
   }
 
-  async cancel(jobId: string): Promise<boolean> {
-    const ok = await queueStore.transition(jobId, ['pending', 'running', 'paused'], 'cancelled')
+  async cancel(jobId: string, userId?: string): Promise<boolean> {
+    const ok = await queueStore.transition(jobId, ['pending', 'running', 'paused'], 'cancelled', userId)
     if (ok) logger.info(`Job cancelled: ${jobId}`)
     return ok
   }
@@ -83,8 +83,8 @@ class QueueEngine {
   // Queries (read the Postgres mirror)
   // --------------------------------------------------------------------------
 
-  async getJob(jobId: string) {
-    return queueStore.getJob(jobId)
+  async getJob(jobId: string, userId?: string) {
+    return queueStore.getJob(jobId, userId)
   }
 
   async getJobs(userId: string, status?: import('./queue/types').JobStatus, limit = 20, offset = 0) {
@@ -95,8 +95,8 @@ class QueueEngine {
     return queueStore.getStats(userId)
   }
 
-  async getDeadLetters(jobId?: string, limit = 50, offset = 0) {
-    return queueStore.getDeadLetters(jobId, limit, offset)
+  async getDeadLetters(userId: string, jobId?: string, limit = 50, offset = 0) {
+    return queueStore.getDeadLetters(userId, jobId, limit, offset)
   }
 
   // --------------------------------------------------------------------------
@@ -126,11 +126,6 @@ class QueueEngine {
   async getActiveJobIds(): Promise<string[]> {
     const active = await getSendQueue().getActive()
     return active.map((j) => j.id ?? '').filter(Boolean)
-  }
-
-  /** BullMQ recovers stalled jobs natively; nothing to recover at boot. */
-  async recoverInterruptedJobs(): Promise<number> {
-    return 0
   }
 }
 

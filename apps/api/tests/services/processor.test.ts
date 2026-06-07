@@ -104,7 +104,7 @@ describe('P4.C — processSendBatch', () => {
 
     await processSendBatch('j1', 0)
 
-    const dls = await queueStore.getDeadLetters('j1')
+    const dls = await queueStore.getDeadLetters('u1', 'j1') // (userId, jobId)
     expect(dls).toHaveLength(1)
     expect(dls[0].recipient_email).toBe('bad@x.com')
     expect(suppress).toHaveBeenCalledWith('u1', 'bad@x.com', 'bounce_hard', expect.any(String))
