@@ -15,15 +15,10 @@ export default defineConfig({
     poolOptions: { forks: { maxForks: 4, minForks: 1 } },
     testTimeout: 60000,
     hookTimeout: 60000,
-    // Bun's built-in `bun:sqlite` is unresolvable under the Node/Vite test
-    // pipeline. Map it to a better-sqlite3-backed shim (test-only).
+    // drizzle-orm/bun-sql is Bun-only; under vitest (Node) tests inject a PGlite db instead.
+    // (The bun:sqlite shim + better-sqlite3 were removed in P4.E — no sqlite remains.)
     alias: {
-      'bun:sqlite': fileURLToPath(new URL('./tests/helpers/bun-sqlite.ts', import.meta.url)),
-      // drizzle-orm/bun-sql is Bun-only; under vitest (Node) tests inject a PGlite db instead.
       'drizzle-orm/bun-sql': fileURLToPath(new URL('./tests/helpers/bun-sql-shim.ts', import.meta.url)),
-    },
-    server: {
-      deps: { external: ['better-sqlite3'] },
     },
     coverage: {
       provider: 'v8',

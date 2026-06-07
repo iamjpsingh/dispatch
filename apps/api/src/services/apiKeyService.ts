@@ -93,10 +93,11 @@ export const apiKeyService = {
       .where(and(eq(api_keys.key_prefix, prefix), eq(api_keys.enabled, 1)))
 
     for (const candidate of candidates) {
+      if (!candidate.org_id) continue // no org context → can't be used to authenticate
       if (candidate.expires_at && new Date(candidate.expires_at) < new Date()) continue
       if (await argon2.verify(candidate.key_hash, key)) {
         await getDb().update(api_keys).set({ last_used_at: new Date().toISOString() }).where(eq(api_keys.id, candidate.id))
-        return { userId: candidate.user_id, orgId: candidate.org_id ?? '', scopes: JSON.parse(candidate.scopes) }
+        return { userId: candidate.user_id, orgId: candidate.org_id, scopes: JSON.parse(candidate.scopes) }
       }
     }
     return null
