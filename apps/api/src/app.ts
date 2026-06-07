@@ -178,13 +178,13 @@ app.get('/health', (c) =>
   })
 )
 
-app.get('/api/user/info', (c) => {
+app.get('/api/user/info', async (c) => {
   const token = getCookie(c, COOKIE.SESSION_NAME)
   if (!token) {
     return c.json({ success: false, message: 'Not authenticated' }, 401)
   }
 
-  const session = authLocalService.validateSession(token)
+  const session = await authLocalService.validateSession(token)
   if (!session) {
     return c.json({ success: false, message: 'Session expired' }, 401)
   }

@@ -1,4 +1,6 @@
-import { db } from '../db/connection'
+import { and, eq, ne, gt, lt, isNull, desc, count } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { users, sessions, password_reset_tokens } from '../db/pg/schema'
 import { auditService } from './auditService'
 import { orgService } from './orgService'
 import { generateId } from '../utils/id'
@@ -18,26 +20,35 @@ export interface AuthSession {
   expiresAt: string
 }
 
+// Columns that make up an AuthUser (never selects password_hash).
+const authUserSelect = {
+  id: users.id,
+  email: users.email,
+  name: users.name,
+  status: users.status,
+  is_platform_admin: users.is_platform_admin,
+}
+
 class AuthLocalService {
   /**
    * Register a new user. Creates a personal org for them.
    */
   async register(email: string, password: string, name: string): Promise<AuthSession | null> {
-    const existing = db.prepare('SELECT 1 FROM users WHERE email = ?').get(email.toLowerCase().trim())
-    if (existing) return null
+    const db = getDb()
+    const normalized = email.toLowerCase().trim()
+    const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, normalized)).limit(1)
+    if (existing.length > 0) return null
 
     const userId = generateId('usr')
     const passwordHash = await Bun.password.hash(password, { algorithm: 'argon2id' })
 
-    db.prepare(`
-      INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)
-    `).run(userId, email.toLowerCase().trim(), name.trim(), passwordHash)
+    await db.insert(users).values({ id: userId, email: normalized, name: name.trim(), password_hash: passwordHash })
 
     // Create personal org
-    const org = orgService.create(userId, `${name.trim()}'s Workspace`)
+    const org = await orgService.create(userId, `${name.trim()}'s Workspace`)
 
     // Create session
-    const session = this.createSession(userId, org.id)
+    const session = await this.createSession(userId, org.id)
 
     auditService.log({
       orgId: org.id,
@@ -55,9 +66,12 @@ class AuthLocalService {
    * Login with email/password
    */
   async login(email: string, password: string, ipAddress?: string, userAgent?: string): Promise<AuthSession | null> {
-    const user = db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(
-      email.toLowerCase().trim(), 'active'
-    ) as (AuthUser & { password_hash: string }) | null
+    const db = getDb()
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.email, email.toLowerCase().trim()), eq(users.status, 'active')))
+      .limit(1)
 
     if (!user) return null
 
@@ -65,13 +79,13 @@ class AuthLocalService {
     if (!valid) return null
 
     // Update last login
-    db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id)
+    await db.update(users).set({ last_login_at: new Date().toISOString() }).where(eq(users.id, user.id))
 
     // Get user's default org (first active org they're a member of)
-    const orgs = orgService.listForUser(user.id)
+    const orgs = await orgService.listForUser(user.id)
     const defaultOrgId = orgs.length > 0 ? orgs[0].id : null
 
-    const session = this.createSession(user.id, defaultOrgId, ipAddress, userAgent)
+    const session = await this.createSession(user.id, defaultOrgId, ipAddress, userAgent)
 
     auditService.log({
       orgId: defaultOrgId || undefined,
@@ -90,10 +104,11 @@ class AuthLocalService {
   /**
    * Logout - delete session
    */
-  logout(token: string): boolean {
-    const session = db.prepare('SELECT user_id, org_id FROM sessions WHERE token = ?').get(token) as { user_id: string; org_id: string | null } | null
+  async logout(token: string): Promise<boolean> {
+    const db = getDb()
+    const [session] = await db.select({ user_id: sessions.user_id, org_id: sessions.org_id }).from(sessions).where(eq(sessions.token, token)).limit(1)
 
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token)
+    await db.delete(sessions).where(eq(sessions.token, token))
 
     if (session) {
       auditService.log({
@@ -109,16 +124,21 @@ class AuthLocalService {
 
   /**
    * Validate session token. Returns user + org context.
-   * Synchronous - bun:sqlite is sync.
    */
-  validateSession(token: string): { user: AuthUser; orgId: string | null } | null {
-    const row = db.prepare(`
-      SELECT s.user_id, s.org_id, s.expires_at,
-             u.id, u.email, u.name, u.status, u.is_platform_admin
-      FROM sessions s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.token = ? AND s.expires_at > datetime('now') AND u.status = 'active'
-    `).get(token) as any
+  async validateSession(token: string): Promise<{ user: AuthUser; orgId: string | null } | null> {
+    const [row] = await getDb()
+      .select({
+        user_id: sessions.user_id,
+        org_id: sessions.org_id,
+        email: users.email,
+        name: users.name,
+        status: users.status,
+        is_platform_admin: users.is_platform_admin,
+      })
+      .from(sessions)
+      .innerJoin(users, eq(sessions.user_id, users.id))
+      .where(and(eq(sessions.token, token), gt(sessions.expires_at, new Date().toISOString()), eq(users.status, 'active')))
+      .limit(1)
 
     if (!row) return null
 
@@ -137,23 +157,25 @@ class AuthLocalService {
   /**
    * Switch active org for a session
    */
-  switchOrg(token: string, orgId: string): boolean {
-    const result = db.prepare('UPDATE sessions SET org_id = ? WHERE token = ?').run(orgId, token)
-    return result.changes > 0
+  async switchOrg(token: string, orgId: string): Promise<boolean> {
+    const res = await getDb().update(sessions).set({ org_id: orgId }).where(eq(sessions.token, token)).returning({ id: sessions.id })
+    return res.length > 0
   }
 
   /**
    * Get user by ID
    */
-  getUser(userId: string): AuthUser | null {
-    return db.prepare('SELECT id, email, name, status, is_platform_admin FROM users WHERE id = ?').get(userId) as AuthUser | null
+  async getUser(userId: string): Promise<AuthUser | null> {
+    const [user] = await getDb().select(authUserSelect).from(users).where(eq(users.id, userId)).limit(1)
+    return user ?? null
   }
 
   /**
    * Get user by email
    */
-  getUserByEmail(email: string): AuthUser | null {
-    return db.prepare('SELECT id, email, name, status, is_platform_admin FROM users WHERE email = ?').get(email.toLowerCase().trim()) as AuthUser | null
+  async getUserByEmail(email: string): Promise<AuthUser | null> {
+    const [user] = await getDb().select(authUserSelect).from(users).where(eq(users.email, email.toLowerCase().trim())).limit(1)
+    return user ?? null
   }
 
   /**
@@ -163,36 +185,34 @@ class AuthLocalService {
     const session = await this.register(email, password, name)
     if (!session) return null
 
-    db.prepare('UPDATE users SET is_platform_admin = 1 WHERE id = ?').run(session.user.id)
+    await getDb().update(users).set({ is_platform_admin: 1 }).where(eq(users.id, session.user.id))
     return { ...session.user, is_platform_admin: 1 }
   }
 
   /**
    * Promote existing user to platform admin
    */
-  promoteToPlatformAdmin(userId: string): boolean {
-    const result = db.prepare('UPDATE users SET is_platform_admin = 1 WHERE id = ?').run(userId)
-    return result.changes > 0
+  async promoteToPlatformAdmin(userId: string): Promise<boolean> {
+    const res = await getDb().update(users).set({ is_platform_admin: 1 }).where(eq(users.id, userId)).returning({ id: users.id })
+    return res.length > 0
   }
 
   /**
    * Create a password reset token (valid for 1 hour)
    */
-  createPasswordResetToken(email: string): { token: string; userId: string } | null {
-    const user = this.getUserByEmail(email)
+  async createPasswordResetToken(email: string): Promise<{ token: string; userId: string } | null> {
+    const db = getDb()
+    const user = await this.getUserByEmail(email)
     if (!user) return null
 
     // Invalidate previous tokens
-    db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at IS NULL').run(user.id)
+    await db.delete(password_reset_tokens).where(and(eq(password_reset_tokens.user_id, user.id), isNull(password_reset_tokens.used_at)))
 
     const token = this.generateToken()
     const id = generateId('prt')
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hour
 
-    db.prepare(`
-      INSERT INTO password_reset_tokens (id, user_id, token, expires_at)
-      VALUES (?, ?, ?, ?)
-    `).run(id, user.id, token, expiresAt)
+    await db.insert(password_reset_tokens).values({ id, user_id: user.id, token, expires_at: expiresAt })
 
     return { token, userId: user.id }
   }
@@ -200,11 +220,16 @@ class AuthLocalService {
   /**
    * Validate a password reset token
    */
-  validateResetToken(token: string): { userId: string } | null {
-    const row = db.prepare(`
-      SELECT user_id FROM password_reset_tokens
-      WHERE token = ? AND expires_at > datetime('now') AND used_at IS NULL
-    `).get(token) as { user_id: string } | null
+  async validateResetToken(token: string): Promise<{ userId: string } | null> {
+    const [row] = await getDb()
+      .select({ user_id: password_reset_tokens.user_id })
+      .from(password_reset_tokens)
+      .where(and(
+        eq(password_reset_tokens.token, token),
+        gt(password_reset_tokens.expires_at, new Date().toISOString()),
+        isNull(password_reset_tokens.used_at),
+      ))
+      .limit(1)
 
     return row ? { userId: row.user_id } : null
   }
@@ -213,15 +238,16 @@ class AuthLocalService {
    * Reset password using a valid token
    */
   async resetPassword(token: string, newPassword: string): Promise<boolean> {
-    const valid = this.validateResetToken(token)
+    const db = getDb()
+    const valid = await this.validateResetToken(token)
     if (!valid) return false
 
     const passwordHash = await Bun.password.hash(newPassword, { algorithm: 'argon2id' })
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, valid.userId)
-    db.prepare("UPDATE password_reset_tokens SET used_at = datetime('now') WHERE token = ?").run(token)
+    await db.update(users).set({ password_hash: passwordHash }).where(eq(users.id, valid.userId))
+    await db.update(password_reset_tokens).set({ used_at: new Date().toISOString() }).where(eq(password_reset_tokens.token, token))
 
     // Invalidate all sessions for security
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(valid.userId)
+    await db.delete(sessions).where(eq(sessions.user_id, valid.userId))
 
     auditService.log({
       actorId: valid.userId,
@@ -237,14 +263,15 @@ class AuthLocalService {
    * Update user's password (when they know their current one)
    */
   async updatePassword(userId: string, currentPassword: string, newPassword: string): Promise<boolean> {
-    const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId) as { password_hash: string } | null
+    const db = getDb()
+    const [row] = await db.select({ password_hash: users.password_hash }).from(users).where(eq(users.id, userId)).limit(1)
     if (!row) return false
 
     const valid = await Bun.password.verify(currentPassword, row.password_hash)
     if (!valid) return false
 
     const passwordHash = await Bun.password.hash(newPassword, { algorithm: 'argon2id' })
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId)
+    await db.update(users).set({ password_hash: passwordHash }).where(eq(users.id, userId))
 
     auditService.log({
       actorId: userId,
@@ -259,18 +286,19 @@ class AuthLocalService {
   /**
    * Update user's profile
    */
-  updateProfile(userId: string, data: { name?: string; email?: string }): AuthUser | null {
-    const user = this.getUser(userId)
+  async updateProfile(userId: string, data: { name?: string; email?: string }): Promise<AuthUser | null> {
+    const db = getDb()
+    const user = await this.getUser(userId)
     if (!user) return null
 
     if (data.email && data.email !== user.email) {
-      const existing = this.getUserByEmail(data.email)
+      const existing = await this.getUserByEmail(data.email)
       if (existing) return null // email taken
-      db.prepare('UPDATE users SET email = ? WHERE id = ?').run(data.email.toLowerCase().trim(), userId)
+      await db.update(users).set({ email: data.email.toLowerCase().trim() }).where(eq(users.id, userId))
     }
 
     if (data.name) {
-      db.prepare('UPDATE users SET name = ? WHERE id = ?').run(data.name.trim(), userId)
+      await db.update(users).set({ name: data.name.trim() }).where(eq(users.id, userId))
     }
 
     return this.getUser(userId)
@@ -279,50 +307,69 @@ class AuthLocalService {
   /**
    * Clean up expired sessions
    */
-  cleanupSessions(): number {
-    const result = db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run()
-    return result.changes
+  async cleanupSessions(): Promise<number> {
+    const res = await getDb().delete(sessions).where(lt(sessions.expires_at, new Date().toISOString())).returning({ id: sessions.id })
+    return res.length
   }
 
-  /**
-   * List all users (platform admin only)
-   */
   /**
    * List all regular users. Platform admin is a separate identity —
    * never included in user lists, member lists, or any user-facing query.
    * Only the platform admin's own session knows they're platform admin.
    */
-  listAllUsers(page = 1, limit = 50): { users: AuthUser[]; total: number } {
+  async listAllUsers(page = 1, limit = 50): Promise<{ users: AuthUser[]; total: number }> {
+    const db = getDb()
     const offset = (page - 1) * limit
-    const total = (db.prepare('SELECT COUNT(*) as count FROM users WHERE is_platform_admin = 0').get() as any).count
-    const users = db.prepare(`
-      SELECT id, email, name, status, is_platform_admin, last_login_at, created_at
-      FROM users WHERE is_platform_admin = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(limit, offset) as AuthUser[]
-    return { users, total }
+    const [totalRow] = await db.select({ value: count() }).from(users).where(eq(users.is_platform_admin, 0))
+    const rows = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        status: users.status,
+        is_platform_admin: users.is_platform_admin,
+        last_login_at: users.last_login_at,
+        created_at: users.created_at,
+      })
+      .from(users)
+      .where(eq(users.is_platform_admin, 0))
+      .orderBy(desc(users.created_at))
+      .limit(limit)
+      .offset(offset)
+    return { users: rows as AuthUser[], total: totalRow?.value ?? 0 }
   }
 
   /**
    * Get a user by email — excludes platform admin from lookups.
    * Platform admin can only be found by their own session, never by other users.
    */
-  getUserByEmailPublic(email: string): AuthUser | null {
-    return db.prepare('SELECT id, email, name, status, is_platform_admin FROM users WHERE email = ? AND is_platform_admin = 0').get(email.toLowerCase().trim()) as AuthUser | null
+  async getUserByEmailPublic(email: string): Promise<AuthUser | null> {
+    const [user] = await getDb()
+      .select(authUserSelect)
+      .from(users)
+      .where(and(eq(users.email, email.toLowerCase().trim()), eq(users.is_platform_admin, 0)))
+      .limit(1)
+    return user ?? null
   }
 
   // ------- Private -------
 
-  private createSession(userId: string, orgId: string | null, ipAddress?: string, userAgent?: string): AuthSession {
+  private async createSession(userId: string, orgId: string | null, ipAddress?: string, userAgent?: string): Promise<AuthSession> {
     const token = this.generateToken()
     const sessionId = generateId('ses')
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
 
-    db.prepare(`
-      INSERT INTO sessions (id, user_id, token, org_id, ip_address, user_agent, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(sessionId, userId, token, orgId, ipAddress || null, userAgent || null, expiresAt)
+    await getDb().insert(sessions).values({
+      id: sessionId,
+      user_id: userId,
+      token,
+      org_id: orgId,
+      ip_address: ipAddress || null,
+      user_agent: userAgent || null,
+      expires_at: expiresAt,
+    })
 
-    const user = this.getUser(userId)!
+    const user = (await this.getUser(userId))!
     return { token, user, orgId, expiresAt }
   }
 
@@ -330,20 +377,16 @@ class AuthLocalService {
   // Username
   // --------------------------------------------------------------------------
 
-  checkUsername(username: string, excludeUserId?: string): { available: boolean; suggestions: string[] } {
+  async checkUsername(username: string, excludeUserId?: string): Promise<{ available: boolean; suggestions: string[] }> {
     const normalized = username.toLowerCase().replace(/[^a-z0-9_-]/g, '').substring(0, 30)
     if (!normalized || normalized.length < 3) return { available: false, suggestions: [] }
 
-    const query = excludeUserId
-      ? db.prepare('SELECT 1 FROM users WHERE username = ? AND id != ?').get(normalized, excludeUserId)
-      : db.prepare('SELECT 1 FROM users WHERE username = ?').get(normalized)
-
-    if (!query) return { available: true, suggestions: [] }
+    if (!(await this.usernameTaken(normalized, excludeUserId))) return { available: true, suggestions: [] }
 
     const suggestions: string[] = []
     for (let i = 1; i <= 5; i++) {
       const candidate = `${normalized}${i}`
-      if (!db.prepare('SELECT 1 FROM users WHERE username = ?').get(candidate)) {
+      if (!(await this.usernameTaken(candidate))) {
         suggestions.push(candidate)
         if (suggestions.length >= 3) break
       }
@@ -351,32 +394,39 @@ class AuthLocalService {
     return { available: false, suggestions }
   }
 
-  setUsername(userId: string, username: string): boolean {
+  async setUsername(userId: string, username: string): Promise<boolean> {
     const normalized = username.toLowerCase().replace(/[^a-z0-9_-]/g, '').substring(0, 30)
     if (!normalized || normalized.length < 3) throw new Error('Username must be at least 3 characters (letters, numbers, - _)')
 
-    const existing = db.prepare('SELECT 1 FROM users WHERE username = ? AND id != ?').get(normalized, userId)
-    if (existing) throw new Error(`Username "${normalized}" is already taken`)
+    if (await this.usernameTaken(normalized, userId)) throw new Error(`Username "${normalized}" is already taken`)
 
-    const result = db.prepare("UPDATE users SET username = ?, updated_at = datetime('now') WHERE id = ?").run(normalized, userId)
-    return result.changes > 0
+    const res = await getDb().update(users).set({ username: normalized, updated_at: new Date().toISOString() }).where(eq(users.id, userId)).returning({ id: users.id })
+    return res.length > 0
   }
 
-  getUsername(userId: string): string | null {
-    const row = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any
+  async getUsername(userId: string): Promise<string | null> {
+    const [row] = await getDb().select({ username: users.username }).from(users).where(eq(users.id, userId)).limit(1)
     return row?.username || null
   }
 
-  suggestUsername(email: string): string {
+  async suggestUsername(email: string): Promise<string> {
     const prefix = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 20)
-    if (prefix.length >= 3 && !db.prepare('SELECT 1 FROM users WHERE username = ?').get(prefix)) {
+    if (prefix.length >= 3 && !(await this.usernameTaken(prefix))) {
       return prefix
     }
     for (let i = 1; i <= 99; i++) {
       const candidate = `${prefix}${i}`
-      if (!db.prepare('SELECT 1 FROM users WHERE username = ?').get(candidate)) return candidate
+      if (!(await this.usernameTaken(candidate))) return candidate
     }
     return `${prefix}${Date.now() % 10000}`
+  }
+
+  private async usernameTaken(username: string, excludeUserId?: string): Promise<boolean> {
+    const where = excludeUserId
+      ? and(eq(users.username, username), ne(users.id, excludeUserId))
+      : eq(users.username, username)
+    const rows = await getDb().select({ id: users.id }).from(users).where(where).limit(1)
+    return rows.length > 0
   }
 
   private generateToken(): string {

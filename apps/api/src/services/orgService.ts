@@ -1,4 +1,6 @@
-import { db } from '../db/connection'
+import { and, eq, ne, desc, count, inArray } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { organizations, org_members, users } from '../db/pg/schema'
 import { auditService } from './auditService'
 import { generateId } from '../utils/id'
 
@@ -29,31 +31,43 @@ export interface OrgMember {
   name?: string
 }
 
+// Columns selected when a member row needs the joined user email/name.
+const memberSelect = {
+  id: org_members.id,
+  org_id: org_members.org_id,
+  user_id: org_members.user_id,
+  role: org_members.role,
+  status: org_members.status,
+  invited_by: org_members.invited_by,
+  invited_at: org_members.invited_at,
+  joined_at: org_members.joined_at,
+  created_at: org_members.created_at,
+  updated_at: org_members.updated_at,
+  email: users.email,
+  name: users.name,
+}
+
 class OrgService {
   /**
    * Create a new organization. Creator becomes owner.
    */
-  create(userId: string, name: string, slug?: string): Organization {
+  async create(userId: string, name: string, slug?: string): Promise<Organization> {
+    const db = getDb()
     const orgId = generateId('org')
     const orgSlug = slug || this.generateSlug(name)
 
     // Check slug uniqueness
-    const existing = db.prepare('SELECT 1 FROM organizations WHERE slug = ?').get(orgSlug)
-    if (existing) {
+    const existing = await db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, orgSlug)).limit(1)
+    if (existing.length > 0) {
       throw new Error(`Organization slug "${orgSlug}" already exists`)
     }
 
-    db.prepare(`
-      INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)
-    `).run(orgId, name, orgSlug)
+    await db.insert(organizations).values({ id: orgId, name, slug: orgSlug })
 
     // Add creator as owner
-    const memberId = generateId('om')
-    db.prepare(`
-      INSERT INTO org_members (id, org_id, user_id, role, status) VALUES (?, ?, ?, 'owner', 'active')
-    `).run(memberId, orgId, userId)
+    await db.insert(org_members).values({ id: generateId('om'), org_id: orgId, user_id: userId, role: 'owner', status: 'active' })
 
-    const org = db.prepare('SELECT * FROM organizations WHERE id = ?').get(orgId) as Organization
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1)
 
     auditService.log({
       orgId,
@@ -67,29 +81,26 @@ class OrgService {
     return org
   }
 
-  get(orgId: string): Organization | null {
-    return db.prepare('SELECT * FROM organizations WHERE id = ?').get(orgId) as Organization | null
+  async get(orgId: string): Promise<Organization | null> {
+    const [org] = await getDb().select().from(organizations).where(eq(organizations.id, orgId)).limit(1)
+    return org ?? null
   }
 
-  getBySlug(slug: string): Organization | null {
-    return db.prepare('SELECT * FROM organizations WHERE slug = ?').get(slug) as Organization | null
+  async getBySlug(slug: string): Promise<Organization | null> {
+    const [org] = await getDb().select().from(organizations).where(eq(organizations.slug, slug)).limit(1)
+    return org ?? null
   }
 
-  update(orgId: string, updates: { name?: string; settings?: Record<string, unknown> }, actorId: string): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, updates: { name?: string; settings?: Record<string, unknown> }, actorId: string): Promise<boolean> {
+    const values: { name?: string; settings?: string; updated_at: string } = { updated_at: new Date().toISOString() }
+    if (updates.name !== undefined) values.name = updates.name
+    if (updates.settings !== undefined) values.settings = JSON.stringify(updates.settings)
 
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.settings !== undefined) { sets.push('settings = ?'); params.push(JSON.stringify(updates.settings)) }
+    if (values.name === undefined && values.settings === undefined) return false
 
-    if (sets.length === 0) return false
+    const res = await getDb().update(organizations).set(values).where(eq(organizations.id, orgId)).returning({ id: organizations.id })
 
-    sets.push("updated_at = datetime('now')")
-    params.push(orgId)
-
-    const result = db.prepare(`UPDATE organizations SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-
-    if (result.changes > 0) {
+    if (res.length > 0) {
       auditService.log({
         orgId,
         actorId,
@@ -100,81 +111,101 @@ class OrgService {
       })
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
   /**
    * List user's organizations
    */
-  listForUser(userId: string): (Organization & { role: string })[] {
-    return db.prepare(`
-      SELECT o.*, om.role FROM organizations o
-      JOIN org_members om ON o.id = om.org_id
-      WHERE om.user_id = ? AND om.status = 'active' AND o.status = 'active'
-      ORDER BY o.name
-    `).all(userId) as (Organization & { role: string })[]
+  async listForUser(userId: string): Promise<(Organization & { role: string })[]> {
+    return getDb()
+      .select({
+        id: organizations.id,
+        name: organizations.name,
+        slug: organizations.slug,
+        plan: organizations.plan,
+        status: organizations.status,
+        settings: organizations.settings,
+        created_at: organizations.created_at,
+        updated_at: organizations.updated_at,
+        role: org_members.role,
+      })
+      .from(organizations)
+      .innerJoin(org_members, eq(organizations.id, org_members.org_id))
+      .where(and(eq(org_members.user_id, userId), eq(org_members.status, 'active'), eq(organizations.status, 'active')))
+      .orderBy(organizations.name)
   }
 
   /**
    * List all organizations (platform admin only)
    */
-  listAll(page = 1, limit = 50): { orgs: Organization[]; total: number } {
+  async listAll(page = 1, limit = 50): Promise<{ orgs: Organization[]; total: number }> {
+    const db = getDb()
     const offset = (page - 1) * limit
-    const total = (db.prepare('SELECT COUNT(*) as count FROM organizations').get() as any).count
-    const orgs = db.prepare('SELECT * FROM organizations ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset) as Organization[]
-    return { orgs, total }
+    const [totalRow] = await db.select({ value: count() }).from(organizations)
+    const orgs = await db.select().from(organizations).orderBy(desc(organizations.created_at)).limit(limit).offset(offset)
+    return { orgs, total: totalRow?.value ?? 0 }
   }
 
   // ------- Members -------
 
-  getMembers(orgId: string): OrgMember[] {
+  async getMembers(orgId: string): Promise<OrgMember[]> {
     // Exclude platform admins from org member lists (they're invisible to orgs)
-    return db.prepare(`
-      SELECT om.*, u.email, u.name FROM org_members om
-      JOIN users u ON om.user_id = u.id
-      WHERE om.org_id = ? AND om.status IN ('active', 'invited')
-        AND u.is_platform_admin = 0
-      ORDER BY om.role, u.name
-    `).all(orgId) as OrgMember[]
+    const rows = await getDb()
+      .select(memberSelect)
+      .from(org_members)
+      .innerJoin(users, eq(org_members.user_id, users.id))
+      .where(and(eq(org_members.org_id, orgId), inArray(org_members.status, ['active', 'invited']), eq(users.is_platform_admin, 0)))
+      .orderBy(org_members.role, users.name)
+    return rows as OrgMember[]
   }
 
-  getMember(orgId: string, userId: string): OrgMember | null {
-    return db.prepare(`
-      SELECT om.*, u.email, u.name FROM org_members om
-      JOIN users u ON om.user_id = u.id
-      WHERE om.org_id = ? AND om.user_id = ?
-    `).get(orgId, userId) as OrgMember | null
+  async getMember(orgId: string, userId: string): Promise<OrgMember | null> {
+    const [row] = await getDb()
+      .select(memberSelect)
+      .from(org_members)
+      .innerJoin(users, eq(org_members.user_id, users.id))
+      .where(and(eq(org_members.org_id, orgId), eq(org_members.user_id, userId)))
+      .limit(1)
+    return (row as OrgMember) ?? null
   }
 
-  addMember(orgId: string, userId: string, role: string, invitedBy: string): OrgMember {
-    const id = generateId('om')
-    db.prepare(`
-      INSERT INTO org_members (id, org_id, user_id, role, status, invited_by, invited_at)
-      VALUES (?, ?, ?, ?, 'active', ?, datetime('now'))
-    `).run(id, orgId, userId, role, invitedBy)
+  async addMember(orgId: string, userId: string, role: string, invitedBy: string): Promise<OrgMember> {
+    await getDb().insert(org_members).values({
+      id: generateId('om'),
+      org_id: orgId,
+      user_id: userId,
+      role,
+      status: 'active',
+      invited_by: invitedBy,
+      invited_at: new Date().toISOString(),
+    })
+
+    const member = (await this.getMember(orgId, userId))!
 
     auditService.log({
       orgId,
       actorId: invitedBy,
       action: 'member.invited',
       entityType: 'org_member',
-      entityId: id,
+      entityId: member.id,
       metadata: { userId, role },
     })
 
-    return this.getMember(orgId, userId)!
+    return member
   }
 
-  updateMemberRole(orgId: string, userId: string, newRole: string, actorId: string): boolean {
-    const current = this.getMember(orgId, userId)
+  async updateMemberRole(orgId: string, userId: string, newRole: string, actorId: string): Promise<boolean> {
+    const current = await this.getMember(orgId, userId)
     if (!current) return false
 
-    const result = db.prepare(`
-      UPDATE org_members SET role = ?, updated_at = datetime('now')
-      WHERE org_id = ? AND user_id = ? AND status = 'active'
-    `).run(newRole, orgId, userId)
+    const res = await getDb()
+      .update(org_members)
+      .set({ role: newRole, updated_at: new Date().toISOString() })
+      .where(and(eq(org_members.org_id, orgId), eq(org_members.user_id, userId), eq(org_members.status, 'active')))
+      .returning({ id: org_members.id })
 
-    if (result.changes > 0) {
+    if (res.length > 0) {
       auditService.log({
         orgId,
         actorId,
@@ -185,16 +216,22 @@ class OrgService {
       })
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  removeMember(orgId: string, userId: string, actorId: string): boolean {
-    const result = db.prepare(`
-      UPDATE org_members SET status = 'removed', updated_at = datetime('now')
-      WHERE org_id = ? AND user_id = ? AND status = 'active' AND role != 'owner'
-    `).run(orgId, userId)
+  async removeMember(orgId: string, userId: string, actorId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(org_members)
+      .set({ status: 'removed', updated_at: new Date().toISOString() })
+      .where(and(
+        eq(org_members.org_id, orgId),
+        eq(org_members.user_id, userId),
+        eq(org_members.status, 'active'),
+        ne(org_members.role, 'owner'),
+      ))
+      .returning({ id: org_members.id })
 
-    if (result.changes > 0) {
+    if (res.length > 0) {
       auditService.log({
         orgId,
         actorId,
@@ -204,55 +241,59 @@ class OrgService {
       })
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  getMemberCount(orgId: string): number {
-    return (db.prepare(`
-      SELECT COUNT(*) as count FROM org_members om
-      JOIN users u ON om.user_id = u.id
-      WHERE om.org_id = ? AND om.status = 'active' AND u.is_platform_admin = 0
-    `).get(orgId) as any).count
+  async getMemberCount(orgId: string): Promise<number> {
+    const [row] = await getDb()
+      .select({ value: count() })
+      .from(org_members)
+      .innerJoin(users, eq(org_members.user_id, users.id))
+      .where(and(eq(org_members.org_id, orgId), eq(org_members.status, 'active'), eq(users.is_platform_admin, 0)))
+    return row?.value ?? 0
   }
 
-  checkSlugAvailability(slug: string, excludeOrgId?: string): { available: boolean; suggestions: string[] } {
+  async checkSlugAvailability(slug: string, excludeOrgId?: string): Promise<{ available: boolean; suggestions: string[] }> {
+    const db = getDb()
     const normalized = slug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 48)
     if (!normalized || normalized.length < 2) {
       return { available: false, suggestions: [] }
     }
 
-    const query = excludeOrgId
-      ? db.prepare('SELECT 1 FROM organizations WHERE slug = ? AND id != ?').get(normalized, excludeOrgId)
-      : db.prepare('SELECT 1 FROM organizations WHERE slug = ?').get(normalized)
+    const taken = async (s: string): Promise<boolean> => {
+      const rows = excludeOrgId
+        ? await db.select({ id: organizations.id }).from(organizations).where(and(eq(organizations.slug, s), ne(organizations.id, excludeOrgId))).limit(1)
+        : await db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, s)).limit(1)
+      return rows.length > 0
+    }
 
-    if (!query) return { available: true, suggestions: [] }
+    if (!(await taken(normalized))) return { available: true, suggestions: [] }
 
     // Generate suggestions
     const suggestions: string[] = []
     for (let i = 1; i <= 5; i++) {
       const candidate = `${normalized}-${i}`
-      const exists = db.prepare('SELECT 1 FROM organizations WHERE slug = ?').get(candidate)
-      if (!exists) suggestions.push(candidate)
+      if (!(await taken(candidate))) suggestions.push(candidate)
       if (suggestions.length >= 3) break
     }
     // Try with random suffix
     if (suggestions.length < 3) {
-      const rand = `${normalized}-${Math.random().toString(36).substring(2, 6)}`
-      suggestions.push(rand)
+      suggestions.push(`${normalized}-${Math.random().toString(36).substring(2, 6)}`)
     }
 
     return { available: false, suggestions }
   }
 
-  updateSlug(orgId: string, newSlug: string): boolean {
+  async updateSlug(orgId: string, newSlug: string): Promise<boolean> {
+    const db = getDb()
     const normalized = newSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 48)
     if (!normalized || normalized.length < 2) throw new Error('Slug must be at least 2 characters')
 
-    const existing = db.prepare('SELECT 1 FROM organizations WHERE slug = ? AND id != ?').get(normalized, orgId)
-    if (existing) throw new Error(`Slug "${normalized}" is already taken`)
+    const existing = await db.select({ id: organizations.id }).from(organizations).where(and(eq(organizations.slug, normalized), ne(organizations.id, orgId))).limit(1)
+    if (existing.length > 0) throw new Error(`Slug "${normalized}" is already taken`)
 
-    const result = db.prepare("UPDATE organizations SET slug = ?, updated_at = datetime('now') WHERE id = ?").run(normalized, orgId)
-    return result.changes > 0
+    const res = await db.update(organizations).set({ slug: normalized, updated_at: new Date().toISOString() }).where(eq(organizations.id, orgId)).returning({ id: organizations.id })
+    return res.length > 0
   }
 
   private generateSlug(name: string): string {

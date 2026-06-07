@@ -31,7 +31,7 @@ export async function authMiddleware(c: Context, next: Next) {
     return c.json({ success: false, message: 'Authentication required' }, 401)
   }
 
-  const session = authLocalService.validateSession(token)
+  const session = await authLocalService.validateSession(token)
 
   if (!session) {
     return c.json({ success: false, message: 'Invalid or expired session' }, 401)

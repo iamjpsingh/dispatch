@@ -1,4 +1,6 @@
-import { db } from '../db/connection'
+import { and, eq, gt, lt, desc } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { invitations, organizations, users } from '../db/pg/schema'
 import { auditService } from './auditService'
 import { orgService } from './orgService'
 import { authLocalService } from './authLocalService'
@@ -23,27 +25,52 @@ export interface Invitation {
   inviter_email?: string
 }
 
+// i.* + joined org name + inviter name/email
+const invitationSelect = {
+  id: invitations.id,
+  org_id: invitations.org_id,
+  email: invitations.email,
+  role: invitations.role,
+  token: invitations.token,
+  invited_by: invitations.invited_by,
+  status: invitations.status,
+  expires_at: invitations.expires_at,
+  accepted_at: invitations.accepted_at,
+  created_at: invitations.created_at,
+  org_name: organizations.name,
+  inviter_name: users.name,
+  inviter_email: users.email,
+}
+
 class InvitationService {
   /**
    * Create and send an invitation
    */
-  create(orgId: string, email: string, role: string, invitedBy: string): Invitation {
+  async create(orgId: string, email: string, role: string, invitedBy: string): Promise<Invitation> {
+    const db = getDb()
     const normalizedEmail = email.toLowerCase().trim()
 
     // Check if user is already a member
-    const existingUser = authLocalService.getUserByEmail(normalizedEmail)
+    const existingUser = await authLocalService.getUserByEmail(normalizedEmail)
     if (existingUser) {
-      const member = orgService.getMember(orgId, existingUser.id)
+      const member = await orgService.getMember(orgId, existingUser.id)
       if (member && member.status === 'active') {
         throw new Error('User is already a member of this organization')
       }
     }
 
     // Check for existing pending invitation
-    const existing = db.prepare(`
-      SELECT id FROM invitations WHERE org_id = ? AND email = ? AND status = 'pending' AND expires_at > datetime('now')
-    `).get(orgId, normalizedEmail)
-    if (existing) {
+    const existing = await db
+      .select({ id: invitations.id })
+      .from(invitations)
+      .where(and(
+        eq(invitations.org_id, orgId),
+        eq(invitations.email, normalizedEmail),
+        eq(invitations.status, 'pending'),
+        gt(invitations.expires_at, new Date().toISOString()),
+      ))
+      .limit(1)
+    if (existing.length > 0) {
       throw new Error('An invitation has already been sent to this email')
     }
 
@@ -51,10 +78,7 @@ class InvitationService {
     const token = this.generateToken()
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
 
-    db.prepare(`
-      INSERT INTO invitations (id, org_id, email, role, token, invited_by, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, orgId, normalizedEmail, role, token, invitedBy, expiresAt)
+    await db.insert(invitations).values({ id, org_id: orgId, email: normalizedEmail, role, token, invited_by: invitedBy, expires_at: expiresAt })
 
     auditService.log({
       orgId,
@@ -66,7 +90,7 @@ class InvitationService {
     })
 
     // Send invitation email
-    const invitation = this.getById(id)!
+    const invitation = (await this.getById(id))!
     if (systemMailerService.isConfigured()) {
       systemMailerService.sendInvitation(
         normalizedEmail,
@@ -85,51 +109,50 @@ class InvitationService {
   /**
    * Get invitation by ID
    */
-  getById(id: string): Invitation | null {
-    return db.prepare(`
-      SELECT i.*, o.name as org_name, u.name as inviter_name, u.email as inviter_email
-      FROM invitations i
-      JOIN organizations o ON i.org_id = o.id
-      JOIN users u ON i.invited_by = u.id
-      WHERE i.id = ?
-    `).get(id) as Invitation | null
+  async getById(id: string): Promise<Invitation | null> {
+    const [row] = await getDb()
+      .select(invitationSelect)
+      .from(invitations)
+      .innerJoin(organizations, eq(invitations.org_id, organizations.id))
+      .innerJoin(users, eq(invitations.invited_by, users.id))
+      .where(eq(invitations.id, id))
+      .limit(1)
+    return (row as Invitation) ?? null
   }
 
   /**
    * Get invitation by token
    */
-  getByToken(token: string): Invitation | null {
-    return db.prepare(`
-      SELECT i.*, o.name as org_name, u.name as inviter_name, u.email as inviter_email
-      FROM invitations i
-      JOIN organizations o ON i.org_id = o.id
-      JOIN users u ON i.invited_by = u.id
-      WHERE i.token = ? AND i.status = 'pending' AND i.expires_at > datetime('now')
-    `).get(token) as Invitation | null
+  async getByToken(token: string): Promise<Invitation | null> {
+    const [row] = await getDb()
+      .select(invitationSelect)
+      .from(invitations)
+      .innerJoin(organizations, eq(invitations.org_id, organizations.id))
+      .innerJoin(users, eq(invitations.invited_by, users.id))
+      .where(and(eq(invitations.token, token), eq(invitations.status, 'pending'), gt(invitations.expires_at, new Date().toISOString())))
+      .limit(1)
+    return (row as Invitation) ?? null
   }
 
   /**
    * Accept an invitation. If user doesn't exist, they must register first.
    * Returns the orgId they were added to.
    */
-  accept(token: string, userId: string): { orgId: string; role: string } | null {
-    const invitation = this.getByToken(token)
+  async accept(token: string, userId: string): Promise<{ orgId: string; role: string } | null> {
+    const invitation = await this.getByToken(token)
     if (!invitation) return null
 
     // Verify the accepting user's email matches
-    const user = authLocalService.getUser(userId)
+    const user = await authLocalService.getUser(userId)
     if (!user || user.email.toLowerCase() !== invitation.email.toLowerCase()) {
       return null
     }
 
     // Add user to org
-    orgService.addMember(invitation.org_id, userId, invitation.role, invitation.invited_by)
+    await orgService.addMember(invitation.org_id, userId, invitation.role, invitation.invited_by)
 
     // Mark invitation as accepted
-    db.prepare(`
-      UPDATE invitations SET status = 'accepted', accepted_at = datetime('now')
-      WHERE id = ?
-    `).run(invitation.id)
+    await getDb().update(invitations).set({ status: 'accepted', accepted_at: new Date().toISOString() }).where(eq(invitations.id, invitation.id))
 
     auditService.log({
       orgId: invitation.org_id,
@@ -145,13 +168,13 @@ class InvitationService {
   /**
    * Cancel an invitation
    */
-  cancel(invitationId: string, actorId: string): boolean {
-    const invitation = this.getById(invitationId)
+  async cancel(invitationId: string, actorId: string): Promise<boolean> {
+    const invitation = await this.getById(invitationId)
     if (!invitation || invitation.status !== 'pending') return false
 
-    const result = db.prepare("UPDATE invitations SET status = 'cancelled' WHERE id = ?").run(invitationId)
+    const res = await getDb().update(invitations).set({ status: 'cancelled' }).where(eq(invitations.id, invitationId)).returning({ id: invitations.id })
 
-    if (result.changes > 0) {
+    if (res.length > 0) {
       auditService.log({
         orgId: invitation.org_id,
         actorId,
@@ -161,18 +184,18 @@ class InvitationService {
       })
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
   /**
    * Resend an invitation (resets expiry)
    */
-  resend(invitationId: string, actorId: string): Invitation | null {
-    const invitation = this.getById(invitationId)
+  async resend(invitationId: string, actorId: string): Promise<Invitation | null> {
+    const invitation = await this.getById(invitationId)
     if (!invitation || invitation.status !== 'pending') return null
 
     const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-    db.prepare('UPDATE invitations SET expires_at = ? WHERE id = ?').run(newExpiry, invitationId)
+    await getDb().update(invitations).set({ expires_at: newExpiry }).where(eq(invitations.id, invitationId))
 
     // Resend invitation email
     if (systemMailerService.isConfigured()) {
@@ -191,39 +214,41 @@ class InvitationService {
   /**
    * List pending invitations for an org
    */
-  listForOrg(orgId: string): Invitation[] {
-    return db.prepare(`
-      SELECT i.*, o.name as org_name, u.name as inviter_name, u.email as inviter_email
-      FROM invitations i
-      JOIN organizations o ON i.org_id = o.id
-      JOIN users u ON i.invited_by = u.id
-      WHERE i.org_id = ? AND i.status = 'pending'
-      ORDER BY i.created_at DESC
-    `).all(orgId) as Invitation[]
+  async listForOrg(orgId: string): Promise<Invitation[]> {
+    const rows = await getDb()
+      .select(invitationSelect)
+      .from(invitations)
+      .innerJoin(organizations, eq(invitations.org_id, organizations.id))
+      .innerJoin(users, eq(invitations.invited_by, users.id))
+      .where(and(eq(invitations.org_id, orgId), eq(invitations.status, 'pending')))
+      .orderBy(desc(invitations.created_at))
+    return rows as Invitation[]
   }
 
   /**
    * List pending invitations for an email (for users to see what orgs they've been invited to)
    */
-  listForEmail(email: string): Invitation[] {
-    return db.prepare(`
-      SELECT i.*, o.name as org_name, u.name as inviter_name, u.email as inviter_email
-      FROM invitations i
-      JOIN organizations o ON i.org_id = o.id
-      JOIN users u ON i.invited_by = u.id
-      WHERE i.email = ? AND i.status = 'pending' AND i.expires_at > datetime('now')
-      ORDER BY i.created_at DESC
-    `).all(email.toLowerCase().trim()) as Invitation[]
+  async listForEmail(email: string): Promise<Invitation[]> {
+    const rows = await getDb()
+      .select(invitationSelect)
+      .from(invitations)
+      .innerJoin(organizations, eq(invitations.org_id, organizations.id))
+      .innerJoin(users, eq(invitations.invited_by, users.id))
+      .where(and(eq(invitations.email, email.toLowerCase().trim()), eq(invitations.status, 'pending'), gt(invitations.expires_at, new Date().toISOString())))
+      .orderBy(desc(invitations.created_at))
+    return rows as Invitation[]
   }
 
   /**
    * Clean up expired invitations
    */
-  cleanupExpired(): number {
-    const result = db.prepare(`
-      UPDATE invitations SET status = 'expired' WHERE status = 'pending' AND expires_at < datetime('now')
-    `).run()
-    return result.changes
+  async cleanupExpired(): Promise<number> {
+    const res = await getDb()
+      .update(invitations)
+      .set({ status: 'expired' })
+      .where(and(eq(invitations.status, 'pending'), lt(invitations.expires_at, new Date().toISOString())))
+      .returning({ id: invitations.id })
+    return res.length
   }
 
   private generateToken(): string {

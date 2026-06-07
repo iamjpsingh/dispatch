@@ -1,6 +1,8 @@
-// src/services/rbacService.ts — Role-Based Access Control
+// src/services/rbacService.ts — Role-Based Access Control (Postgres/Drizzle, async)
 
-import { db } from '../db/connection'
+import { and, eq } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { users, org_members, roles, user_permissions } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 
 // ---------------------------------------------------------------------------
@@ -42,93 +44,75 @@ const ROLE_TO_SYSTEM: Record<string, string> = {
 }
 
 // ---------------------------------------------------------------------------
-// Prepared statements (created lazily, cached for the process lifetime)
-// ---------------------------------------------------------------------------
-
-let stmts: ReturnType<typeof buildStatements> | null = null
-
-function getStmts() {
-  if (!stmts) stmts = buildStatements()
-  return stmts
-}
-
-function buildStatements() {
-  return {
-    getUser: db.prepare<{ is_platform_admin: number }, [string]>(
-      'SELECT is_platform_admin FROM users WHERE id = ?',
-    ),
-    getMemberRole: db.prepare<{ role: string }, [string, string, string]>(
-      'SELECT role FROM org_members WHERE org_id = ? AND user_id = ? AND status = ?',
-    ),
-    getSystemRolePerms: db.prepare<{ permissions: string }, [string]>(
-      'SELECT permissions FROM roles WHERE name = ? AND is_system = 1',
-    ),
-    getOverride: db.prepare<{ granted: number }, [string, string, string]>(
-      'SELECT granted FROM user_permissions WHERE org_id = ? AND user_id = ? AND permission = ?',
-    ),
-    getAllOverrides: db.prepare<{ permission: string; granted: number }, [string, string]>(
-      'SELECT permission, granted FROM user_permissions WHERE org_id = ? AND user_id = ?',
-    ),
-    isMember: db.prepare<{ ok: number }, [string, string, string]>(
-      'SELECT 1 AS ok FROM org_members WHERE org_id = ? AND user_id = ? AND status = ?',
-    ),
-    upsertPermission: db.prepare(
-      `INSERT INTO user_permissions (id, org_id, user_id, permission, granted, granted_by)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(org_id, user_id, permission) DO UPDATE SET granted = excluded.granted, granted_by = excluded.granted_by`,
-    ),
-    deleteOverride: db.prepare(
-      'DELETE FROM user_permissions WHERE org_id = ? AND user_id = ? AND permission = ?',
-    ),
-    listSystemRoles: db.prepare<
-      { id: string; name: string; description: string | null; permissions: string }, []
-    >('SELECT id, name, description, permissions FROM roles WHERE is_system = 1 ORDER BY name'),
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
 class RbacService {
   /** Check if a user has a specific permission in an org. Platform admins always pass. */
-  hasPermission(userId: string, orgId: string, permission: Permission): boolean {
-    const s = getStmts()
-    const user = s.getUser.get(userId)
+  async hasPermission(userId: string, orgId: string, permission: Permission): Promise<boolean> {
+    const db = getDb()
+    const [user] = await db
+      .select({ is_platform_admin: users.is_platform_admin })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
     if (!user) return false
     if (user.is_platform_admin === 1) return true
 
-    const rolePerms = this.getUserRolePermissions(userId, orgId)
+    const rolePerms = await this.getUserRolePermissions(userId, orgId)
     if (rolePerms.includes('*')) return true
 
     // User-level override takes precedence over role
-    const override = s.getOverride.get(orgId, userId, permission)
+    const [override] = await db
+      .select({ granted: user_permissions.granted })
+      .from(user_permissions)
+      .where(and(
+        eq(user_permissions.org_id, orgId),
+        eq(user_permissions.user_id, userId),
+        eq(user_permissions.permission, permission),
+      ))
+      .limit(1)
     if (override) return override.granted === 1
 
     return rolePerms.includes(permission)
   }
 
   /** Check multiple permissions — ALL must pass. */
-  hasAllPermissions(userId: string, orgId: string, permissions: Permission[]): boolean {
-    return permissions.every((p) => this.hasPermission(userId, orgId, p))
+  async hasAllPermissions(userId: string, orgId: string, permissions: Permission[]): Promise<boolean> {
+    for (const p of permissions) {
+      if (!(await this.hasPermission(userId, orgId, p))) return false
+    }
+    return true
   }
 
   /** Check multiple permissions — ANY must pass. */
-  hasAnyPermission(userId: string, orgId: string, permissions: Permission[]): boolean {
-    return permissions.some((p) => this.hasPermission(userId, orgId, p))
+  async hasAnyPermission(userId: string, orgId: string, permissions: Permission[]): Promise<boolean> {
+    for (const p of permissions) {
+      if (await this.hasPermission(userId, orgId, p)) return true
+    }
+    return false
   }
 
   /** Get every effective permission for a user in an org (role + overrides merged). */
-  getEffectivePermissions(userId: string, orgId: string): string[] {
-    const s = getStmts()
-    const user = s.getUser.get(userId)
+  async getEffectivePermissions(userId: string, orgId: string): Promise<string[]> {
+    const db = getDb()
+    const [user] = await db
+      .select({ is_platform_admin: users.is_platform_admin })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
     if (!user) return []
     if (user.is_platform_admin === 1) return ['*']
 
-    const rolePerms = this.getUserRolePermissions(userId, orgId)
+    const rolePerms = await this.getUserRolePermissions(userId, orgId)
     const permSet = new Set(rolePerms)
 
-    for (const row of s.getAllOverrides.all(orgId, userId)) {
+    const overrides = await db
+      .select({ permission: user_permissions.permission, granted: user_permissions.granted })
+      .from(user_permissions)
+      .where(and(eq(user_permissions.org_id, orgId), eq(user_permissions.user_id, userId)))
+
+    for (const row of overrides) {
       if (row.granted === 1) {
         permSet.add(row.permission)
       } else {
@@ -140,23 +124,35 @@ class RbacService {
   }
 
   /** Check if user is a platform super admin. */
-  isPlatformAdmin(userId: string): boolean {
-    const user = getStmts().getUser.get(userId)
+  async isPlatformAdmin(userId: string): Promise<boolean> {
+    const [user] = await getDb()
+      .select({ is_platform_admin: users.is_platform_admin })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
     return user?.is_platform_admin === 1
   }
 
   /** Get user's role string in an org (e.g. "admin"), or null if not a member. */
-  getUserRole(userId: string, orgId: string): string | null {
-    const member = getStmts().getMemberRole.get(orgId, userId, 'active')
+  async getUserRole(userId: string, orgId: string): Promise<string | null> {
+    const [member] = await getDb()
+      .select({ role: org_members.role })
+      .from(org_members)
+      .where(and(
+        eq(org_members.org_id, orgId),
+        eq(org_members.user_id, userId),
+        eq(org_members.status, 'active'),
+      ))
+      .limit(1)
     return member?.role ?? null
   }
 
   /** Check if an actor outranks a target user in the role hierarchy. */
-  canManageUser(actorId: string, targetId: string, orgId: string): boolean {
-    if (this.isPlatformAdmin(actorId)) return true
+  async canManageUser(actorId: string, targetId: string, orgId: string): Promise<boolean> {
+    if (await this.isPlatformAdmin(actorId)) return true
 
-    const actorRole = this.getUserRole(actorId, orgId)
-    const targetRole = this.getUserRole(targetId, orgId)
+    const actorRole = await this.getUserRole(actorId, orgId)
+    const targetRole = await this.getUserRole(targetId, orgId)
     if (!actorRole || !targetRole) return false
 
     const actorLevel = ROLE_HIERARCHY[actorRole] ?? -1
@@ -165,28 +161,48 @@ class RbacService {
   }
 
   /** Check if user is an active member of an org. */
-  isMember(userId: string, orgId: string): boolean {
-    return !!getStmts().isMember.get(orgId, userId, 'active')
+  async isMember(userId: string, orgId: string): Promise<boolean> {
+    const [row] = await getDb()
+      .select({ id: org_members.id })
+      .from(org_members)
+      .where(and(
+        eq(org_members.org_id, orgId),
+        eq(org_members.user_id, userId),
+        eq(org_members.status, 'active'),
+      ))
+      .limit(1)
+    return !!row
   }
 
   /** Grant a permission override to a user. */
-  grantPermission(orgId: string, userId: string, permission: string, grantedBy: string): void {
-    getStmts().upsertPermission.run(generateId('up'), orgId, userId, permission, 1, grantedBy)
+  async grantPermission(orgId: string, userId: string, permission: string, grantedBy: string): Promise<void> {
+    await this.upsertOverride(orgId, userId, permission, 1, grantedBy)
   }
 
   /** Revoke a permission from a user (explicit deny overriding role). */
-  revokePermission(orgId: string, userId: string, permission: string, revokedBy: string): void {
-    getStmts().upsertPermission.run(generateId('up'), orgId, userId, permission, 0, revokedBy)
+  async revokePermission(orgId: string, userId: string, permission: string, revokedBy: string): Promise<void> {
+    await this.upsertOverride(orgId, userId, permission, 0, revokedBy)
   }
 
   /** Remove a permission override entirely (revert to role default). */
-  removePermissionOverride(orgId: string, userId: string, permission: string): void {
-    getStmts().deleteOverride.run(orgId, userId, permission)
+  async removePermissionOverride(orgId: string, userId: string, permission: string): Promise<void> {
+    await getDb()
+      .delete(user_permissions)
+      .where(and(
+        eq(user_permissions.org_id, orgId),
+        eq(user_permissions.user_id, userId),
+        eq(user_permissions.permission, permission),
+      ))
   }
 
   /** List all system roles with parsed permission arrays. */
-  listSystemRoles(): { id: string; name: string; description: string; permissions: string[] }[] {
-    return getStmts().listSystemRoles.all().map((r) => ({
+  async listSystemRoles(): Promise<{ id: string; name: string; description: string; permissions: string[] }[]> {
+    const rows = await getDb()
+      .select({ id: roles.id, name: roles.name, description: roles.description, permissions: roles.permissions })
+      .from(roles)
+      .where(eq(roles.is_system, 1))
+      .orderBy(roles.name)
+    return rows.map((r) => ({
       id: r.id,
       name: r.name,
       description: r.description ?? '',
@@ -199,22 +215,40 @@ class RbacService {
   // -------------------------------------------------------------------------
 
   /** Resolve role-based permissions for a user in an org. */
-  private getUserRolePermissions(userId: string, orgId: string): string[] {
-    const s = getStmts()
-    const member = s.getMemberRole.get(orgId, userId, 'active')
+  private async getUserRolePermissions(userId: string, orgId: string): Promise<string[]> {
+    const db = getDb()
+    const [member] = await db
+      .select({ role: org_members.role })
+      .from(org_members)
+      .where(and(
+        eq(org_members.org_id, orgId),
+        eq(org_members.user_id, userId),
+        eq(org_members.status, 'active'),
+      ))
+      .limit(1)
     if (!member) return []
 
     const systemRoleName = ROLE_TO_SYSTEM[member.role] ?? member.role
-    const role = s.getSystemRolePerms.get(systemRoleName)
+    const [role] = await db
+      .select({ permissions: roles.permissions })
+      .from(roles)
+      .where(and(eq(roles.name, systemRoleName), eq(roles.is_system, 1)))
+      .limit(1)
     if (!role) return []
 
     return JSON.parse(role.permissions) as string[]
   }
-}
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+  private async upsertOverride(orgId: string, userId: string, permission: string, granted: number, grantedBy: string): Promise<void> {
+    await getDb()
+      .insert(user_permissions)
+      .values({ id: generateId('up'), org_id: orgId, user_id: userId, permission, granted, granted_by: grantedBy })
+      .onConflictDoUpdate({
+        target: [user_permissions.org_id, user_permissions.user_id, user_permissions.permission],
+        set: { granted, granted_by: grantedBy },
+      })
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Singleton export

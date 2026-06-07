@@ -65,25 +65,25 @@ const app = new Hono()
 // ============================================================================
 
 /** List all users (paginated) */
-app.get('/admin/platform/users', requirePlatformAdmin(), (c) => {
+app.get('/admin/platform/users', requirePlatformAdmin(), async (c) => {
   const page = Number(c.req.query('page')) || 1
   const limit = Math.min(Number(c.req.query('limit')) || 50, 200)
-  const { users, total } = authLocalService.listAllUsers(page, limit)
+  const { users, total } = await authLocalService.listAllUsers(page, limit)
   return paginated(c, users, { page, limit, total })
 })
 
 /** List all organizations (paginated) */
-app.get('/admin/platform/orgs', requirePlatformAdmin(), (c) => {
+app.get('/admin/platform/orgs', requirePlatformAdmin(), async (c) => {
   const page = Number(c.req.query('page')) || 1
   const limit = Math.min(Number(c.req.query('limit')) || 50, 200)
-  const { orgs, total } = orgService.listAll(page, limit)
+  const { orgs, total } = await orgService.listAll(page, limit)
   return paginated(c, orgs, { page, limit, total })
 })
 
 /** Cleanup expired sessions */
-app.post('/admin/platform/cleanup', requirePlatformAdmin(), (c) => {
+app.post('/admin/platform/cleanup', requirePlatformAdmin(), async (c) => {
   try {
-    const deleted = authLocalService.cleanupSessions()
+    const deleted = await authLocalService.cleanupSessions()
     return success(c, { sessionsDeleted: deleted }, 'Session cleanup complete')
   } catch (e: any) {
     return error(c, e.message || 'Cleanup failed', 500)
@@ -423,11 +423,11 @@ app.get('/admin/platform/settings/webhook-status', requirePlatformAdmin(), (c) =
 // ============================================================================
 
 /** Check org slug availability */
-app.get('/admin/org/check-slug', requirePermission(PERMISSIONS.ORG_VIEW), (c) => {
+app.get('/admin/org/check-slug', requirePermission(PERMISSIONS.ORG_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const slug = c.req.query('slug')
   if (!slug) return error(c, 'slug query param required', 400)
-  const result = orgService.checkSlugAvailability(slug, orgId)
+  const result = await orgService.checkSlugAvailability(slug, orgId)
   return success(c, result)
 })
 
@@ -437,7 +437,7 @@ app.put('/admin/org/slug', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) 
   const body = await c.req.json() as { slug: string }
   if (!body.slug) return error(c, 'slug is required', 400)
   try {
-    orgService.updateSlug(orgId, body.slug)
+    await orgService.updateSlug(orgId, body.slug)
     return success(c, undefined, 'Organization slug updated')
   } catch (e: any) {
     return error(c, e.message, 400)
@@ -535,12 +535,12 @@ app.delete('/admin/org/sending-emails/:id', requirePermission(PERMISSIONS.ORG_MA
 // ============================================================================
 
 /** Get current org details */
-app.get('/admin/org', requirePermission(PERMISSIONS.ORG_VIEW), (c) => {
+app.get('/admin/org', requirePermission(PERMISSIONS.ORG_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const org = orgService.get(orgId)
+  const org = await orgService.get(orgId)
   if (!org) return error(c, 'Organization not found', 404)
 
-  const memberCount = orgService.getMemberCount(orgId)
+  const memberCount = await orgService.getMemberCount(orgId)
   return success(c, { ...org, memberCount })
 })
 
@@ -551,7 +551,7 @@ app.put('/admin/org', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
   const updates = await validateBody(c, UpdateOrgSchema)
 
   try {
-    const updated = orgService.update(orgId, updates, user.id)
+    const updated = await orgService.update(orgId, updates, user.id)
     if (!updated) return error(c, 'No changes applied', 400)
     return success(c, undefined, 'Organization updated')
   } catch (e: any) {
@@ -560,9 +560,9 @@ app.put('/admin/org', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
 })
 
 /** List org members */
-app.get('/admin/org/members', requirePermission(PERMISSIONS.USERS_VIEW), (c) => {
+app.get('/admin/org/members', requirePermission(PERMISSIONS.USERS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const members = orgService.getMembers(orgId)
+  const members = await orgService.getMembers(orgId)
   return success(c, { members })
 })
 
@@ -572,14 +572,14 @@ app.post('/admin/org/members', requirePermission(PERMISSIONS.USERS_INVITE), asyn
   const orgId = getOrgId(c)
   const { email, role } = await validateBody(c, AddMemberSchema)
 
-  const target = authLocalService.getUserByEmail(email)
+  const target = await authLocalService.getUserByEmail(email)
   if (!target) return error(c, 'User not found. They must register first.', 404)
 
-  const existing = orgService.getMember(orgId, target.id)
+  const existing = await orgService.getMember(orgId, target.id)
   if (existing) return error(c, 'User is already a member of this organization', 400)
 
   try {
-    const member = orgService.addMember(orgId, target.id, role || 'member', user.id)
+    const member = await orgService.addMember(orgId, target.id, role || 'member', user.id)
     return success(c, member, 'Member added', 201)
   } catch (e: any) {
     return error(c, e.message || 'Failed to add member', 500)
@@ -593,12 +593,12 @@ app.put('/admin/org/members/:userId/role', requirePermission(PERMISSIONS.USERS_M
   const targetId = c.req.param('userId')
   const { role } = await validateBody(c, RoleSchema)
 
-  if (!rbacService.canManageUser(user.id, targetId, orgId)) {
+  if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
     return error(c, 'You cannot manage a user with equal or higher role', 403)
   }
 
   try {
-    const updated = orgService.updateMemberRole(orgId, targetId, role, user.id)
+    const updated = await orgService.updateMemberRole(orgId, targetId, role, user.id)
     if (!updated) return error(c, 'Member not found or no change', 404)
     return success(c, undefined, 'Member role updated')
   } catch (e: any) {
@@ -607,7 +607,7 @@ app.put('/admin/org/members/:userId/role', requirePermission(PERMISSIONS.USERS_M
 })
 
 /** Remove member from org */
-app.delete('/admin/org/members/:userId', requirePermission(PERMISSIONS.USERS_REMOVE), (c) => {
+app.delete('/admin/org/members/:userId', requirePermission(PERMISSIONS.USERS_REMOVE), async (c) => {
   const user = requireAuth(c)
   const orgId = getOrgId(c)
   const targetId = c.req.param('userId')
@@ -616,12 +616,12 @@ app.delete('/admin/org/members/:userId', requirePermission(PERMISSIONS.USERS_REM
     return error(c, 'You cannot remove yourself', 400)
   }
 
-  if (!rbacService.canManageUser(user.id, targetId, orgId)) {
+  if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
     return error(c, 'You cannot remove a user with equal or higher role', 403)
   }
 
   try {
-    const removed = orgService.removeMember(orgId, targetId, user.id)
+    const removed = await orgService.removeMember(orgId, targetId, user.id)
     if (!removed) return error(c, 'Member not found or is org owner', 404)
     return success(c, undefined, 'Member removed')
   } catch (e: any) {
@@ -708,7 +708,7 @@ app.post('/admin/teams/:teamId/members', requirePermission(PERMISSIONS.TEAMS_MAN
   if (!team) return error(c, 'Team not found', 404)
 
   // Verify user is an org member
-  const orgMember = orgService.getMember(orgId, userId)
+  const orgMember = await orgService.getMember(orgId, userId)
   if (!orgMember) return error(c, 'User is not a member of this organization', 400)
 
   try {
@@ -741,18 +741,18 @@ app.delete('/admin/teams/:teamId/members/:userId', requirePermission(PERMISSIONS
 // ============================================================================
 
 /** List system roles (excludes platform_super_admin — invisible to org users) */
-app.get('/admin/roles', requirePermission(PERMISSIONS.ROLES_VIEW), (c) => {
-  const roles = rbacService.listSystemRoles().filter(r => r.name !== 'platform_super_admin')
+app.get('/admin/roles', requirePermission(PERMISSIONS.ROLES_VIEW), async (c) => {
+  const roles = (await rbacService.listSystemRoles()).filter(r => r.name !== 'platform_super_admin')
   return success(c, { roles })
 })
 
 /** Get effective permissions for a user */
-app.get('/admin/permissions/:userId', requirePermission(PERMISSIONS.PERMISSIONS_VIEW), (c) => {
+app.get('/admin/permissions/:userId', requirePermission(PERMISSIONS.PERMISSIONS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const targetId = c.req.param('userId')
 
-  const role = rbacService.getUserRole(targetId, orgId)
-  const permissions = rbacService.getEffectivePermissions(targetId, orgId)
+  const role = await rbacService.getUserRole(targetId, orgId)
+  const permissions = await rbacService.getEffectivePermissions(targetId, orgId)
 
   return success(c, { userId: targetId, role, permissions })
 })
@@ -764,12 +764,12 @@ app.post('/admin/permissions/:userId/grant', requirePermission(PERMISSIONS.PERMI
   const targetId = c.req.param('userId')
   const { permission } = await validateBody(c, PermissionSchema)
 
-  if (!rbacService.canManageUser(user.id, targetId, orgId)) {
+  if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
     return error(c, 'You cannot manage permissions for a user with equal or higher role', 403)
   }
 
   try {
-    rbacService.grantPermission(orgId, targetId, permission, user.id)
+    await rbacService.grantPermission(orgId, targetId, permission, user.id)
     return success(c, undefined, 'Permission granted')
   } catch (e: any) {
     return error(c, e.message || 'Failed to grant permission', 500)
@@ -783,12 +783,12 @@ app.post('/admin/permissions/:userId/revoke', requirePermission(PERMISSIONS.PERM
   const targetId = c.req.param('userId')
   const { permission } = await validateBody(c, PermissionSchema)
 
-  if (!rbacService.canManageUser(user.id, targetId, orgId)) {
+  if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
     return error(c, 'You cannot manage permissions for a user with equal or higher role', 403)
   }
 
   try {
-    rbacService.revokePermission(orgId, targetId, permission, user.id)
+    await rbacService.revokePermission(orgId, targetId, permission, user.id)
     return success(c, undefined, 'Permission revoked')
   } catch (e: any) {
     return error(c, e.message || 'Failed to revoke permission', 500)
@@ -796,18 +796,18 @@ app.post('/admin/permissions/:userId/revoke', requirePermission(PERMISSIONS.PERM
 })
 
 /** Remove permission override (revert to role default) */
-app.delete('/admin/permissions/:userId/:permission', requirePermission(PERMISSIONS.PERMISSIONS_MANAGE), (c) => {
+app.delete('/admin/permissions/:userId/:permission', requirePermission(PERMISSIONS.PERMISSIONS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const orgId = getOrgId(c)
   const targetId = c.req.param('userId')
   const permission = c.req.param('permission')
 
-  if (!rbacService.canManageUser(user.id, targetId, orgId)) {
+  if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
     return error(c, 'You cannot manage permissions for a user with equal or higher role', 403)
   }
 
   try {
-    rbacService.removePermissionOverride(orgId, targetId, permission)
+    await rbacService.removePermissionOverride(orgId, targetId, permission)
     return success(c, undefined, 'Permission override removed')
   } catch (e: any) {
     return error(c, e.message || 'Failed to remove permission override', 500)
@@ -865,9 +865,9 @@ app.get('/admin/activity/recent', requirePermission(PERMISSIONS.LOGS_VIEW), (c) 
 // ============================================================================
 
 /** List pending invitations for current org */
-app.get('/admin/invitations', requirePermission(PERMISSIONS.USERS_VIEW), (c) => {
+app.get('/admin/invitations', requirePermission(PERMISSIONS.USERS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const invitations = invitationService.listForOrg(orgId)
+  const invitations = await invitationService.listForOrg(orgId)
   return success(c, { invitations })
 })
 
@@ -878,7 +878,7 @@ app.post('/admin/invitations', requirePermission(PERMISSIONS.USERS_INVITE), asyn
   const { email, role } = await validateBody(c, InviteSchema)
 
   try {
-    const invitation = invitationService.create(orgId, email, role, user.id)
+    const invitation = await invitationService.create(orgId, email, role, user.id)
     return success(c, invitation, 'Invitation sent', 201)
   } catch (e: any) {
     return error(c, e.message || 'Failed to send invitation', 400)
@@ -886,21 +886,21 @@ app.post('/admin/invitations', requirePermission(PERMISSIONS.USERS_INVITE), asyn
 })
 
 /** Cancel an invitation */
-app.delete('/admin/invitations/:id', requirePermission(PERMISSIONS.USERS_INVITE), (c) => {
+app.delete('/admin/invitations/:id', requirePermission(PERMISSIONS.USERS_INVITE), async (c) => {
   const user = requireAuth(c)
   const id = c.req.param('id')
 
-  const cancelled = invitationService.cancel(id, user.id)
+  const cancelled = await invitationService.cancel(id, user.id)
   if (!cancelled) return error(c, 'Invitation not found or already processed', 404)
   return success(c, undefined, 'Invitation cancelled')
 })
 
 /** Resend an invitation */
-app.post('/admin/invitations/:id/resend', requirePermission(PERMISSIONS.USERS_INVITE), (c) => {
+app.post('/admin/invitations/:id/resend', requirePermission(PERMISSIONS.USERS_INVITE), async (c) => {
   const user = requireAuth(c)
   const id = c.req.param('id')
 
-  const invitation = invitationService.resend(id, user.id)
+  const invitation = await invitationService.resend(id, user.id)
   if (!invitation) return error(c, 'Invitation not found or already processed', 404)
   return success(c, invitation, 'Invitation resent')
 })
@@ -910,9 +910,9 @@ app.post('/admin/invitations/:id/resend', requirePermission(PERMISSIONS.USERS_IN
 // ============================================================================
 
 /** Get invitation details by token (for accept page) */
-app.get('/admin/invitations/accept/:token', (c) => {
+app.get('/admin/invitations/accept/:token', async (c) => {
   const token = c.req.param('token')
-  const invitation = invitationService.getByToken(token)
+  const invitation = await invitationService.getByToken(token)
   if (!invitation) return error(c, 'Invalid or expired invitation', 404)
   return success(c, {
     orgName: invitation.org_name,
@@ -923,19 +923,19 @@ app.get('/admin/invitations/accept/:token', (c) => {
 })
 
 /** Accept an invitation */
-app.post('/admin/invitations/accept/:token', (c) => {
+app.post('/admin/invitations/accept/:token', async (c) => {
   const user = requireAuth(c)
   const token = c.req.param('token')
 
-  const result = invitationService.accept(token, user.id)
+  const result = await invitationService.accept(token, user.id)
   if (!result) return error(c, 'Invalid invitation or email mismatch', 400)
   return success(c, result, 'Invitation accepted')
 })
 
 /** List my pending invitations (for current user's email) */
-app.get('/admin/invitations/mine', (c) => {
+app.get('/admin/invitations/mine', async (c) => {
   const user = requireAuth(c)
-  const invitations = invitationService.listForEmail(user.email)
+  const invitations = await invitationService.listForEmail(user.email)
   return success(c, { invitations })
 })
 

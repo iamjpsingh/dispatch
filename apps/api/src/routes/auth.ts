@@ -73,8 +73,8 @@ app.post('/auth/register', async (c) => {
       secure,
     })
 
-    const orgs = orgService.listForUser(session.user.id)
-    const role = session.orgId ? rbacService.getUserRole(session.user.id, session.orgId) : null
+    const orgs = await orgService.listForUser(session.user.id)
+    const role = session.orgId ? await rbacService.getUserRole(session.user.id, session.orgId) : null
 
     return success(c, {
       user: {
@@ -114,8 +114,8 @@ app.post('/auth/login', async (c) => {
       secure,
     })
 
-    const orgs = orgService.listForUser(session.user.id)
-    const role = session.orgId ? rbacService.getUserRole(session.user.id, session.orgId) : null
+    const orgs = await orgService.listForUser(session.user.id)
+    const role = session.orgId ? await rbacService.getUserRole(session.user.id, session.orgId) : null
 
     return success(c, {
       user: {
@@ -138,11 +138,11 @@ app.post('/auth/login', async (c) => {
  * Logout user
  * POST /auth/logout
  */
-app.post('/auth/logout', (c) => {
+app.post('/auth/logout', async (c) => {
   try {
     const token = getCookie(c, COOKIE.SESSION_NAME)
     if (token) {
-      authLocalService.logout(token)
+      await authLocalService.logout(token)
     }
     deleteCookie(c, COOKIE.SESSION_NAME)
     return success(c, undefined, 'Logged out successfully')
@@ -156,22 +156,22 @@ app.post('/auth/logout', (c) => {
  * Get current user
  * GET /auth/me
  */
-app.get('/auth/me', (c) => {
+app.get('/auth/me', async (c) => {
   try {
     const token = getCookie(c, COOKIE.SESSION_NAME)
     if (!token) {
       return error(c, ErrorMessages.UNAUTHORIZED, 401)
     }
 
-    const session = authLocalService.validateSession(token)
+    const session = await authLocalService.validateSession(token)
     if (!session) {
       deleteCookie(c, COOKIE.SESSION_NAME)
       return error(c, ErrorMessages.SESSION_EXPIRED, 401)
     }
 
     const { user, orgId } = session
-    const orgs = orgService.listForUser(user.id)
-    const role = orgId ? rbacService.getUserRole(user.id, orgId) : null
+    const orgs = await orgService.listForUser(user.id)
+    const role = orgId ? await rbacService.getUserRole(user.id, orgId) : null
 
     return success(c, {
       user: {
@@ -201,15 +201,17 @@ app.post('/auth/switch-org', async (c) => {
 
     const { orgId } = await validateBody(c, SwitchOrgSchema)
 
-    const session = authLocalService.validateSession(token)
+    const session = await authLocalService.validateSession(token)
     if (!session) return error(c, ErrorMessages.SESSION_EXPIRED, 401)
 
     // Verify user is member of target org
-    if (!rbacService.isMember(session.user.id, orgId) && !rbacService.isPlatformAdmin(session.user.id)) {
+    const isMember = await rbacService.isMember(session.user.id, orgId)
+    const isPlatformAdmin = await rbacService.isPlatformAdmin(session.user.id)
+    if (!isMember && !isPlatformAdmin) {
       return error(c, 'You are not a member of this organization', 403)
     }
 
-    authLocalService.switchOrg(token, orgId)
+    await authLocalService.switchOrg(token, orgId)
     return success(c, { orgId }, 'Organization switched')
   } catch (err) {
     logger.error('Switch org error:', err)
@@ -226,7 +228,7 @@ app.post('/auth/forgot-password', async (c) => {
     const { email } = await validateBody(c, ForgotPasswordSchema)
 
     // Always return success to prevent email enumeration
-    const result = authLocalService.createPasswordResetToken(email)
+    const result = await authLocalService.createPasswordResetToken(email)
     if (result) {
       if (systemMailerService.isConfigured()) {
         try {
@@ -251,9 +253,9 @@ app.post('/auth/forgot-password', async (c) => {
  * Validate reset token
  * GET /auth/reset-password/:token
  */
-app.get('/auth/reset-password/:token', (c) => {
+app.get('/auth/reset-password/:token', async (c) => {
   const token = c.req.param('token')
-  const valid = authLocalService.validateResetToken(token)
+  const valid = await authLocalService.validateResetToken(token)
   if (!valid) {
     return error(c, 'Invalid or expired reset token', 400)
   }
@@ -289,7 +291,7 @@ app.post('/auth/change-password', async (c) => {
     const token = getCookie(c, COOKIE.SESSION_NAME)
     if (!token) return error(c, ErrorMessages.UNAUTHORIZED, 401)
 
-    const session = authLocalService.validateSession(token)
+    const session = await authLocalService.validateSession(token)
     if (!session) return error(c, ErrorMessages.SESSION_EXPIRED, 401)
 
     const { currentPassword, newPassword } = await validateBody(c, ChangePasswordSchema)
@@ -315,12 +317,12 @@ app.put('/auth/profile', async (c) => {
     const token = getCookie(c, COOKIE.SESSION_NAME)
     if (!token) return error(c, ErrorMessages.UNAUTHORIZED, 401)
 
-    const session = authLocalService.validateSession(token)
+    const session = await authLocalService.validateSession(token)
     if (!session) return error(c, ErrorMessages.SESSION_EXPIRED, 401)
 
     const data = await validateBody(c, UpdateProfileSchema)
 
-    const updated = authLocalService.updateProfile(session.user.id, data)
+    const updated = await authLocalService.updateProfile(session.user.id, data)
     if (!updated) {
       return error(c, 'Failed to update profile. Email may already be in use.', 400)
     }
@@ -343,39 +345,39 @@ app.put('/auth/profile', async (c) => {
 // Username
 // ============================================================================
 
-app.get('/auth/check-username', (c) => {
+app.get('/auth/check-username', async (c) => {
   const username = c.req.query('username')
   if (!username) return error(c, 'username query param required', 400)
   const token = getCookie(c, COOKIE.SESSION_NAME)
-  const session = token ? authLocalService.validateSession(token) : null
-  const result = authLocalService.checkUsername(username, session?.user.id)
+  const session = token ? await authLocalService.validateSession(token) : null
+  const result = await authLocalService.checkUsername(username, session?.user.id)
   return success(c, result)
 })
 
 app.put('/auth/profile/username', async (c) => {
   const token = getCookie(c, COOKIE.SESSION_NAME)
   if (!token) return error(c, 'Authentication required', 401)
-  const session = authLocalService.validateSession(token)
+  const session = await authLocalService.validateSession(token)
   if (!session) return error(c, 'Invalid session', 401)
 
   const body = await c.req.json() as { username: string }
   if (!body.username) return error(c, 'username is required', 400)
 
   try {
-    authLocalService.setUsername(session.user.id, body.username)
+    await authLocalService.setUsername(session.user.id, body.username)
     return success(c, undefined, 'Username updated')
   } catch (e: any) {
     return error(c, e.message, 400)
   }
 })
 
-app.get('/auth/profile/username/suggest', (c) => {
+app.get('/auth/profile/username/suggest', async (c) => {
   const token = getCookie(c, COOKIE.SESSION_NAME)
   if (!token) return error(c, 'Authentication required', 401)
-  const session = authLocalService.validateSession(token)
+  const session = await authLocalService.validateSession(token)
   if (!session) return error(c, 'Invalid session', 401)
 
-  const suggestion = authLocalService.suggestUsername(session.user.email)
+  const suggestion = await authLocalService.suggestUsername(session.user.email)
   return success(c, { suggestion })
 })
 

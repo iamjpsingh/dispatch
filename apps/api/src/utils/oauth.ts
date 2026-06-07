@@ -100,7 +100,7 @@ export async function handleOAuthCallback(
     }
 
     // Redirect platform admin to /platform/settings, org user to /settings
-    const isPlatformAdmin = rbacService.isPlatformAdmin(stateData.userId)
+    const isPlatformAdmin = await rbacService.isPlatformAdmin(stateData.userId)
     const settingsPath = isPlatformAdmin ? '/platform/settings/delivery-servers' : '/settings/delivery-servers'
 
     return {
@@ -109,7 +109,7 @@ export async function handleOAuthCallback(
     }
   } catch (err) {
     logger.error(`${provider} OAuth callback error:`, err)
-    const isPlatformAdmin = rbacService.isPlatformAdmin(stateData.userId)
+    const isPlatformAdmin = await rbacService.isPlatformAdmin(stateData.userId)
     const settingsPath = isPlatformAdmin ? '/platform/settings/delivery-servers' : '/settings/delivery-servers'
     return {
       success: false,
@@ -137,7 +137,7 @@ async function handlePlatformMailerCallback(
 
     const oauthCreds = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>(`oauth_${provider}`)
     if (!oauthCreds) {
-      const isPlatform = rbacService.isPlatformAdmin(userId)
+      const isPlatform = await rbacService.isPlatformAdmin(userId)
       const settingsPath = isPlatform ? '/platform/system-settings' : '/admin/platform-settings'
       return { success: false, redirectUrl: `${frontendUrl}${settingsPath}?oauth_error=no_credentials` }
     }
@@ -170,7 +170,7 @@ async function handlePlatformMailerCallback(
     logger.info(`Platform mailer connected: ${mailerProvider} — ${tokens.email}`)
 
     // Platform admin uses /platform/system-settings, org admin uses /admin/platform-settings
-    const isPlatform = rbacService.isPlatformAdmin(userId)
+    const isPlatform = await rbacService.isPlatformAdmin(userId)
     const settingsPath = isPlatform ? '/platform/system-settings' : '/admin/platform-settings'
 
     return {
@@ -179,7 +179,7 @@ async function handlePlatformMailerCallback(
     }
   } catch (err) {
     logger.error(`Platform mailer ${mailerProvider} OAuth error:`, err)
-    const isPlatform = rbacService.isPlatformAdmin(userId)
+    const isPlatform = await rbacService.isPlatformAdmin(userId)
     const settingsPath = isPlatform ? '/platform/system-settings' : '/admin/platform-settings'
     return {
       success: false,
