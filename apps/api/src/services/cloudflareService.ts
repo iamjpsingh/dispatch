@@ -171,20 +171,20 @@ class CloudflareService {
 
   // ---------- Connection management ----------
 
-  saveConnection(orgId: string, connection: CloudflareConnection): void {
-    systemSettingsService.setJson(this.settingsKey(orgId), connection)
+  async saveConnection(orgId: string, connection: CloudflareConnection): Promise<void> {
+    await systemSettingsService.setSecretJson(this.settingsKey(orgId), connection)
   }
 
-  getConnection(orgId: string): CloudflareConnection | null {
-    return systemSettingsService.getJson<CloudflareConnection>(this.settingsKey(orgId))
+  async getConnection(orgId: string): Promise<CloudflareConnection | null> {
+    return systemSettingsService.getSecretJson<CloudflareConnection>(this.settingsKey(orgId))
   }
 
-  removeConnection(orgId: string): void {
-    systemSettingsService.delete(this.settingsKey(orgId))
+  async removeConnection(orgId: string): Promise<void> {
+    await systemSettingsService.delete(this.settingsKey(orgId))
   }
 
   async getToken(orgId: string): Promise<string> {
-    const conn = this.getConnection(orgId)
+    const conn = await this.getConnection(orgId)
     if (!conn) throw new Error('Cloudflare not connected')
     return this.refreshToken(conn)
   }
@@ -193,7 +193,7 @@ class CloudflareService {
 
   async listZones(orgId: string): Promise<CloudflareZone[]> {
     const token = await this.getToken(orgId)
-    const conn = this.getConnection(orgId)!
+    const conn = (await this.getConnection(orgId))!
 
     const data = await cfFetch<CloudflareZone[]>(token, `/zones?account.id=${conn.accountId}&per_page=50`)
     return data.result.map(z => ({
@@ -219,7 +219,7 @@ class CloudflareService {
     } = {},
   ): Promise<TrackingDeployment> {
     const token = await this.getToken(orgId)
-    const conn = this.getConnection(orgId)!
+    const conn = (await this.getConnection(orgId))!
     const accountId = conn.accountId
 
     const openPath = options.openPath || 'o'
@@ -329,7 +329,7 @@ class CloudflareService {
       deployedAt: new Date().toISOString(),
     }
 
-    systemSettingsService.setJson(this.deploymentKey(orgId, domain), deployment)
+    await systemSettingsService.setJson(this.deploymentKey(orgId, domain), deployment)
     logger.info(`[CF] Tracking deployed for ${domain}: ${routePatterns.join(', ')}`)
 
     return deployment
@@ -339,7 +339,7 @@ class CloudflareService {
 
   async undeployTrackingWorker(orgId: string, domain: string): Promise<void> {
     const token = await this.getToken(orgId)
-    const conn = this.getConnection(orgId)!
+    const conn = (await this.getConnection(orgId))!
     const deployment = this.getDeployment(orgId, domain)
     if (!deployment) throw new Error('No deployment found for this domain')
 
@@ -382,7 +382,7 @@ class CloudflareService {
 
   async getTrackingStats(orgId: string, domain: string, campaignId?: string): Promise<TrackingStats> {
     const token = await this.getToken(orgId)
-    const conn = this.getConnection(orgId)!
+    const conn = (await this.getConnection(orgId))!
     const deployment = this.getDeployment(orgId, domain)
     if (!deployment) throw new Error('No deployment found')
 
@@ -456,7 +456,7 @@ class CloudflareService {
     linkMap: Record<string, string>
   }> {
     const token = await this.getToken(orgId)
-    const conn = this.getConnection(orgId)!
+    const conn = (await this.getConnection(orgId))!
     const deployment = this.getDeployment(orgId, domain)
     if (!deployment) throw new Error('No tracking deployment for this domain')
 

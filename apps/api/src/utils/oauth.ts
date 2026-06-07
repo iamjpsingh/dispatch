@@ -166,7 +166,7 @@ async function handlePlatformMailerCallback(
             clientSecret: oauthCreds.clientSecret,
           },
     }
-    systemMailerService.saveConfig(config, userId)
+    await systemMailerService.saveConfig(config, userId)
     logger.info(`Platform mailer connected: ${mailerProvider} — ${tokens.email}`)
 
     // Platform admin uses /platform/system-settings, org admin uses /admin/platform-settings

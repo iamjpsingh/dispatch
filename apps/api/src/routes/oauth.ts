@@ -45,10 +45,10 @@ app.get('/oauth/status', async (c) => {
  * Initiate Google OAuth flow
  * GET /oauth/google/connect
  */
-app.get('/oauth/google/connect', (c) => {
+app.get('/oauth/google/connect', async (c) => {
   try {
     const user = requireAuth(c)
-    const authUrl = oauthService.getGoogleAuthUrl(user.id)
+    const authUrl = await oauthService.getGoogleAuthUrl(user.id)
     return success(c, { authUrl })
   } catch (err) {
     logger.error('Google OAuth init error:', err)
@@ -60,10 +60,10 @@ app.get('/oauth/google/connect', (c) => {
  * Initiate Microsoft OAuth flow
  * GET /oauth/microsoft/connect
  */
-app.get('/oauth/microsoft/connect', (c) => {
+app.get('/oauth/microsoft/connect', async (c) => {
   try {
     const user = requireAuth(c)
-    const authUrl = oauthService.getMicrosoftAuthUrl(user.id)
+    const authUrl = await oauthService.getMicrosoftAuthUrl(user.id)
     return success(c, { authUrl })
   } catch (err) {
     logger.error('Microsoft OAuth init error:', err)

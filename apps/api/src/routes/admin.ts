@@ -255,15 +255,15 @@ app.put('/admin/platform/settings/oauth', requirePlatformAdmin(), async (c) => {
 })
 
 /** Initiate OAuth connect flow for platform system mailer (Gmail/Outlook) */
-app.get('/admin/platform/settings/mailer/oauth/:provider/connect', requirePlatformAdmin(), (c) => {
+app.get('/admin/platform/settings/mailer/oauth/:provider/connect', requirePlatformAdmin(), async (c) => {
   try {
     const user = requireAuth(c)
     const provider = c.req.param('provider') as 'gmail' | 'outlook'
 
     // Uses the SAME redirect URI as user OAuth — no redirect_uri_mismatch
     const authUrl = provider === 'gmail'
-      ? oauthService.getPlatformGoogleAuthUrl(user.id)
-      : oauthService.getPlatformMicrosoftAuthUrl(user.id)
+      ? await oauthService.getPlatformGoogleAuthUrl(user.id)
+      : await oauthService.getPlatformMicrosoftAuthUrl(user.id)
 
     return success(c, { authUrl })
   } catch (e: any) {
@@ -331,7 +331,7 @@ app.get('/admin/cloudflare/callback', async (c) => {
 
   try {
     const connection = await cloudflareService.exchangeCode(code)
-    cloudflareService.saveConnection(stateData.orgId, connection)
+    await cloudflareService.saveConnection(stateData.orgId, connection)
     return c.redirect(`${SERVER.FRONTEND_URL}/admin/platform-settings?cf_success=true&account=${encodeURIComponent(connection.accountName)}`)
   } catch (e: any) {
     return c.redirect(`${SERVER.FRONTEND_URL}/admin/platform-settings?cf_error=${encodeURIComponent(e.message)}`)
@@ -339,9 +339,9 @@ app.get('/admin/cloudflare/callback', async (c) => {
 })
 
 /** Get Cloudflare connection status */
-app.get('/admin/cloudflare/status', requirePlatformAdmin(), (c) => {
+app.get('/admin/cloudflare/status', requirePlatformAdmin(), async (c) => {
   const orgId = c.req.query('orgId') || 'platform'
-  const conn = cloudflareService.getConnection(orgId)
+  const conn = await cloudflareService.getConnection(orgId)
   if (!conn) {
     return success(c, { connected: false })
   }

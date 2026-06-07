@@ -321,7 +321,7 @@ class SystemMailerService {
   }
 
   async removeConfig(updatedBy: string): Promise<void> {
-    systemSettingsService.delete(SETTINGS_KEY)
+    await systemSettingsService.delete(SETTINGS_KEY)
   }
 
   async isConfigured(): Promise<boolean> {

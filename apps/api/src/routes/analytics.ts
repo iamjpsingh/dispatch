@@ -336,7 +336,7 @@ app.get('/analytics/campaigns/:id/geo', requirePermission(PERMISSIONS.ANALYTICS_
     if (deployments.length > 0) {
       const deployment = deployments[0]
       const token = await cloudflareService.getToken(orgId)
-      const conn = cloudflareService.getConnection(orgId)
+      const conn = await cloudflareService.getConnection(orgId)
       if (conn) {
         const sql = `
           SELECT country, COUNT(*) as count, COUNT(DISTINCT email_id) as unique_count

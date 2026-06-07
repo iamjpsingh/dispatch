@@ -58,7 +58,7 @@ app.post('/webhooks', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) 
   const body = await validateBody(c, CreateWebhookSchema)
 
   const webhook = await webhookService.create(orgId, user.id, body)
-  return success(c, webhook, 'Webhook created', 201)
+  return success(c, { ...webhook, secret: webhook.secret.substring(0, 8) + '...' }, 'Webhook created', 201)
 })
 
 app.get('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), async (c) => {
@@ -68,7 +68,7 @@ app.get('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), async (c)
   const webhook = await webhookService.get(orgId, webhookId)
   if (!webhook) return error(c, 'Webhook not found', 404)
 
-  return success(c, webhook)
+  return success(c, { ...webhook, secret: webhook.secret.substring(0, 8) + '...' })
 })
 
 app.put('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) => {
