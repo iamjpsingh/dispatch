@@ -346,7 +346,7 @@ app.get('/contacts/timeline/:contactId', requirePermission(PERMISSIONS.CONTACTS_
   if (!contact) return error(c, 'Contact not found', 404)
 
   // Aggregate events from scoring engine
-  const events = scoringEngine.getContactEvents(contactId, limit)
+  const events = await scoringEngine.getContactEvents(contactId, limit)
 
   // Map to timeline format
   const timeline = events.map((e: any) => ({

@@ -38,7 +38,7 @@ const app = new Hono()
 // Get analytics summary
 app.get('/analytics/summary', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const summary = analyticsService.getSummary(orgId)
+  const summary = await analyticsService.getSummary(orgId)
   return success(c, summary)
 })
 
@@ -46,7 +46,7 @@ app.get('/analytics/summary', requirePermission(PERMISSIONS.ANALYTICS_VIEW), asy
 app.get('/analytics/campaigns/:campaignId', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('campaignId')
-  const report = analyticsService.getCampaignReport(orgId, campaignId)
+  const report = await analyticsService.getCampaignReport(orgId, campaignId)
 
   if (!report) return error(c, 'No analytics data for this campaign', 404)
   return success(c, report)
@@ -56,7 +56,7 @@ app.get('/analytics/campaigns/:campaignId', requirePermission(PERMISSIONS.ANALYT
 app.get('/analytics/campaigns', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const limit = parseInt(c.req.query('limit') || '50')
-  const reports = analyticsService.listCampaignReports(orgId, limit)
+  const reports = await analyticsService.listCampaignReports(orgId, limit)
   return success(c, { reports })
 })
 
@@ -64,7 +64,7 @@ app.get('/analytics/campaigns', requirePermission(PERMISSIONS.ANALYTICS_VIEW), a
 app.get('/analytics/campaigns/:campaignId/links', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('campaignId')
-  const links = analyticsService.getLinkClicks(orgId, campaignId)
+  const links = await analyticsService.getLinkClicks(orgId, campaignId)
   return success(c, { links })
 })
 
@@ -72,8 +72,8 @@ app.get('/analytics/campaigns/:campaignId/links', requirePermission(PERMISSIONS.
 app.get('/analytics/devices', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.query('campaign_id')
-  const clients = analyticsService.getDeviceBreakdown(orgId, campaignId || undefined)
-  const devices = analyticsService.getDeviceTypeBreakdown(orgId, campaignId || undefined)
+  const clients = await analyticsService.getDeviceBreakdown(orgId, campaignId || undefined)
+  const devices = await analyticsService.getDeviceTypeBreakdown(orgId, campaignId || undefined)
   return success(c, { clients, devices })
 })
 
@@ -81,15 +81,15 @@ app.get('/analytics/devices', requirePermission(PERMISSIONS.ANALYTICS_VIEW), asy
 app.get('/analytics/geo', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.query('campaign_id')
-  const geo = analyticsService.getGeoBreakdown(orgId, campaignId || undefined)
+  const geo = await analyticsService.getGeoBreakdown(orgId, campaignId || undefined)
   return success(c, { geo })
 })
 
 // Get time analysis (best send times)
 app.get('/analytics/time', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const analysis = analyticsService.getTimeAnalysis(orgId)
-  const recommendation = analyticsService.getBestSendTime(orgId)
+  const analysis = await analyticsService.getTimeAnalysis(orgId)
+  const recommendation = await analyticsService.getBestSendTime(orgId)
   return success(c, { analysis, recommendation })
 })
 
@@ -98,7 +98,7 @@ app.get('/analytics/export/campaign/:campaignId', requirePermission(PERMISSIONS.
   const orgId = getOrgId(c)
   const campaignId = c.req.param('campaignId')
   const format = (c.req.query('format') || 'json') as 'csv' | 'json'
-  const exportData = analyticsService.exportCampaignReport(orgId, campaignId, format)
+  const exportData = await analyticsService.exportCampaignReport(orgId, campaignId, format)
 
   if (!exportData) return error(c, 'No data to export', 404)
 
@@ -112,7 +112,7 @@ app.get('/analytics/export/campaign/:campaignId', requirePermission(PERMISSIONS.
 app.get('/analytics/export/summary', requirePermission(PERMISSIONS.ANALYTICS_EXPORT), async (c) => {
   const orgId = getOrgId(c)
   const format = (c.req.query('format') || 'json') as 'csv' | 'json'
-  const exportData = analyticsService.exportSummary(orgId, format)
+  const exportData = await analyticsService.exportSummary(orgId, format)
 
   const contentType = format === 'csv' ? 'text/csv' : 'application/json'
   c.header('Content-Type', contentType)
@@ -125,7 +125,7 @@ app.post('/analytics/events', requirePermission(PERMISSIONS.ANALYTICS_VIEW), asy
   const orgId = getOrgId(c)
   const body = await validateBody(c, RecordEventSchema)
 
-  analyticsService.recordEvent(orgId, {
+  await analyticsService.recordEvent(orgId, {
     campaignId: body.campaignId,
     eventType: body.eventType,
     recipientEmail: body.recipientEmail,
@@ -143,7 +143,7 @@ app.post('/analytics/seed', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async
   const orgId = getOrgId(c)
   const { campaignId, campaignName, stats } = await validateBody(c, SeedSchema)
 
-  analyticsService.seedFromCampaign(orgId, campaignId, campaignName || '', stats)
+  await analyticsService.seedFromCampaign(orgId, campaignId, campaignName || '', stats)
   return success(c, null, 'Campaign analytics seeded')
 })
 
@@ -153,7 +153,7 @@ app.post('/analytics/seed', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async
 
 app.get('/analytics/email-health', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const summary = analyticsService.getSummary(orgId)
+  const summary = await analyticsService.getSummary(orgId)
 
   // Calculate rates from summary data
   const totalSent = summary.totalSent || 1
@@ -242,7 +242,7 @@ app.post('/analytics/custom-report', requirePermission(PERMISSIONS.ANALYTICS_VIE
   }
 
   // Build query from analytics data
-  const reports = analyticsService.listCampaignReports(orgId, 500)
+  const reports = await analyticsService.listCampaignReports(orgId, 500)
 
   // Apply filters
   let filtered = reports
@@ -350,7 +350,7 @@ app.get('/analytics/campaigns/:id/geo', requirePermission(PERMISSIONS.ANALYTICS_
   } catch { /* fallback to local */ }
 
   // Fallback: parse from local analytics events
-  const report = analyticsService.getCampaignReport(orgId, campaignId)
+  const report = await analyticsService.getCampaignReport(orgId, campaignId)
   return success(c, {
     countries: [],
     cities: [],
@@ -359,12 +359,12 @@ app.get('/analytics/campaigns/:id/geo', requirePermission(PERMISSIONS.ANALYTICS_
 })
 
 /** Device/browser/OS breakdown for a campaign */
-app.get('/analytics/campaigns/:id/devices', requirePermission(PERMISSIONS.ANALYTICS_VIEW), (c) => {
+app.get('/analytics/campaigns/:id/devices', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
   // Get raw events and parse UAs
-  const events = analyticsService.getRawEvents?.(orgId, campaignId) || []
+  const events = (await analyticsService.getRawEvents?.(orgId, campaignId)) || []
   const devices: Record<string, number> = {}
   const browsers: Record<string, number> = {}
   const oses: Record<string, number> = {}
@@ -387,11 +387,11 @@ app.get('/analytics/campaigns/:id/devices', requirePermission(PERMISSIONS.ANALYT
 })
 
 /** Email client breakdown for a campaign */
-app.get('/analytics/campaigns/:id/clients', requirePermission(PERMISSIONS.ANALYTICS_VIEW), (c) => {
+app.get('/analytics/campaigns/:id/clients', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const events = analyticsService.getRawEvents?.(orgId, campaignId) || []
+  const events = (await analyticsService.getRawEvents?.(orgId, campaignId)) || []
   const clients: Record<string, number> = {}
 
   for (const event of events) {
@@ -409,11 +409,11 @@ app.get('/analytics/campaigns/:id/clients', requirePermission(PERMISSIONS.ANALYT
 })
 
 /** Referral sources for click events in a campaign */
-app.get('/analytics/campaigns/:id/referrers', requirePermission(PERMISSIONS.ANALYTICS_VIEW), (c) => {
+app.get('/analytics/campaigns/:id/referrers', requirePermission(PERMISSIONS.ANALYTICS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const events = (analyticsService.getRawEvents?.(orgId, campaignId) || []).filter((e: any) => e.event_type === 'click')
+  const events = ((await analyticsService.getRawEvents?.(orgId, campaignId)) || []).filter((e: any) => e.event_type === 'click')
   const sources: Record<string, { count: number; medium: string }> = {}
 
   for (const event of events) {
@@ -441,7 +441,7 @@ app.get('/analytics/contacts/:contactId/profile', requirePermission(PERMISSIONS.
   if (!contact) return error(c, 'Contact not found', 404)
 
   // Get timeline events
-  const events = scoringEngine.getContactEvents(contactId, 100)
+  const events = await scoringEngine.getContactEvents(contactId, 100)
 
   // Aggregate stats
   let emailsSent = 0, emailsOpened = 0, linksClicked = 0, bounced = 0

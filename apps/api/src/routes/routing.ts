@@ -33,7 +33,7 @@ const app = new Hono()
 // Get provider scores and rankings
 app.get('/routing/scores', async (c) => {
   const user = requireAuth(c)
-  const scores = routingEngine.scoreProviders(user.id)
+  const scores = await routingEngine.scoreProviders(user.id)
   return success(c, { scores })
 })
 
@@ -42,7 +42,7 @@ app.get('/routing/recommend', async (c) => {
   const user = requireAuth(c)
   const exclude = c.req.query('exclude')
   const excludeIds = exclude ? exclude.split(',') : []
-  const decision = routingEngine.selectProvider(user.id, excludeIds)
+  const decision = await routingEngine.selectProvider(user.id, excludeIds)
 
   if (!decision) {
     return error(c, 'No eligible providers available', 404)
@@ -54,7 +54,7 @@ app.get('/routing/recommend', async (c) => {
 // Get provider dashboard (today's stats, scores, failovers)
 app.get('/routing/dashboard', async (c) => {
   const user = requireAuth(c)
-  const dashboard = routingEngine.getProviderDashboard(user.id)
+  const dashboard = await routingEngine.getProviderDashboard(user.id)
   return success(c, dashboard)
 })
 
@@ -62,14 +62,14 @@ app.get('/routing/dashboard', async (c) => {
 app.get('/routing/history', async (c) => {
   const user = requireAuth(c)
   const days = parseInt(c.req.query('days') || '30')
-  const history = routingEngine.getProviderHistory(user.id, days)
+  const history = await routingEngine.getProviderHistory(user.id, days)
   return success(c, { history })
 })
 
 // Get routing config
 app.get('/routing/config', async (c) => {
   const user = requireAuth(c)
-  const config = routingEngine.getRoutingConfig(user.id)
+  const config = await routingEngine.getRoutingConfig(user.id)
   return success(c, { config })
 })
 
@@ -78,7 +78,7 @@ app.put('/routing/config', async (c) => {
   const user = requireAuth(c)
   const body = await validateBody(c, z.record(z.string(), z.unknown()))
 
-  routingEngine.updateRoutingConfig(user.id, body)
+  await routingEngine.updateRoutingConfig(user.id, body)
   return success(c, null, 'Routing config updated')
 })
 
@@ -87,7 +87,7 @@ app.post('/routing/providers/init', async (c) => {
   const user = requireAuth(c)
   const { configId, providerType, configName, dailyLimit } = await validateBody(c, InitProviderSchema)
 
-  routingEngine.initializeProvider(user.id, configId, providerType, configName || '', dailyLimit)
+  await routingEngine.initializeProvider(user.id, configId, providerType, configName || '', dailyLimit)
   return success(c, null, 'Provider initialized for routing')
 })
 
@@ -98,9 +98,9 @@ app.post('/routing/providers/:configId/health', async (c) => {
   const { healthy, error: errorMsg } = await validateBody(c, ProviderHealthSchema)
 
   if (healthy) {
-    routingEngine.markProviderHealthy(user.id, configId)
+    await routingEngine.markProviderHealthy(user.id, configId)
   } else {
-    routingEngine.markProviderUnhealthy(user.id, configId, errorMsg || 'Marked unhealthy')
+    await routingEngine.markProviderUnhealthy(user.id, configId, errorMsg || 'Marked unhealthy')
   }
 
   return success(c, null, `Provider marked ${healthy ? 'healthy' : 'unhealthy'}`)
@@ -111,7 +111,7 @@ app.post('/routing/failover', async (c) => {
   const user = requireAuth(c)
   const { failedConfigId, reason } = await validateBody(c, FailoverSchema)
 
-  const decision = routingEngine.failover(user.id, failedConfigId, reason || 'Manual failover')
+  const decision = await routingEngine.failover(user.id, failedConfigId, reason || 'Manual failover')
 
   if (!decision) {
     return error(c, 'No alternative provider available', 404)

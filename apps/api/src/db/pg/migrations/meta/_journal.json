@@ -36,6 +36,13 @@
       "when": 1780819186567,
       "tag": "0004_flimsy_jean_grey",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780820514403,
+      "tag": "0005_opposite_victor_mancha",
+      "breakpoints": true
     }
   ]
 }

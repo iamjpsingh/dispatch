@@ -1,10 +1,9 @@
-// src/services/analyticsService.ts - Advanced Analytics Engine
+// src/services/analyticsService.ts - Advanced Analytics Engine (Postgres/Drizzle, async)
 // Campaign reports, link clicks, device breakdown, time analysis, exports
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
-import { logger } from '../utils/logger'
+import { and, eq, isNotNull, sql, desc } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { campaign_analytics, link_analytics, event_analytics } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 
 // ============================================================================
@@ -74,104 +73,18 @@ export interface ExportData {
   filename: string
 }
 
+const now = () => new Date().toISOString()
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class AnalyticsService {
-  private db: Database
-
-  constructor() {
-    const dbPath = './data/analytics.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS campaign_analytics (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        campaign_id TEXT NOT NULL,
-        campaign_name TEXT NOT NULL DEFAULT '',
-        total_sent INTEGER DEFAULT 0,
-        delivered INTEGER DEFAULT 0,
-        failed INTEGER DEFAULT 0,
-        opened INTEGER DEFAULT 0,
-        clicked INTEGER DEFAULT 0,
-        bounced INTEGER DEFAULT 0,
-        unsubscribed INTEGER DEFAULT 0,
-        computed_at TEXT DEFAULT (datetime('now')),
-        created_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(user_id, campaign_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_analytics_user ON campaign_analytics(user_id);
-      CREATE INDEX IF NOT EXISTS idx_analytics_campaign ON campaign_analytics(campaign_id);
-
-      CREATE TABLE IF NOT EXISTS link_analytics (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        campaign_id TEXT NOT NULL,
-        url TEXT NOT NULL,
-        click_count INTEGER DEFAULT 0,
-        unique_clicks INTEGER DEFAULT 0,
-        first_clicked_at TEXT,
-        last_clicked_at TEXT,
-        UNIQUE(user_id, campaign_id, url)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_link_campaign ON link_analytics(campaign_id);
-
-      CREATE TABLE IF NOT EXISTS event_analytics (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        campaign_id TEXT,
-        event_type TEXT NOT NULL CHECK (event_type IN ('open', 'click', 'bounce', 'unsubscribe')),
-        recipient_email TEXT,
-        user_agent TEXT,
-        client_name TEXT,
-        device_type TEXT DEFAULT 'unknown',
-        geo_country TEXT,
-        geo_city TEXT,
-        event_hour INTEGER,
-        event_day INTEGER,
-        url TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_event_user ON event_analytics(user_id);
-      CREATE INDEX IF NOT EXISTS idx_event_campaign ON event_analytics(campaign_id);
-      CREATE INDEX IF NOT EXISTS idx_event_type ON event_analytics(event_type);
-    `)
-
-    // Add org_id to existing tables (idempotent)
-    try { this.db.exec('ALTER TABLE campaign_analytics ADD COLUMN org_id TEXT') } catch {}
-    try { this.db.exec('ALTER TABLE link_analytics ADD COLUMN org_id TEXT') } catch {}
-    try { this.db.exec('ALTER TABLE event_analytics ADD COLUMN org_id TEXT') } catch {}
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_analytics_org ON campaign_analytics(org_id)')
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_link_org ON link_analytics(org_id)')
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_event_org ON event_analytics(org_id)')
-
-    logger.info('Analytics service initialized (data/analytics.db)')
-  }
-
   // --------------------------------------------------------------------------
   // Event Recording
   // --------------------------------------------------------------------------
 
-  recordEvent(orgId: string, event: {
+  async recordEvent(orgId: string, event: {
     campaignId?: string
     eventType: 'open' | 'click' | 'bounce' | 'unsubscribe'
     recipientEmail?: string
@@ -179,77 +92,96 @@ class AnalyticsService {
     url?: string
     geoCountry?: string
     geoCity?: string
-  }) {
+  }): Promise<void> {
+    const db = getDb()
     const id = generateId('ae')
-    const now = new Date()
+    const nowDate = new Date()
 
     const clientName = event.userAgent ? this.parseClientName(event.userAgent) : 'unknown'
     const deviceType = event.userAgent ? this.parseDeviceType(event.userAgent) : 'unknown'
 
-    this.db.prepare(`
-      INSERT INTO event_analytics (id, org_id, user_id, campaign_id, event_type, recipient_email, user_agent, client_name, device_type, geo_country, geo_city, event_hour, event_day, url)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, orgId, event.campaignId || null, event.eventType,
-      event.recipientEmail || null, event.userAgent || null,
-      clientName, deviceType, event.geoCountry || null, event.geoCity || null,
-      now.getHours(), now.getDay(), event.url || null
-    )
+    await db.insert(event_analytics).values({
+      id,
+      org_id: orgId,
+      user_id: orgId,
+      campaign_id: event.campaignId || null,
+      event_type: event.eventType,
+      recipient_email: event.recipientEmail || null,
+      user_agent: event.userAgent || null,
+      client_name: clientName,
+      device_type: deviceType,
+      geo_country: event.geoCountry || null,
+      geo_city: event.geoCity || null,
+      event_hour: nowDate.getHours(),
+      event_day: nowDate.getDay(),
+      url: event.url || null,
+    })
 
     // Update link analytics
     if (event.eventType === 'click' && event.url && event.campaignId) {
-      this.updateLinkStats(orgId, event.campaignId, event.url)
+      await this.updateLinkStats(orgId, event.campaignId, event.url)
     }
 
     // Update campaign analytics
     if (event.campaignId) {
-      this.updateCampaignStats(orgId, event.campaignId, event.eventType)
+      await this.updateCampaignStats(orgId, event.campaignId, event.eventType)
     }
   }
 
-  private updateLinkStats(orgId: string, campaignId: string, url: string) {
-    const existing = this.db.prepare(`
-      SELECT id FROM link_analytics WHERE org_id = ? AND campaign_id = ? AND url = ?
-    `).get(orgId, campaignId, url) as any
+  private async updateLinkStats(orgId: string, campaignId: string, url: string): Promise<void> {
+    const db = getDb()
+    const [existing] = await db
+      .select({ id: link_analytics.id })
+      .from(link_analytics)
+      .where(and(eq(link_analytics.org_id, orgId), eq(link_analytics.campaign_id, campaignId), eq(link_analytics.url, url)))
+      .limit(1)
 
     if (existing) {
-      this.db.prepare(`
-        UPDATE link_analytics SET click_count = click_count + 1, last_clicked_at = datetime('now')
-        WHERE id = ?
-      `).run(existing.id)
+      await db
+        .update(link_analytics)
+        .set({ click_count: sql`${link_analytics.click_count} + 1`, last_clicked_at: now() })
+        .where(eq(link_analytics.id, existing.id))
     } else {
       const id = generateId('la')
-      this.db.prepare(`
-        INSERT INTO link_analytics (id, org_id, user_id, campaign_id, url, click_count, unique_clicks, first_clicked_at, last_clicked_at)
-        VALUES (?, ?, ?, ?, ?, 1, 1, datetime('now'), datetime('now'))
-      `).run(id, orgId, orgId, campaignId, url)
+      await db.insert(link_analytics).values({
+        id,
+        org_id: orgId,
+        user_id: orgId,
+        campaign_id: campaignId,
+        url,
+        click_count: 1,
+        unique_clicks: 1,
+        first_clicked_at: now(),
+        last_clicked_at: now(),
+      })
     }
   }
 
-  private updateCampaignStats(orgId: string, campaignId: string, eventType: string) {
-    const existing = this.db.prepare(`
-      SELECT id FROM campaign_analytics WHERE org_id = ? AND campaign_id = ?
-    `).get(orgId, campaignId) as any
+  private async updateCampaignStats(orgId: string, campaignId: string, eventType: string): Promise<void> {
+    const db = getDb()
+    const [existing] = await db
+      .select({ id: campaign_analytics.id })
+      .from(campaign_analytics)
+      .where(and(eq(campaign_analytics.org_id, orgId), eq(campaign_analytics.campaign_id, campaignId)))
+      .limit(1)
 
     if (!existing) {
       const id = generateId('ca')
-      this.db.prepare(`
-        INSERT INTO campaign_analytics (id, org_id, user_id, campaign_id) VALUES (?, ?, ?, ?)
-      `).run(id, orgId, orgId, campaignId)
+      await db.insert(campaign_analytics).values({ id, org_id: orgId, user_id: orgId, campaign_id: campaignId })
     }
 
     const column = {
-      open: 'opened',
-      click: 'clicked',
-      bounce: 'bounced',
-      unsubscribe: 'unsubscribed',
+      open: campaign_analytics.opened,
+      click: campaign_analytics.clicked,
+      bounce: campaign_analytics.bounced,
+      unsubscribe: campaign_analytics.unsubscribed,
     }[eventType]
 
     if (column) {
-      this.db.prepare(`
-        UPDATE campaign_analytics SET ${column} = ${column} + 1, computed_at = datetime('now')
-        WHERE org_id = ? AND campaign_id = ?
-      `).run(orgId, campaignId)
+      await db
+        .update(campaign_analytics)
+        .set({ [column.name]: sql`${column} + 1`, computed_at: now() })
+        .where(and(eq(campaign_analytics.org_id, orgId), eq(campaign_analytics.campaign_id, campaignId)))
     }
   }
 
@@ -257,44 +189,29 @@ class AnalyticsService {
   // Campaign Reports
   // --------------------------------------------------------------------------
 
-  getCampaignReport(orgId: string, campaignId: string): CampaignReport | null {
-    const row = this.db.prepare(`
-      SELECT * FROM campaign_analytics WHERE org_id = ? AND campaign_id = ?
-    `).get(orgId, campaignId) as any
+  async getCampaignReport(orgId: string, campaignId: string): Promise<CampaignReport | null> {
+    const [row] = await getDb()
+      .select()
+      .from(campaign_analytics)
+      .where(and(eq(campaign_analytics.org_id, orgId), eq(campaign_analytics.campaign_id, campaignId)))
+      .limit(1)
 
     if (!row) return null
-
-    const totalSent = row.total_sent || 0
-    const delivered = row.delivered || totalSent - (row.failed || 0) - (row.bounced || 0)
-
-    return {
-      campaign_id: row.campaign_id,
-      campaign_name: row.campaign_name,
-      total_sent: totalSent,
-      delivered,
-      failed: row.failed || 0,
-      opened: row.opened || 0,
-      clicked: row.clicked || 0,
-      bounced: row.bounced || 0,
-      unsubscribed: row.unsubscribed || 0,
-      delivery_rate: totalSent > 0 ? Math.round((delivered / totalSent) * 10000) / 100 : 0,
-      open_rate: delivered > 0 ? Math.round((row.opened / delivered) * 10000) / 100 : 0,
-      click_rate: delivered > 0 ? Math.round((row.clicked / delivered) * 10000) / 100 : 0,
-      bounce_rate: totalSent > 0 ? Math.round((row.bounced / totalSent) * 10000) / 100 : 0,
-      unsubscribe_rate: delivered > 0 ? Math.round((row.unsubscribed / delivered) * 10000) / 100 : 0,
-      click_to_open_rate: row.opened > 0 ? Math.round((row.clicked / row.opened) * 10000) / 100 : 0,
-    }
+    return this.formatCampaignReport(row)
   }
 
-  listCampaignReports(orgId: string, limit: number = 50): CampaignReport[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM campaign_analytics WHERE org_id = ? ORDER BY computed_at DESC LIMIT ?
-    `).all(orgId, limit) as any[]
+  async listCampaignReports(orgId: string, limit: number = 50): Promise<CampaignReport[]> {
+    const rows = await getDb()
+      .select()
+      .from(campaign_analytics)
+      .where(eq(campaign_analytics.org_id, orgId))
+      .orderBy(desc(campaign_analytics.computed_at))
+      .limit(limit)
 
-    return rows.map(row => this.formatCampaignReport(row))
+    return rows.map((row) => this.formatCampaignReport(row))
   }
 
-  private formatCampaignReport(row: any): CampaignReport {
+  private formatCampaignReport(row: typeof campaign_analytics.$inferSelect): CampaignReport {
     const totalSent = row.total_sent || 0
     const delivered = row.delivered || totalSent - (row.failed || 0) - (row.bounced || 0)
     return {
@@ -320,53 +237,59 @@ class AnalyticsService {
   // Link Click Map
   // --------------------------------------------------------------------------
 
-  getLinkClicks(orgId: string, campaignId: string): LinkClickData[] {
-    return this.db.prepare(`
-      SELECT url, click_count, unique_clicks, first_clicked_at, last_clicked_at
-      FROM link_analytics
-      WHERE org_id = ? AND campaign_id = ?
-      ORDER BY click_count DESC
-    `).all(orgId, campaignId) as LinkClickData[]
+  async getLinkClicks(orgId: string, campaignId: string): Promise<LinkClickData[]> {
+    const rows = await getDb()
+      .select({
+        url: link_analytics.url,
+        click_count: link_analytics.click_count,
+        unique_clicks: link_analytics.unique_clicks,
+        first_clicked_at: link_analytics.first_clicked_at,
+        last_clicked_at: link_analytics.last_clicked_at,
+      })
+      .from(link_analytics)
+      .where(and(eq(link_analytics.org_id, orgId), eq(link_analytics.campaign_id, campaignId)))
+      .orderBy(desc(link_analytics.click_count))
+    return rows as LinkClickData[]
   }
 
   // --------------------------------------------------------------------------
   // Device & Client Breakdown
   // --------------------------------------------------------------------------
 
-  getDeviceBreakdown(orgId: string, campaignId?: string): DeviceBreakdown[] {
-    const where = campaignId ? 'org_id = ? AND campaign_id = ?' : 'org_id = ?'
-    const params = campaignId ? [orgId, campaignId] : [orgId]
+  async getDeviceBreakdown(orgId: string, campaignId?: string): Promise<DeviceBreakdown[]> {
+    const where = campaignId
+      ? and(eq(event_analytics.org_id, orgId), eq(event_analytics.campaign_id, campaignId), eq(event_analytics.event_type, 'open'))
+      : and(eq(event_analytics.org_id, orgId), eq(event_analytics.event_type, 'open'))
 
-    const rows = this.db.prepare(`
-      SELECT client_name as client, COUNT(*) as count
-      FROM event_analytics
-      WHERE ${where} AND event_type = 'open'
-      GROUP BY client_name
-      ORDER BY count DESC
-    `).all(...params) as any[]
+    const rows = await getDb()
+      .select({ client: event_analytics.client_name, count: sql<number>`count(*)::int` })
+      .from(event_analytics)
+      .where(where)
+      .groupBy(event_analytics.client_name)
+      .orderBy(desc(sql`count(*)`))
 
     const total = rows.reduce((sum, r) => sum + r.count, 0)
-    return rows.map(r => ({
+    return rows.map((r) => ({
       client: r.client || 'Unknown',
       count: r.count,
       percentage: total > 0 ? Math.round((r.count / total) * 10000) / 100 : 0,
     }))
   }
 
-  getDeviceTypeBreakdown(orgId: string, campaignId?: string): DeviceBreakdown[] {
-    const where = campaignId ? 'org_id = ? AND campaign_id = ?' : 'org_id = ?'
-    const params = campaignId ? [orgId, campaignId] : [orgId]
+  async getDeviceTypeBreakdown(orgId: string, campaignId?: string): Promise<DeviceBreakdown[]> {
+    const where = campaignId
+      ? and(eq(event_analytics.org_id, orgId), eq(event_analytics.campaign_id, campaignId), eq(event_analytics.event_type, 'open'))
+      : and(eq(event_analytics.org_id, orgId), eq(event_analytics.event_type, 'open'))
 
-    const rows = this.db.prepare(`
-      SELECT device_type as client, COUNT(*) as count
-      FROM event_analytics
-      WHERE ${where} AND event_type = 'open'
-      GROUP BY device_type
-      ORDER BY count DESC
-    `).all(...params) as any[]
+    const rows = await getDb()
+      .select({ client: event_analytics.device_type, count: sql<number>`count(*)::int` })
+      .from(event_analytics)
+      .where(where)
+      .groupBy(event_analytics.device_type)
+      .orderBy(desc(sql`count(*)`))
 
     const total = rows.reduce((sum, r) => sum + r.count, 0)
-    return rows.map(r => ({
+    return rows.map((r) => ({
       client: r.client || 'Unknown',
       count: r.count,
       percentage: total > 0 ? Math.round((r.count / total) * 10000) / 100 : 0,
@@ -377,22 +300,22 @@ class AnalyticsService {
   // Geographic Data
   // --------------------------------------------------------------------------
 
-  getGeoBreakdown(orgId: string, campaignId?: string): { country: string; count: number; percentage: number }[] {
-    const where = campaignId ? 'org_id = ? AND campaign_id = ?' : 'org_id = ?'
-    const params = campaignId ? [orgId, campaignId] : [orgId]
+  async getGeoBreakdown(orgId: string, campaignId?: string): Promise<{ country: string; count: number; percentage: number }[]> {
+    const where = campaignId
+      ? and(eq(event_analytics.org_id, orgId), eq(event_analytics.campaign_id, campaignId), isNotNull(event_analytics.geo_country))
+      : and(eq(event_analytics.org_id, orgId), isNotNull(event_analytics.geo_country))
 
-    const rows = this.db.prepare(`
-      SELECT geo_country as country, COUNT(*) as count
-      FROM event_analytics
-      WHERE ${where} AND geo_country IS NOT NULL
-      GROUP BY geo_country
-      ORDER BY count DESC
-      LIMIT 50
-    `).all(...params) as any[]
+    const rows = await getDb()
+      .select({ country: event_analytics.geo_country, count: sql<number>`count(*)::int` })
+      .from(event_analytics)
+      .where(where)
+      .groupBy(event_analytics.geo_country)
+      .orderBy(desc(sql`count(*)`))
+      .limit(50)
 
     const total = rows.reduce((sum, r) => sum + r.count, 0)
-    return rows.map(r => ({
-      country: r.country,
+    return rows.map((r) => ({
+      country: r.country as string,
       count: r.count,
       percentage: total > 0 ? Math.round((r.count / total) * 10000) / 100 : 0,
     }))
@@ -402,20 +325,23 @@ class AnalyticsService {
   // Time Analysis
   // --------------------------------------------------------------------------
 
-  getTimeAnalysis(orgId: string): TimeAnalysis[] {
-    return this.db.prepare(`
-      SELECT event_hour as hour, event_day as day_of_week,
-        SUM(CASE WHEN event_type = 'open' THEN 1 ELSE 0 END) as open_count,
-        SUM(CASE WHEN event_type = 'click' THEN 1 ELSE 0 END) as click_count
-      FROM event_analytics
-      WHERE org_id = ?
-      GROUP BY event_hour, event_day
-      ORDER BY open_count DESC
-    `).all(orgId) as TimeAnalysis[]
+  async getTimeAnalysis(orgId: string): Promise<TimeAnalysis[]> {
+    const rows = await getDb()
+      .select({
+        hour: event_analytics.event_hour,
+        day_of_week: event_analytics.event_day,
+        open_count: sql<number>`sum(case when ${event_analytics.event_type} = 'open' then 1 else 0 end)::int`,
+        click_count: sql<number>`sum(case when ${event_analytics.event_type} = 'click' then 1 else 0 end)::int`,
+      })
+      .from(event_analytics)
+      .where(eq(event_analytics.org_id, orgId))
+      .groupBy(event_analytics.event_hour, event_analytics.event_day)
+      .orderBy(desc(sql`sum(case when ${event_analytics.event_type} = 'open' then 1 else 0 end)`))
+    return rows as TimeAnalysis[]
   }
 
-  getBestSendTime(orgId: string): SendTimeRecommendation | null {
-    const analysis = this.getTimeAnalysis(orgId)
+  async getBestSendTime(orgId: string): Promise<SendTimeRecommendation | null> {
+    const analysis = await this.getTimeAnalysis(orgId)
     if (analysis.length === 0) return null
 
     const best = analysis[0]
@@ -434,8 +360,8 @@ class AnalyticsService {
   // Summary
   // --------------------------------------------------------------------------
 
-  getSummary(orgId: string): AnalyticsSummary {
-    const reports = this.listCampaignReports(orgId)
+  async getSummary(orgId: string): Promise<AnalyticsSummary> {
+    const reports = await this.listCampaignReports(orgId)
 
     if (reports.length === 0) {
       return {
@@ -466,7 +392,7 @@ class AnalyticsService {
       avg_bounce_rate: Math.round(avgBounce * 100) / 100,
       avg_unsubscribe_rate: Math.round(avgUnsub * 100) / 100,
       top_performing_campaign: topCampaign?.campaign_name || null,
-      best_send_time: this.getBestSendTime(orgId),
+      best_send_time: await this.getBestSendTime(orgId),
     }
   }
 
@@ -474,12 +400,12 @@ class AnalyticsService {
   // Export
   // --------------------------------------------------------------------------
 
-  exportCampaignReport(orgId: string, campaignId: string, format: 'csv' | 'json'): ExportData | null {
-    const report = this.getCampaignReport(orgId, campaignId)
+  async exportCampaignReport(orgId: string, campaignId: string, format: 'csv' | 'json'): Promise<ExportData | null> {
+    const report = await this.getCampaignReport(orgId, campaignId)
     if (!report) return null
 
-    const links = this.getLinkClicks(orgId, campaignId)
-    const devices = this.getDeviceBreakdown(orgId, campaignId)
+    const links = await this.getLinkClicks(orgId, campaignId)
+    const devices = await this.getDeviceBreakdown(orgId, campaignId)
 
     if (format === 'json') {
       return {
@@ -497,7 +423,7 @@ class AnalyticsService {
     if (links.length > 0) {
       csv += 'Link Analytics\n'
       csv += 'URL,Clicks,Unique Clicks,First Clicked,Last Clicked\n'
-      links.forEach(l => {
+      links.forEach((l) => {
         csv += `"${l.url}",${l.click_count},${l.unique_clicks},"${l.first_clicked_at}","${l.last_clicked_at}"\n`
       })
     }
@@ -509,9 +435,9 @@ class AnalyticsService {
     }
   }
 
-  exportSummary(orgId: string, format: 'csv' | 'json'): ExportData {
-    const summary = this.getSummary(orgId)
-    const reports = this.listCampaignReports(orgId)
+  async exportSummary(orgId: string, format: 'csv' | 'json'): Promise<ExportData> {
+    const summary = await this.getSummary(orgId)
+    const reports = await this.listCampaignReports(orgId)
 
     if (format === 'json') {
       return {
@@ -527,8 +453,8 @@ class AnalyticsService {
 
     if (reports.length > 0) {
       csv += Object.keys(reports[0]).join(',') + '\n'
-      reports.forEach(r => {
-        csv += Object.values(r).map(v => `"${v}"`).join(',') + '\n'
+      reports.forEach((r) => {
+        csv += Object.values(r).map((v) => `"${v}"`).join(',') + '\n'
       })
     }
 
@@ -543,7 +469,7 @@ class AnalyticsService {
   // Seed campaign analytics from existing data
   // --------------------------------------------------------------------------
 
-  seedFromCampaign(orgId: string, campaignId: string, campaignName: string, stats: {
+  async seedFromCampaign(orgId: string, campaignId: string, campaignName: string, stats: {
     total_sent: number
     delivered?: number
     failed?: number
@@ -551,38 +477,50 @@ class AnalyticsService {
     clicked?: number
     bounced?: number
     unsubscribed?: number
-  }) {
-    const existing = this.db.prepare(`
-      SELECT id FROM campaign_analytics WHERE org_id = ? AND campaign_id = ?
-    `).get(orgId, campaignId) as any
+  }): Promise<void> {
+    const db = getDb()
+    const [existing] = await db
+      .select({ id: campaign_analytics.id })
+      .from(campaign_analytics)
+      .where(and(eq(campaign_analytics.org_id, orgId), eq(campaign_analytics.campaign_id, campaignId)))
+      .limit(1)
 
     if (existing) {
-      this.db.prepare(`
-        UPDATE campaign_analytics SET
-          campaign_name = ?, total_sent = ?, delivered = ?, failed = ?,
-          opened = ?, clicked = ?, bounced = ?, unsubscribed = ?,
-          computed_at = datetime('now')
-        WHERE id = ?
-      `).run(
-        campaignName, stats.total_sent, stats.delivered || 0, stats.failed || 0,
-        stats.opened || 0, stats.clicked || 0, stats.bounced || 0, stats.unsubscribed || 0,
-        existing.id
-      )
+      await db
+        .update(campaign_analytics)
+        .set({
+          campaign_name: campaignName,
+          total_sent: stats.total_sent,
+          delivered: stats.delivered || 0,
+          failed: stats.failed || 0,
+          opened: stats.opened || 0,
+          clicked: stats.clicked || 0,
+          bounced: stats.bounced || 0,
+          unsubscribed: stats.unsubscribed || 0,
+          computed_at: now(),
+        })
+        .where(eq(campaign_analytics.id, existing.id))
     } else {
       const id = generateId('ca')
-      this.db.prepare(`
-        INSERT INTO campaign_analytics (id, org_id, user_id, campaign_id, campaign_name, total_sent, delivered, failed, opened, clicked, bounced, unsubscribed)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id, orgId, orgId, campaignId, campaignName,
-        stats.total_sent, stats.delivered || 0, stats.failed || 0,
-        stats.opened || 0, stats.clicked || 0, stats.bounced || 0, stats.unsubscribed || 0
-      )
+      await db.insert(campaign_analytics).values({
+        id,
+        org_id: orgId,
+        user_id: orgId,
+        campaign_id: campaignId,
+        campaign_name: campaignName,
+        total_sent: stats.total_sent,
+        delivered: stats.delivered || 0,
+        failed: stats.failed || 0,
+        opened: stats.opened || 0,
+        clicked: stats.clicked || 0,
+        bounced: stats.bounced || 0,
+        unsubscribed: stats.unsubscribed || 0,
+      })
     }
   }
 
   // --------------------------------------------------------------------------
-  // User-Agent Parsing
+  // User-Agent Parsing (pure, synchronous)
   // --------------------------------------------------------------------------
 
   private parseClientName(ua: string): string {
@@ -610,29 +548,12 @@ class AnalyticsService {
 
   /**
    * Get raw event records for deep analytics parsing.
-   * Returns events with user_agent, referrer, etc. for UA/geo analysis.
+   * The legacy `analytics_events` table does not exist in the Postgres schema
+   * (it was never created in SQLite either), so this returns an empty array —
+   * preserving the original try/catch fallback behavior.
    */
-  getRawEvents(orgId: string, campaignId: string, limit = 1000): any[] {
-    try {
-      return this.db.prepare(`
-        SELECT * FROM analytics_events
-        WHERE org_id = ? AND campaign_id = ?
-        ORDER BY created_at DESC
-        LIMIT ?
-      `).all(orgId, campaignId, limit) as any[]
-    } catch {
-      // Table may not have org_id or campaign_id — try without filters
-      try {
-        return this.db.prepare(`
-          SELECT * FROM analytics_events
-          WHERE campaign_id = ?
-          ORDER BY created_at DESC
-          LIMIT ?
-        `).all(campaignId, limit) as any[]
-      } catch {
-        return []
-      }
-    }
+  async getRawEvents(_orgId: string, _campaignId: string, _limit = 1000): Promise<(typeof event_analytics.$inferSelect)[]> {
+    return []
   }
 }
 

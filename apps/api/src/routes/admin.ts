@@ -448,9 +448,9 @@ app.put('/admin/org/slug', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) 
 // Sending Domains & Emails (org-scoped)
 // ============================================================================
 
-app.get('/admin/org/domains', requirePermission(PERMISSIONS.ORG_MANAGE), (c) => {
+app.get('/admin/org/domains', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
   const orgId = getOrgId(c)
-  const domains = sendingDomainService.listDomains(orgId)
+  const domains = await sendingDomainService.listDomains(orgId)
   return success(c, { domains })
 })
 
@@ -459,7 +459,7 @@ app.post('/admin/org/domains', requirePermission(PERMISSIONS.ORG_MANAGE), async 
   const body = await c.req.json() as { domain: string }
   if (!body.domain) return error(c, 'domain is required', 400)
   try {
-    const domain = sendingDomainService.addDomain(orgId, body.domain)
+    const domain = await sendingDomainService.addDomain(orgId, body.domain)
     const dnsRecords = sendingDomainService.getDnsRecords(domain)
     return success(c, { domain, dnsRecords }, 'Domain added — configure DNS records below', 201)
   } catch (e: any) {
@@ -467,39 +467,39 @@ app.post('/admin/org/domains', requirePermission(PERMISSIONS.ORG_MANAGE), async 
   }
 })
 
-app.get('/admin/org/domains/:id/dns', requirePermission(PERMISSIONS.ORG_VIEW), (c) => {
+app.get('/admin/org/domains/:id/dns', requirePermission(PERMISSIONS.ORG_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const domain = sendingDomainService.getDomain(orgId, c.req.param('id'))
+  const domain = await sendingDomainService.getDomain(orgId, c.req.param('id'))
   if (!domain) return error(c, 'Domain not found', 404)
   return success(c, { dnsRecords: sendingDomainService.getDnsRecords(domain) })
 })
 
-app.post('/admin/org/domains/:id/verify', requirePermission(PERMISSIONS.ORG_MANAGE), (c) => {
+app.post('/admin/org/domains/:id/verify', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
   const orgId = getOrgId(c)
-  const verified = sendingDomainService.verifyDomain(orgId, c.req.param('id'))
+  const verified = await sendingDomainService.verifyDomain(orgId, c.req.param('id'))
   if (!verified) return error(c, 'Domain not found', 404)
   return success(c, undefined, 'Domain verified')
 })
 
-app.delete('/admin/org/domains/:id', requirePermission(PERMISSIONS.ORG_MANAGE), (c) => {
+app.delete('/admin/org/domains/:id', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
   const orgId = getOrgId(c)
-  const deleted = sendingDomainService.deleteDomain(orgId, c.req.param('id'))
+  const deleted = await sendingDomainService.deleteDomain(orgId, c.req.param('id'))
   if (!deleted) return error(c, 'Domain not found', 404)
   return success(c, undefined, 'Domain deleted')
 })
 
 // Sending emails under a domain
-app.get('/admin/org/sending-emails', requirePermission(PERMISSIONS.ORG_VIEW), (c) => {
+app.get('/admin/org/sending-emails', requirePermission(PERMISSIONS.ORG_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const domainId = c.req.query('domain_id')
-  const emails = sendingDomainService.listEmails(orgId, domainId || undefined)
+  const emails = await sendingDomainService.listEmails(orgId, domainId || undefined)
   return success(c, { emails })
 })
 
-app.get('/admin/org/sending-emails/mine', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/admin/org/sending-emails/mine', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const user = requireAuth(c)
   const orgId = getOrgId(c)
-  const emails = sendingDomainService.listEmailsForUser(orgId, user.id)
+  const emails = await sendingDomainService.listEmailsForUser(orgId, user.id)
   return success(c, { emails })
 })
 
@@ -508,7 +508,7 @@ app.post('/admin/org/sending-emails', requirePermission(PERMISSIONS.ORG_MANAGE),
   const body = await c.req.json() as { domain_id: string; email: string; display_name?: string; assigned_to?: string }
   if (!body.domain_id || !body.email) return error(c, 'domain_id and email required', 400)
   try {
-    const email = sendingDomainService.addEmail(orgId, body.domain_id, body.email, body.display_name, body.assigned_to)
+    const email = await sendingDomainService.addEmail(orgId, body.domain_id, body.email, body.display_name, body.assigned_to)
     return success(c, email, 'Sending email created', 201)
   } catch (e: any) {
     return error(c, e.message, 400)
@@ -518,14 +518,14 @@ app.post('/admin/org/sending-emails', requirePermission(PERMISSIONS.ORG_MANAGE),
 app.put('/admin/org/sending-emails/:id', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const body = await c.req.json() as { display_name?: string; assigned_to?: string | null; is_default?: boolean }
-  const updated = sendingDomainService.updateEmail(orgId, c.req.param('id'), body)
+  const updated = await sendingDomainService.updateEmail(orgId, c.req.param('id'), body)
   if (!updated) return error(c, 'Email not found', 404)
   return success(c, undefined, 'Sending email updated')
 })
 
-app.delete('/admin/org/sending-emails/:id', requirePermission(PERMISSIONS.ORG_MANAGE), (c) => {
+app.delete('/admin/org/sending-emails/:id', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
   const orgId = getOrgId(c)
-  const deleted = sendingDomainService.deleteEmail(orgId, c.req.param('id'))
+  const deleted = await sendingDomainService.deleteEmail(orgId, c.req.param('id'))
   if (!deleted) return error(c, 'Email not found', 404)
   return success(c, undefined, 'Sending email deleted')
 })

@@ -469,7 +469,7 @@ app.post('/campaigns/:id/ab/check-winner', requirePermission(PERMISSIONS.CAMPAIG
   }
 
   // Calculate metrics per variant from analytics
-  const report = analyticsService.getCampaignReport(orgId, campaignId)
+  const report = await analyticsService.getCampaignReport(orgId, campaignId)
   if (!report) return error(c, 'No analytics data yet', 400)
 
   // Simple winner determination: use the metric across variants

@@ -1,11 +1,10 @@
-// src/services/routingEngine.ts - Smart Provider Routing Engine
+// src/services/routingEngine.ts - Smart Provider Routing Engine (Postgres/Drizzle, async)
 // Score-based provider selection: quota (40%), success rate (35%), speed (15%), cost (10%)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, gte, desc, asc, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { provider_stats, routing_config, failover_log } from '../db/pg/schema'
 import { eventBus } from './eventBus'
-import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 
 // ============================================================================
@@ -80,100 +79,38 @@ const DEFAULT_WEIGHTS: RoutingConfig['weights'] = {
   cost: 0.10,
 }
 
+const now = () => new Date().toISOString()
+const today = () => new Date().toISOString().split('T')[0]
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class RoutingEngine {
-  private db: Database
-
   constructor() {
-    const dbPath = './data/routing.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
     this.registerEventHandlers()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS provider_stats (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        config_id TEXT NOT NULL,
-        provider_type TEXT NOT NULL CHECK (provider_type IN ('smtp', 'google', 'microsoft')),
-        config_name TEXT NOT NULL DEFAULT '',
-        date TEXT NOT NULL DEFAULT (date('now')),
-        sent_count INTEGER DEFAULT 0,
-        failed_count INTEGER DEFAULT 0,
-        bounce_count INTEGER DEFAULT 0,
-        avg_send_time_ms REAL DEFAULT 0,
-        daily_limit INTEGER DEFAULT 500,
-        cost_per_email REAL DEFAULT 0,
-        is_healthy INTEGER DEFAULT 1,
-        last_error TEXT,
-        last_checked_at TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(user_id, config_id, date)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_routing_user_date ON provider_stats(user_id, date);
-      CREATE INDEX IF NOT EXISTS idx_routing_config ON provider_stats(config_id);
-
-      CREATE TABLE IF NOT EXISTS routing_config (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL UNIQUE,
-        weights_json TEXT DEFAULT '${JSON.stringify(DEFAULT_WEIGHTS)}',
-        failover_enabled INTEGER DEFAULT 1,
-        min_success_rate REAL DEFAULT 0.8,
-        max_avg_send_time_ms INTEGER DEFAULT 30000,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS failover_log (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        from_config_id TEXT NOT NULL,
-        to_config_id TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_failover_user ON failover_log(user_id);
-    `)
-
-    logger.info('Routing engine initialized (data/routing.db)')
   }
 
   private registerEventHandlers() {
     // eventBus nests custom fields under `payload.data`; userId is top-level.
-    eventBus.on('email_sent', (payload: any) => {
+    eventBus.on('email_sent', async (payload) => {
       const d = payload.data || {}
       if (d.configId && payload.userId) {
-        this.recordSend(payload.userId, d.configId, d.providerType || 'smtp', d.configName || '', d.sendTimeMs || 0, true)
+        await this.recordSend(payload.userId, String(d.configId), String(d.providerType || 'smtp'), String(d.configName || ''), Number(d.sendTimeMs || 0), true)
       }
     })
 
-    eventBus.on('email_failed', (payload: any) => {
+    eventBus.on('email_failed', async (payload) => {
       const d = payload.data || {}
       if (d.configId && payload.userId) {
-        this.recordSend(payload.userId, d.configId, d.providerType || 'smtp', d.configName || '', 0, false, d.error)
+        await this.recordSend(payload.userId, String(d.configId), String(d.providerType || 'smtp'), String(d.configName || ''), 0, false, d.error as string | undefined)
       }
     })
 
-    eventBus.on('email_bounced', (payload: any) => {
+    eventBus.on('email_bounced', async (payload) => {
       const d = payload.data || {}
       if (d.configId && payload.userId) {
-        this.recordBounce(payload.userId, d.configId)
+        await this.recordBounce(payload.userId, String(d.configId))
       }
     })
   }
@@ -182,70 +119,81 @@ class RoutingEngine {
   // Stats Recording
   // --------------------------------------------------------------------------
 
-  private getOrCreateStats(userId: string, configId: string, providerType: string, configName: string): ProviderStats {
-    const today = new Date().toISOString().split('T')[0]
-    let stats = this.db.prepare(`
-      SELECT * FROM provider_stats WHERE user_id = ? AND config_id = ? AND date = ?
-    `).get(userId, configId, today) as ProviderStats | null
+  private async getOrCreateStats(userId: string, configId: string, providerType: string, configName: string): Promise<ProviderStats> {
+    const db = getDb()
+    const day = today()
 
-    if (!stats) {
-      const id = generateId('rs')
-      const limit = DEFAULT_LIMITS[providerType] || 500
+    const [existing] = await db
+      .select()
+      .from(provider_stats)
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.config_id, configId), eq(provider_stats.date, day)))
+      .limit(1)
 
-      this.db.prepare(`
-        INSERT INTO provider_stats (id, user_id, config_id, provider_type, config_name, date, daily_limit)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(id, userId, configId, providerType, configName, today, limit)
+    if (existing) return existing as ProviderStats
 
-      stats = this.db.prepare('SELECT * FROM provider_stats WHERE id = ?').get(id) as ProviderStats
-    }
+    const id = generateId('rs')
+    const limit = DEFAULT_LIMITS[providerType] || 500
 
-    return stats
+    // onConflictDoNothing keeps the UNIQUE(user_id, config_id, date) upsert
+    // race-safe; re-select by the unique key to return whichever row won.
+    await db
+      .insert(provider_stats)
+      .values({ id, user_id: userId, config_id: configId, provider_type: providerType, config_name: configName, date: day, daily_limit: limit })
+      .onConflictDoNothing()
+
+    const [row] = await db
+      .select()
+      .from(provider_stats)
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.config_id, configId), eq(provider_stats.date, day)))
+      .limit(1)
+
+    return row as ProviderStats
   }
 
-  recordSend(userId: string, configId: string, providerType: string, configName: string, sendTimeMs: number, success: boolean, error?: string) {
-    const stats = this.getOrCreateStats(userId, configId, providerType, configName)
+  async recordSend(userId: string, configId: string, providerType: string, configName: string, sendTimeMs: number, success: boolean, error?: string): Promise<void> {
+    const db = getDb()
+    const stats = await this.getOrCreateStats(userId, configId, providerType, configName)
 
     if (success) {
       const newAvg = stats.sent_count > 0
         ? (stats.avg_send_time_ms * stats.sent_count + sendTimeMs) / (stats.sent_count + 1)
         : sendTimeMs
 
-      this.db.prepare(`
-        UPDATE provider_stats SET
-          sent_count = sent_count + 1,
-          avg_send_time_ms = ?,
-          updated_at = datetime('now')
-        WHERE id = ?
-      `).run(newAvg, stats.id)
+      await db
+        .update(provider_stats)
+        .set({
+          sent_count: sql`${provider_stats.sent_count} + 1`,
+          avg_send_time_ms: newAvg,
+          updated_at: now(),
+        })
+        .where(eq(provider_stats.id, stats.id))
     } else {
-      this.db.prepare(`
-        UPDATE provider_stats SET
-          failed_count = failed_count + 1,
-          last_error = ?,
-          is_healthy = CASE WHEN failed_count + 1 > 10 THEN 0 ELSE is_healthy END,
-          updated_at = datetime('now')
-        WHERE id = ?
-      `).run(error || 'Unknown error', stats.id)
+      await db
+        .update(provider_stats)
+        .set({
+          failed_count: sql`${provider_stats.failed_count} + 1`,
+          last_error: error || 'Unknown error',
+          is_healthy: sql`case when ${provider_stats.failed_count} + 1 > 10 then 0 else ${provider_stats.is_healthy} end`,
+          updated_at: now(),
+        })
+        .where(eq(provider_stats.id, stats.id))
     }
   }
 
-  recordBounce(userId: string, configId: string) {
-    const today = new Date().toISOString().split('T')[0]
-    this.db.prepare(`
-      UPDATE provider_stats SET
-        bounce_count = bounce_count + 1,
-        updated_at = datetime('now')
-      WHERE user_id = ? AND config_id = ? AND date = ?
-    `).run(userId, configId, today)
+  async recordBounce(userId: string, configId: string): Promise<void> {
+    const day = today()
+    await getDb()
+      .update(provider_stats)
+      .set({ bounce_count: sql`${provider_stats.bounce_count} + 1`, updated_at: now() })
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.config_id, configId), eq(provider_stats.date, day)))
   }
 
   // --------------------------------------------------------------------------
   // Scoring & Selection
   // --------------------------------------------------------------------------
 
-  private getUserConfig(userId: string): RoutingConfig {
-    const row = this.db.prepare('SELECT * FROM routing_config WHERE user_id = ?').get(userId) as any
+  private async getUserConfig(userId: string): Promise<RoutingConfig> {
+    const [row] = await getDb().select().from(routing_config).where(eq(routing_config.user_id, userId)).limit(1)
 
     if (row) {
       return {
@@ -264,15 +212,14 @@ class RoutingEngine {
     }
   }
 
-  scoreProviders(userId: string): RoutingScore[] {
-    const today = new Date().toISOString().split('T')[0]
-    const config = this.getUserConfig(userId)
+  async scoreProviders(userId: string): Promise<RoutingScore[]> {
+    const config = await this.getUserConfig(userId)
 
-    const stats = this.db.prepare(`
-      SELECT * FROM provider_stats
-      WHERE user_id = ? AND date = ? AND is_healthy = 1
-      ORDER BY sent_count ASC
-    `).all(userId, today) as ProviderStats[]
+    const stats = (await getDb()
+      .select()
+      .from(provider_stats)
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.date, today()), eq(provider_stats.is_healthy, 1)))
+      .orderBy(asc(provider_stats.sent_count))) as ProviderStats[]
 
     if (stats.length === 0) return []
 
@@ -312,9 +259,9 @@ class RoutingEngine {
     }).sort((a, b) => b.totalScore - a.totalScore)
   }
 
-  selectProvider(userId: string, excludeConfigIds: string[] = []): RoutingDecision | null {
-    const scores = this.scoreProviders(userId)
-    const config = this.getUserConfig(userId)
+  async selectProvider(userId: string, excludeConfigIds: string[] = []): Promise<RoutingDecision | null> {
+    const scores = await this.scoreProviders(userId)
+    const config = await this.getUserConfig(userId)
 
     const eligible = scores.filter(s =>
       !excludeConfigIds.includes(s.configId) &&
@@ -336,18 +283,16 @@ class RoutingEngine {
     }
   }
 
-  failover(userId: string, failedConfigId: string, reason: string): RoutingDecision | null {
-    const decision = this.selectProvider(userId, [failedConfigId])
+  async failover(userId: string, failedConfigId: string, reason: string): Promise<RoutingDecision | null> {
+    const decision = await this.selectProvider(userId, [failedConfigId])
 
     if (decision) {
       const id = generateId('fo')
-      this.db.prepare(`
-        INSERT INTO failover_log (id, user_id, from_config_id, to_config_id, reason)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(id, userId, failedConfigId, decision.selectedConfigId, reason)
+      await getDb()
+        .insert(failover_log)
+        .values({ id, user_id: userId, from_config_id: failedConfigId, to_config_id: decision.selectedConfigId, reason })
 
-      eventBus.emit('provider_failover', {
-        userId,
+      eventBus.emit('provider_failover' as never, userId, {
         fromConfigId: failedConfigId,
         toConfigId: decision.selectedConfigId,
         reason,
@@ -361,42 +306,39 @@ class RoutingEngine {
   // Config Management
   // --------------------------------------------------------------------------
 
-  updateRoutingConfig(userId: string, config: Partial<RoutingConfig>): boolean {
-    const existing = this.db.prepare('SELECT id FROM routing_config WHERE user_id = ?').get(userId) as any
+  async updateRoutingConfig(userId: string, config: Partial<RoutingConfig>): Promise<boolean> {
+    const db = getDb()
+    const [existing] = await db.select({ id: routing_config.id }).from(routing_config).where(eq(routing_config.user_id, userId)).limit(1)
 
     if (existing) {
-      const sets: string[] = []
-      const params: any[] = []
+      const values: Partial<typeof routing_config.$inferInsert> = {}
 
-      if (config.weights) { sets.push('weights_json = ?'); params.push(JSON.stringify(config.weights)) }
-      if (config.failover_enabled !== undefined) { sets.push('failover_enabled = ?'); params.push(config.failover_enabled ? 1 : 0) }
-      if (config.min_success_rate !== undefined) { sets.push('min_success_rate = ?'); params.push(config.min_success_rate) }
-      if (config.max_avg_send_time_ms !== undefined) { sets.push('max_avg_send_time_ms = ?'); params.push(config.max_avg_send_time_ms) }
+      if (config.weights) values.weights_json = JSON.stringify(config.weights)
+      if (config.failover_enabled !== undefined) values.failover_enabled = config.failover_enabled ? 1 : 0
+      if (config.min_success_rate !== undefined) values.min_success_rate = config.min_success_rate
+      if (config.max_avg_send_time_ms !== undefined) values.max_avg_send_time_ms = config.max_avg_send_time_ms
 
-      if (sets.length === 0) return false
+      if (Object.keys(values).length === 0) return false
 
-      sets.push("updated_at = datetime('now')")
-      params.push(userId)
+      values.updated_at = now()
 
-      this.db.prepare(`UPDATE routing_config SET ${sets.join(', ')} WHERE user_id = ?`).run(...params)
+      await db.update(routing_config).set(values).where(eq(routing_config.user_id, userId))
     } else {
       const id = generateId('rc')
-      this.db.prepare(`
-        INSERT INTO routing_config (id, user_id, weights_json, failover_enabled, min_success_rate, max_avg_send_time_ms)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        id, userId,
-        JSON.stringify(config.weights || DEFAULT_WEIGHTS),
-        config.failover_enabled !== false ? 1 : 0,
-        config.min_success_rate || 0.8,
-        config.max_avg_send_time_ms || 30000
-      )
+      await db.insert(routing_config).values({
+        id,
+        user_id: userId,
+        weights_json: JSON.stringify(config.weights || DEFAULT_WEIGHTS),
+        failover_enabled: config.failover_enabled !== false ? 1 : 0,
+        min_success_rate: config.min_success_rate || 0.8,
+        max_avg_send_time_ms: config.max_avg_send_time_ms || 30000,
+      })
     }
 
     return true
   }
 
-  getRoutingConfig(userId: string): RoutingConfig {
+  async getRoutingConfig(userId: string): Promise<RoutingConfig> {
     return this.getUserConfig(userId)
   }
 
@@ -404,56 +346,63 @@ class RoutingEngine {
   // Dashboard & History
   // --------------------------------------------------------------------------
 
-  getProviderDashboard(userId: string): { today: ProviderStats[]; scores: RoutingScore[]; failovers: any[] } {
-    const today = new Date().toISOString().split('T')[0]
+  async getProviderDashboard(userId: string): Promise<{ today: ProviderStats[]; scores: RoutingScore[]; failovers: (typeof failover_log.$inferSelect)[] }> {
+    const db = getDb()
+    const day = today()
 
-    const stats = this.db.prepare(`
-      SELECT * FROM provider_stats WHERE user_id = ? AND date = ?
-    `).all(userId, today) as ProviderStats[]
+    const stats = (await db
+      .select()
+      .from(provider_stats)
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.date, day)))) as ProviderStats[]
 
-    const scores = this.scoreProviders(userId)
+    const scores = await this.scoreProviders(userId)
 
-    const failovers = this.db.prepare(`
-      SELECT * FROM failover_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 20
-    `).all(userId)
+    const failovers = await db
+      .select()
+      .from(failover_log)
+      .where(eq(failover_log.user_id, userId))
+      .orderBy(desc(failover_log.created_at))
+      .limit(20)
 
     return { today: stats, scores, failovers }
   }
 
-  getProviderHistory(userId: string, days: number = 30): ProviderStats[] {
+  async getProviderHistory(userId: string, days: number = 30): Promise<ProviderStats[]> {
     const startDate = new Date()
     startDate.setDate(startDate.getDate() - days)
+    const cutoff = startDate.toISOString().split('T')[0]
 
-    return this.db.prepare(`
-      SELECT * FROM provider_stats
-      WHERE user_id = ? AND date >= ?
-      ORDER BY date DESC, config_id
-    `).all(userId, startDate.toISOString().split('T')[0]) as ProviderStats[]
+    return (await getDb()
+      .select()
+      .from(provider_stats)
+      .where(and(eq(provider_stats.user_id, userId), gte(provider_stats.date, cutoff)))
+      .orderBy(desc(provider_stats.date), asc(provider_stats.config_id))) as ProviderStats[]
   }
 
-  markProviderHealthy(userId: string, configId: string) {
-    const today = new Date().toISOString().split('T')[0]
-    this.db.prepare(`
-      UPDATE provider_stats SET is_healthy = 1, last_checked_at = datetime('now'), updated_at = datetime('now')
-      WHERE user_id = ? AND config_id = ? AND date = ?
-    `).run(userId, configId, today)
+  async markProviderHealthy(userId: string, configId: string): Promise<void> {
+    const day = today()
+    await getDb()
+      .update(provider_stats)
+      .set({ is_healthy: 1, last_checked_at: now(), updated_at: now() })
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.config_id, configId), eq(provider_stats.date, day)))
   }
 
-  markProviderUnhealthy(userId: string, configId: string, error: string) {
-    const today = new Date().toISOString().split('T')[0]
-    this.db.prepare(`
-      UPDATE provider_stats SET is_healthy = 0, last_error = ?, last_checked_at = datetime('now'), updated_at = datetime('now')
-      WHERE user_id = ? AND config_id = ? AND date = ?
-    `).run(error, userId, configId, today)
+  async markProviderUnhealthy(userId: string, configId: string, error: string): Promise<void> {
+    const day = today()
+    await getDb()
+      .update(provider_stats)
+      .set({ is_healthy: 0, last_error: error, last_checked_at: now(), updated_at: now() })
+      .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.config_id, configId), eq(provider_stats.date, day)))
   }
 
-  initializeProvider(userId: string, configId: string, providerType: string, configName: string, dailyLimit?: number) {
-    this.getOrCreateStats(userId, configId, providerType, configName)
+  async initializeProvider(userId: string, configId: string, providerType: string, configName: string, dailyLimit?: number): Promise<void> {
+    await this.getOrCreateStats(userId, configId, providerType, configName)
     if (dailyLimit) {
-      const today = new Date().toISOString().split('T')[0]
-      this.db.prepare(`
-        UPDATE provider_stats SET daily_limit = ? WHERE user_id = ? AND config_id = ? AND date = ?
-      `).run(dailyLimit, userId, configId, today)
+      const day = today()
+      await getDb()
+        .update(provider_stats)
+        .set({ daily_limit: dailyLimit })
+        .where(and(eq(provider_stats.user_id, userId), eq(provider_stats.config_id, configId), eq(provider_stats.date, day)))
     }
   }
 }

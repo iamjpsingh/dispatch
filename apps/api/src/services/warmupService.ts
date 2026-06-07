@@ -1,9 +1,9 @@
-// src/services/warmupService.ts - Email Warmup Service
+// src/services/warmupService.ts - Email Warmup Service (Postgres/Drizzle, async)
 // Gradual volume ramp for new sender domains/IPs
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, asc, desc, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { warmup_plans, warmup_logs } from '../db/pg/schema'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 
@@ -94,75 +94,22 @@ function generateSchedule(start: number, target: number, days: number, dailyIncr
   return schedule
 }
 
+const now = () => new Date().toISOString()
+const today = () => new Date().toISOString().slice(0, 10) // 'YYYY-MM-DD'
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class WarmupService {
-  private db: Database
   private workerInterval: ReturnType<typeof setInterval> | null = null
-
-  constructor() {
-    const dbPath = './data/warmup.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS warmup_plans (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        config_id TEXT NOT NULL,
-        config_name TEXT NOT NULL DEFAULT '',
-        status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed', 'cancelled')),
-        schedule_json TEXT NOT NULL,
-        current_day INTEGER DEFAULT 1,
-        total_days INTEGER NOT NULL,
-        emails_sent_today INTEGER DEFAULT 0,
-        daily_target INTEGER DEFAULT 0,
-        started_at TEXT DEFAULT (datetime('now')),
-        completed_at TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_warmup_user ON warmup_plans(user_id);
-      CREATE INDEX IF NOT EXISTS idx_warmup_config ON warmup_plans(config_id);
-      CREATE INDEX IF NOT EXISTS idx_warmup_status ON warmup_plans(status);
-
-      CREATE TABLE IF NOT EXISTS warmup_logs (
-        id TEXT PRIMARY KEY,
-        plan_id TEXT NOT NULL,
-        day INTEGER NOT NULL,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        target INTEGER NOT NULL,
-        sent INTEGER DEFAULT 0,
-        failed INTEGER DEFAULT 0,
-        bounce_rate REAL DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (plan_id) REFERENCES warmup_plans(id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_warmup_log_plan ON warmup_logs(plan_id);
-    `)
-
-    logger.info('Warmup service initialized (data/warmup.db)')
-  }
 
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(userId: string, input: WarmupInput): WarmupPlan {
+  async create(userId: string, input: WarmupInput): Promise<WarmupPlan> {
+    const db = getDb()
     const id = generateId('wu')
     const start = input.starting_volume || 20
     const target = input.target_volume || 500
@@ -178,60 +125,73 @@ class WarmupService {
     const totalDays = schedule.length
     const dailyTarget = schedule[0]?.target || start
 
-    this.db.prepare(`
-      INSERT INTO warmup_plans (id, user_id, config_id, config_name, schedule_json, total_days, daily_target)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, userId, input.config_id, input.config_name, JSON.stringify(schedule), totalDays, dailyTarget)
+    await db.insert(warmup_plans).values({
+      id,
+      user_id: userId,
+      config_id: input.config_id,
+      config_name: input.config_name,
+      schedule_json: JSON.stringify(schedule),
+      total_days: totalDays,
+      daily_target: dailyTarget,
+    })
 
-    return this.db.prepare('SELECT * FROM warmup_plans WHERE id = ?').get(id) as WarmupPlan
+    const [row] = await db.select().from(warmup_plans).where(eq(warmup_plans.id, id)).limit(1)
+    return row as WarmupPlan
   }
 
-  get(userId: string, planId: string): WarmupPlan | null {
-    return this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE id = ? AND user_id = ?
-    `).get(planId, userId) as WarmupPlan | null
+  async get(userId: string, planId: string): Promise<WarmupPlan | null> {
+    const [row] = await getDb()
+      .select()
+      .from(warmup_plans)
+      .where(and(eq(warmup_plans.id, planId), eq(warmup_plans.user_id, userId)))
+      .limit(1)
+    return (row as WarmupPlan) ?? null
   }
 
-  list(userId: string, status?: string): WarmupPlan[] {
-    if (status) {
-      return this.db.prepare(`
-        SELECT * FROM warmup_plans WHERE user_id = ? AND status = ? ORDER BY created_at DESC
-      `).all(userId, status) as WarmupPlan[]
-    }
-    return this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE user_id = ? ORDER BY created_at DESC
-    `).all(userId) as WarmupPlan[]
+  async list(userId: string, status?: string): Promise<WarmupPlan[]> {
+    const conditions = [eq(warmup_plans.user_id, userId)]
+    if (status) conditions.push(eq(warmup_plans.status, status))
+    const rows = await getDb()
+      .select()
+      .from(warmup_plans)
+      .where(and(...conditions))
+      .orderBy(desc(warmup_plans.created_at))
+    return rows as WarmupPlan[]
   }
 
-  pause(userId: string, planId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE warmup_plans SET status = 'paused', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ? AND status = 'active'
-    `).run(planId, userId)
-    return result.changes > 0
+  async pause(userId: string, planId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(warmup_plans)
+      .set({ status: 'paused', updated_at: now() })
+      .where(and(eq(warmup_plans.id, planId), eq(warmup_plans.user_id, userId), eq(warmup_plans.status, 'active')))
+      .returning({ id: warmup_plans.id })
+    return res.length > 0
   }
 
-  resume(userId: string, planId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE warmup_plans SET status = 'active', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ? AND status = 'paused'
-    `).run(planId, userId)
-    return result.changes > 0
+  async resume(userId: string, planId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(warmup_plans)
+      .set({ status: 'active', updated_at: now() })
+      .where(and(eq(warmup_plans.id, planId), eq(warmup_plans.user_id, userId), eq(warmup_plans.status, 'paused')))
+      .returning({ id: warmup_plans.id })
+    return res.length > 0
   }
 
-  cancel(userId: string, planId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE warmup_plans SET status = 'cancelled', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ? AND status IN ('active', 'paused')
-    `).run(planId, userId)
-    return result.changes > 0
+  async cancel(userId: string, planId: string): Promise<boolean> {
+    const res = await getDb()
+      .update(warmup_plans)
+      .set({ status: 'cancelled', updated_at: now() })
+      .where(and(eq(warmup_plans.id, planId), eq(warmup_plans.user_id, userId), sql`${warmup_plans.status} in ('active', 'paused')`))
+      .returning({ id: warmup_plans.id })
+    return res.length > 0
   }
 
-  delete(userId: string, planId: string): boolean {
-    const result = this.db.prepare(`
-      DELETE FROM warmup_plans WHERE id = ? AND user_id = ? AND status IN ('completed', 'cancelled')
-    `).run(planId, userId)
-    return result.changes > 0
+  async delete(userId: string, planId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(warmup_plans)
+      .where(and(eq(warmup_plans.id, planId), eq(warmup_plans.user_id, userId), sql`${warmup_plans.status} in ('completed', 'cancelled')`))
+      .returning({ id: warmup_plans.id })
+    return res.length > 0
   }
 
   // --------------------------------------------------------------------------
@@ -241,15 +201,17 @@ class WarmupService {
   /**
    * Get today's sending limit for a config under warmup
    */
-  getWarmupLimit(userId: string, configId: string): number | null {
-    const plan = this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE user_id = ? AND config_id = ? AND status = 'active'
-    `).get(userId, configId) as WarmupPlan | null
+  async getWarmupLimit(userId: string, configId: string): Promise<number | null> {
+    const [plan] = await getDb()
+      .select()
+      .from(warmup_plans)
+      .where(and(eq(warmup_plans.user_id, userId), eq(warmup_plans.config_id, configId), eq(warmup_plans.status, 'active')))
+      .limit(1)
 
     if (!plan) return null
 
     const schedule: WarmupScheduleDay[] = JSON.parse(plan.schedule_json)
-    const daySchedule = schedule.find(s => s.day === plan.current_day)
+    const daySchedule = schedule.find((s) => s.day === plan.current_day)
 
     return daySchedule?.target || null
   }
@@ -257,10 +219,12 @@ class WarmupService {
   /**
    * Check if config can send more emails today under warmup
    */
-  canSendMore(userId: string, configId: string): { allowed: boolean; remaining: number; limit: number } {
-    const plan = this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE user_id = ? AND config_id = ? AND status = 'active'
-    `).get(userId, configId) as WarmupPlan | null
+  async canSendMore(userId: string, configId: string): Promise<{ allowed: boolean; remaining: number; limit: number }> {
+    const [plan] = await getDb()
+      .select()
+      .from(warmup_plans)
+      .where(and(eq(warmup_plans.user_id, userId), eq(warmup_plans.config_id, configId), eq(warmup_plans.status, 'active')))
+      .limit(1)
 
     if (!plan) return { allowed: true, remaining: Infinity, limit: Infinity }
 
@@ -273,59 +237,61 @@ class WarmupService {
   /**
    * Record email sent during warmup
    */
-  recordSend(userId: string, configId: string, success: boolean) {
-    const plan = this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE user_id = ? AND config_id = ? AND status = 'active'
-    `).get(userId, configId) as WarmupPlan | null
+  async recordSend(userId: string, configId: string, _success: boolean): Promise<void> {
+    const db = getDb()
+    const [plan] = await db
+      .select()
+      .from(warmup_plans)
+      .where(and(eq(warmup_plans.user_id, userId), eq(warmup_plans.config_id, configId), eq(warmup_plans.status, 'active')))
+      .limit(1)
 
     if (!plan) return
 
-    this.db.prepare(`
-      UPDATE warmup_plans SET emails_sent_today = emails_sent_today + 1, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(plan.id)
+    await db
+      .update(warmup_plans)
+      .set({ emails_sent_today: sql`${warmup_plans.emails_sent_today} + 1`, updated_at: now() })
+      .where(eq(warmup_plans.id, plan.id))
   }
 
   /**
    * Advance warmup plans to next day (call daily)
    */
-  advanceDay() {
-    const activePlans = this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE status = 'active'
-    `).all() as WarmupPlan[]
+  async advanceDay(): Promise<void> {
+    const db = getDb()
+    const activePlans = (await db.select().from(warmup_plans).where(eq(warmup_plans.status, 'active'))) as WarmupPlan[]
 
     for (const plan of activePlans) {
       const schedule: WarmupScheduleDay[] = JSON.parse(plan.schedule_json)
 
       // Log today's progress
       const logId = generateId('wl')
-      this.db.prepare(`
-        INSERT INTO warmup_logs (id, plan_id, day, target, sent)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(logId, plan.id, plan.current_day, plan.daily_target, plan.emails_sent_today)
+      await db.insert(warmup_logs).values({
+        id: logId,
+        plan_id: plan.id,
+        day: plan.current_day,
+        date: today(),
+        target: plan.daily_target,
+        sent: plan.emails_sent_today,
+      })
 
       // Check if warmup is complete
       if (plan.current_day >= plan.total_days) {
-        this.db.prepare(`
-          UPDATE warmup_plans SET status = 'completed', completed_at = datetime('now'), updated_at = datetime('now')
-          WHERE id = ?
-        `).run(plan.id)
+        await db
+          .update(warmup_plans)
+          .set({ status: 'completed', completed_at: now(), updated_at: now() })
+          .where(eq(warmup_plans.id, plan.id))
         continue
       }
 
       // Advance to next day
       const nextDay = plan.current_day + 1
-      const nextSchedule = schedule.find(s => s.day === nextDay)
+      const nextSchedule = schedule.find((s) => s.day === nextDay)
       const nextTarget = nextSchedule?.target || plan.daily_target
 
-      this.db.prepare(`
-        UPDATE warmup_plans SET
-          current_day = ?,
-          daily_target = ?,
-          emails_sent_today = 0,
-          updated_at = datetime('now')
-        WHERE id = ?
-      `).run(nextDay, nextTarget, plan.id)
+      await db
+        .update(warmup_plans)
+        .set({ current_day: nextDay, daily_target: nextTarget, emails_sent_today: 0, updated_at: now() })
+        .where(eq(warmup_plans.id, plan.id))
     }
   }
 
@@ -333,24 +299,32 @@ class WarmupService {
   // Progress & Logs
   // --------------------------------------------------------------------------
 
-  getProgress(userId: string, planId: string): { plan: WarmupPlan; schedule: WarmupScheduleDay[]; logs: WarmupLog[]; progress: number } | null {
-    const plan = this.get(userId, planId)
+  async getProgress(
+    userId: string,
+    planId: string
+  ): Promise<{ plan: WarmupPlan; schedule: WarmupScheduleDay[]; logs: WarmupLog[]; progress: number } | null> {
+    const plan = await this.get(userId, planId)
     if (!plan) return null
 
     const schedule: WarmupScheduleDay[] = JSON.parse(plan.schedule_json)
-    const logs = this.db.prepare(`
-      SELECT * FROM warmup_logs WHERE plan_id = ? ORDER BY day ASC
-    `).all(planId) as WarmupLog[]
+    const logs = (await getDb()
+      .select()
+      .from(warmup_logs)
+      .where(eq(warmup_logs.plan_id, planId))
+      .orderBy(asc(warmup_logs.day))) as WarmupLog[]
 
     const progress = plan.total_days > 0 ? Math.round((plan.current_day / plan.total_days) * 100) : 0
 
     return { plan, schedule, logs, progress }
   }
 
-  getActivePlanForConfig(userId: string, configId: string): WarmupPlan | null {
-    return this.db.prepare(`
-      SELECT * FROM warmup_plans WHERE user_id = ? AND config_id = ? AND status = 'active'
-    `).get(userId, configId) as WarmupPlan | null
+  async getActivePlanForConfig(userId: string, configId: string): Promise<WarmupPlan | null> {
+    const [row] = await getDb()
+      .select()
+      .from(warmup_plans)
+      .where(and(eq(warmup_plans.user_id, userId), eq(warmup_plans.config_id, configId), eq(warmup_plans.status, 'active')))
+      .limit(1)
+    return (row as WarmupPlan) ?? null
   }
 
   // --------------------------------------------------------------------------
@@ -359,7 +333,9 @@ class WarmupService {
 
   startWorker(intervalMs: number = 86400000) { // Default: once per day
     if (this.workerInterval) return
-    this.workerInterval = setInterval(() => this.advanceDay(), intervalMs)
+    this.workerInterval = setInterval(() => {
+      void this.advanceDay()
+    }, intervalMs)
     logger.startup('   Warmup worker started')
   }
 
