@@ -1,8 +1,9 @@
 # Dispatch — SaaS Re-platform Progress
 
-_Branch: `feat/saas-replatform` — pushed to `origin` (HEAD `2431fd2`)._
+_Branch: `feat/saas-replatform` — pushed to `origin`._
 _Baseline: `bun typecheck` = 49 pre-existing errors (held flat all session), backend suite
-**714 passed / 20 skipped**, app boots on real Postgres. Suite runs in ~2 min._
+**712 passed / 24 skipped** (4 gated Valkey nets run with `RUN_QUEUE_IT=1`), app boots on real
+Postgres + Valkey. **No `bun:sqlite` anywhere — sqlite fully retired.**_
 
 > ⚠️ This file was previously stale (it predated the re-platform decision and said "keep
 > SQLite / don't use BullMQ"). That guidance is **superseded** — the locked plan is the full
@@ -39,20 +40,28 @@ already secure + tested; better-auth is a feature add, not a security fix).
 
 ---
 
-## ▶️ Next — P4 (DESIGNED, implementation not started)
-
-**Spec:** `docs/superpowers/specs/2026-06-07-p4-queue-bullmq-deliverability-design.md`.
-Replace the 1,633-LOC sqlite queue with **BullMQ on Valkey** + a separate worker process,
-add **send-time deliverability enforcement** (suppression / frequency cap / graymail), and
-retire the last bun:sqlite users. Decomposed:
-- **P4.1** BullMQ/Valkey infra + rewrite `queueEngine` behind its existing interface; separate worker process.
-- **P4.2** Send-time teeth in the worker; bounces/complaints/unsubscribes write `suppression_list`.
-- **P4.3** Scheduler → BullMQ repeatable/delayed jobs.
-- **P4.4** Migrate `apikeys` (own sqlite) → Postgres, then **delete the bun:sqlite shim** (final cutover).
+### P4 — Queue → BullMQ/Valkey + deliverability teeth (COMPLETE)
+The 1,633-LOC sqlite queue + the sqlite scheduler + the sqlite apikeys store are **deleted**;
+the `bun:sqlite` shim is gone. Plan: `docs/superpowers/plans/2026-06-07-p4-queue-migration.md`.
+Built in green increments A–E, each net-first + committed:
+- **A Foundation** — `bullmq`+`ioredis`, `REDIS` config, redis factory, boot refactor (worker
+  start out of `app.ts` import).
+- **B Suppression→PG** — `suppressionStore` (async); suppression path async end-to-end; bounces
+  write `suppression_list`.
+- **C BullMQ core** — `queueStore` (PG mirror) · `sendQueue` (per-batch producer) · `evaluateGates`
+  (suppression→frequency→preferences→graymail, **org-scoped**) · `processSendBatch` · separate
+  `worker.ts` process + shared `boot()` · async `queueEngine` over BullMQ/PG. **SQLite queue deleted.**
+- **D Scheduler→BullMQ** — `scheduled_jobs` + `cron_pattern`/`is_repeating` (migration 0007);
+  `schedulerService` on PG + BullMQ delayed jobs; scheduled sends route through the unified send queue.
+- **E apikeys→PG + cutover** — `api_keys` table (migration 0008) + `apiKeyService` (argon2id, org-scoped);
+  **`bun:sqlite` shim + `better-sqlite3` removed.**
+- **Adversarial review** (40-agent workflow) ran over the whole change set → found + fixed 14 real
+  bugs incl. release-blockers (SMTP-credential leak via scheduled-jobs, IDOR on job control,
+  cross-tenant dead-letter PII, pause→resume recipient loss, stuck-job-on-failure, migration race).
 
 Locked forks: BullMQ = live queue / Postgres = durable history mirror; enforcement runs **send-time**.
-Remaining bun:sqlite holdouts (expected, retired in P4): `queueDatabase`, `queueWorker`,
-`schedulerService`, `routes/apikeys.ts`.
+Sending runs in the `worker` compose service (`bun run worker.ts`); the api process only enqueues.
+Gated Valkey nets: `RUN_QUEUE_IT=1 bunx vitest run` (sendQueue, worker-e2e, schedulerService).
 
 ---
 
