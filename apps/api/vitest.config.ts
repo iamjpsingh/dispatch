@@ -5,6 +5,15 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Many service nets each spin up an in-process PGlite (WASM, ~3.5s init) and
+    // apply the full migration set per test. Running every file's forks at once
+    // (12-core default) saturates the box and trips the 30s hook timeout. Cap
+    // concurrency so only a few PGlite instances boot at a time, and give hooks
+    // generous headroom.
+    pool: 'forks',
+    poolOptions: { forks: { maxForks: 4, minForks: 1 } },
+    testTimeout: 60000,
+    hookTimeout: 60000,
     // Bun's built-in `bun:sqlite` is unresolvable under the Node/Vite test
     // pipeline. Map it to a better-sqlite3-backed shim (test-only).
     alias: {

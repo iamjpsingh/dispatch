@@ -1,12 +1,11 @@
 // src/services/preferenceCenterService.ts - Email preference management for contacts
+// (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, inArray, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { email_preferences } from '../db/pg/schema'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
-
-const DB_PATH = './data/queue.db'
 
 // ============================================================================
 // Types
@@ -29,53 +28,36 @@ export interface EmailPreference {
 // ============================================================================
 
 class PreferenceCenterService {
-  private db: Database
-
-  constructor() {
-    const dir = dirname(DB_PATH)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    this.db = new Database(DB_PATH)
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS email_preferences (
-        id TEXT PRIMARY KEY,
-        org_id TEXT NOT NULL,
-        email TEXT NOT NULL,
-        preference TEXT NOT NULL DEFAULT 'subscribed'
-          CHECK (preference IN ('subscribed', 'campaign_only', 'digest_weekly', 'digest_monthly', 'paused', 'unsubscribed')),
-        pause_until TEXT,
-        reason TEXT,
-        updated_at TEXT DEFAULT (datetime('now')),
-        created_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(org_id, email)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_pref_org_email ON email_preferences(org_id, email);
-      CREATE INDEX IF NOT EXISTS idx_pref_preference ON email_preferences(preference);
-    `)
-  }
-
   // --------------------------------------------------------------------------
   // Read
   // --------------------------------------------------------------------------
 
-  getPreference(orgId: string, email: string): EmailPreference | null {
-    return this.db.prepare('SELECT * FROM email_preferences WHERE org_id = ? AND email = ?')
-      .get(orgId, email) as EmailPreference | null
+  async getPreference(orgId: string, email: string): Promise<EmailPreference | null> {
+    const [row] = await getDb()
+      .select({
+        id: email_preferences.id,
+        org_id: email_preferences.org_id,
+        email: email_preferences.email,
+        preference: email_preferences.preference,
+        pause_until: email_preferences.pause_until,
+        reason: email_preferences.reason,
+        updated_at: email_preferences.updated_at,
+      })
+      .from(email_preferences)
+      .where(and(eq(email_preferences.org_id, orgId), eq(email_preferences.email, email)))
+      .limit(1)
+    return (row as EmailPreference) ?? null
   }
 
-  getEffectivePreference(orgId: string, email: string): PreferenceType {
-    const pref = this.getPreference(orgId, email)
+  async getEffectivePreference(orgId: string, email: string): Promise<PreferenceType> {
+    const pref = await this.getPreference(orgId, email)
     if (!pref) return 'subscribed'
 
     // If paused, check if pause has expired
     if (pref.preference === 'paused' && pref.pause_until) {
       if (new Date(pref.pause_until) < new Date()) {
         // Pause expired, revert to subscribed
-        this.setPreference(orgId, email, 'subscribed')
+        await this.setPreference(orgId, email, 'subscribed')
         return 'subscribed'
       }
     }
@@ -87,11 +69,11 @@ class PreferenceCenterService {
    * Check if an email should receive this type of message.
    * campaignType: 'marketing' | 'transactional'
    */
-  canReceive(orgId: string, email: string, campaignType: 'marketing' | 'transactional' = 'marketing'): boolean {
+  async canReceive(orgId: string, email: string, campaignType: 'marketing' | 'transactional' = 'marketing'): Promise<boolean> {
     // Transactional emails always go through (password reset, etc.)
     if (campaignType === 'transactional') return true
 
-    const pref = this.getEffectivePreference(orgId, email)
+    const pref = await this.getEffectivePreference(orgId, email)
 
     switch (pref) {
       case 'subscribed': return true
@@ -108,43 +90,62 @@ class PreferenceCenterService {
   // Write
   // --------------------------------------------------------------------------
 
-  setPreference(orgId: string, email: string, preference: PreferenceType, reason?: string, pauseDays?: number): void {
+  async setPreference(orgId: string, email: string, preference: PreferenceType, reason?: string, pauseDays?: number): Promise<void> {
     const id = generateId('pref')
     const pauseUntil = preference === 'paused' && pauseDays
       ? new Date(Date.now() + pauseDays * 86400000).toISOString()
       : null
+    const now = new Date().toISOString()
 
-    this.db.prepare(`
-      INSERT INTO email_preferences (id, org_id, email, preference, pause_until, reason, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(org_id, email) DO UPDATE SET
-        preference = ?, pause_until = ?, reason = ?, updated_at = datetime('now')
-    `).run(id, orgId, email, preference, pauseUntil, reason || null, preference, pauseUntil, reason || null)
+    await getDb()
+      .insert(email_preferences)
+      .values({
+        id,
+        org_id: orgId,
+        email,
+        preference,
+        pause_until: pauseUntil,
+        reason: reason || null,
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [email_preferences.org_id, email_preferences.email],
+        set: {
+          preference,
+          pause_until: pauseUntil,
+          reason: reason || null,
+          updated_at: now,
+        },
+      })
 
     logger.info(`[Preferences] ${email} → ${preference}${reason ? ` (${reason})` : ''}`)
   }
 
-  unsubscribe(orgId: string, email: string, reason?: string): void {
-    this.setPreference(orgId, email, 'unsubscribed', reason)
+  async unsubscribe(orgId: string, email: string, reason?: string): Promise<void> {
+    await this.setPreference(orgId, email, 'unsubscribed', reason)
   }
 
-  resubscribe(orgId: string, email: string): void {
-    this.setPreference(orgId, email, 'subscribed')
+  async resubscribe(orgId: string, email: string): Promise<void> {
+    await this.setPreference(orgId, email, 'subscribed')
   }
 
-  pause(orgId: string, email: string, days: number): void {
-    this.setPreference(orgId, email, 'paused', undefined, days)
+  async pause(orgId: string, email: string, days: number): Promise<void> {
+    await this.setPreference(orgId, email, 'paused', undefined, days)
   }
 
   // --------------------------------------------------------------------------
   // Stats
   // --------------------------------------------------------------------------
 
-  getStats(orgId: string): Record<PreferenceType, number> {
-    const rows = this.db.prepare(`
-      SELECT preference, COUNT(*) as count FROM email_preferences
-      WHERE org_id = ? GROUP BY preference
-    `).all(orgId) as { preference: PreferenceType; count: number }[]
+  async getStats(orgId: string): Promise<Record<PreferenceType, number>> {
+    const rows = await getDb()
+      .select({
+        preference: email_preferences.preference,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(email_preferences)
+      .where(eq(email_preferences.org_id, orgId))
+      .groupBy(email_preferences.preference)
 
     const stats: Record<string, number> = {
       subscribed: 0, campaign_only: 0, digest_weekly: 0,
@@ -156,12 +157,12 @@ class PreferenceCenterService {
     return stats as Record<PreferenceType, number>
   }
 
-  getUnsubscribedEmails(orgId: string): string[] {
-    const rows = this.db.prepare(`
-      SELECT email FROM email_preferences
-      WHERE org_id = ? AND preference IN ('unsubscribed')
-    `).all(orgId) as { email: string }[]
-    return rows.map(r => r.email)
+  async getUnsubscribedEmails(orgId: string): Promise<string[]> {
+    const rows = await getDb()
+      .select({ email: email_preferences.email })
+      .from(email_preferences)
+      .where(and(eq(email_preferences.org_id, orgId), inArray(email_preferences.preference, ['unsubscribed'])))
+    return rows.map((r) => r.email)
   }
 }
 

@@ -1,65 +1,34 @@
-// src/services/frequencyCapService.ts - Frequency capping to limit emails per contact per window
+// src/services/frequencyCapService.ts - Frequency capping to limit emails per contact per window (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, gt, lt, count } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { frequency_log, frequency_config } from '../db/pg/schema'
 import { logger } from '../utils/logger'
-
-const DB_PATH = './data/queue.db'
 
 // ============================================================================
 // Frequency Cap Service
 // ============================================================================
 
 class FrequencyCapService {
-  private db: Database
-
-  constructor() {
-    const dir = dirname(DB_PATH)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    this.db = new Database(DB_PATH)
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS frequency_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        org_id TEXT NOT NULL,
-        email TEXT NOT NULL,
-        campaign_id TEXT,
-        sent_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_freq_org_email ON frequency_log(org_id, email);
-      CREATE INDEX IF NOT EXISTS idx_freq_sent ON frequency_log(sent_at);
-
-      CREATE TABLE IF NOT EXISTS frequency_config (
-        org_id TEXT PRIMARY KEY,
-        max_per_window INTEGER DEFAULT 5,
-        window_hours INTEGER DEFAULT 168,
-        enabled INTEGER DEFAULT 0,
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-    `)
-  }
-
   // --------------------------------------------------------------------------
   // Config
   // --------------------------------------------------------------------------
 
-  getConfig(orgId: string): { maxPerWindow: number; windowHours: number; enabled: boolean } {
-    const row = this.db.prepare('SELECT * FROM frequency_config WHERE org_id = ?').get(orgId) as any
+  async getConfig(orgId: string): Promise<{ maxPerWindow: number; windowHours: number; enabled: boolean }> {
+    const [row] = await getDb().select().from(frequency_config).where(eq(frequency_config.org_id, orgId)).limit(1)
     if (!row) return { maxPerWindow: 5, windowHours: 168, enabled: false }
     return { maxPerWindow: row.max_per_window, windowHours: row.window_hours, enabled: !!row.enabled }
   }
 
-  setConfig(orgId: string, maxPerWindow: number, windowHours: number, enabled: boolean): void {
-    this.db.prepare(`
-      INSERT INTO frequency_config (org_id, max_per_window, window_hours, enabled, updated_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(org_id) DO UPDATE SET max_per_window = ?, window_hours = ?, enabled = ?, updated_at = datetime('now')
-    `).run(orgId, maxPerWindow, windowHours, enabled ? 1 : 0, maxPerWindow, windowHours, enabled ? 1 : 0)
+  async setConfig(orgId: string, maxPerWindow: number, windowHours: number, enabled: boolean): Promise<void> {
+    const now = new Date().toISOString()
+    await getDb()
+      .insert(frequency_config)
+      .values({ org_id: orgId, max_per_window: maxPerWindow, window_hours: windowHours, enabled: enabled ? 1 : 0, updated_at: now })
+      .onConflictDoUpdate({
+        target: frequency_config.org_id,
+        set: { max_per_window: maxPerWindow, window_hours: windowHours, enabled: enabled ? 1 : 0, updated_at: now },
+      })
   }
 
   // --------------------------------------------------------------------------
@@ -70,51 +39,42 @@ class FrequencyCapService {
    * Check if a contact can receive another email within the frequency window.
    * Returns true if the contact is under the cap, false if they should be skipped.
    */
-  canSend(orgId: string, email: string): boolean {
-    const config = this.getConfig(orgId)
+  async canSend(orgId: string, email: string): Promise<boolean> {
+    const config = await this.getConfig(orgId)
     if (!config.enabled) return true
 
-    const count = this.db.prepare(`
-      SELECT COUNT(*) as cnt FROM frequency_log
-      WHERE org_id = ? AND email = ? AND sent_at > datetime('now', ?)
-    `).get(orgId, email, `-${config.windowHours} hours`) as { cnt: number }
-
-    return count.cnt < config.maxPerWindow
+    const cnt = await this.countInWindow(orgId, email, config.windowHours)
+    return cnt < config.maxPerWindow
   }
 
   /**
    * Get how many emails a contact has received in the current window.
    */
-  getCount(orgId: string, email: string): number {
-    const config = this.getConfig(orgId)
-    const count = this.db.prepare(`
-      SELECT COUNT(*) as cnt FROM frequency_log
-      WHERE org_id = ? AND email = ? AND sent_at > datetime('now', ?)
-    `).get(orgId, email, `-${config.windowHours} hours`) as { cnt: number }
-    return count.cnt
+  async getCount(orgId: string, email: string): Promise<number> {
+    const config = await this.getConfig(orgId)
+    return this.countInWindow(orgId, email, config.windowHours)
   }
 
   /**
    * Log that an email was sent to a contact. Call this after successfully sending.
    */
-  logSend(orgId: string, email: string, campaignId?: string): void {
-    this.db.prepare(`
-      INSERT INTO frequency_log (org_id, email, campaign_id) VALUES (?, ?, ?)
-    `).run(orgId, email, campaignId || null)
+  async logSend(orgId: string, email: string, campaignId?: string): Promise<void> {
+    await getDb().insert(frequency_log).values({ org_id: orgId, email, campaign_id: campaignId || null })
   }
 
   /**
    * Bulk check: given a list of emails, return which ones can be sent to.
    */
-  filterAllowed(orgId: string, emails: string[]): { allowed: string[]; capped: string[] } {
-    const config = this.getConfig(orgId)
+  async filterAllowed(orgId: string, emails: string[]): Promise<{ allowed: string[]; capped: string[] }> {
+    const config = await this.getConfig(orgId)
     if (!config.enabled) return { allowed: emails, capped: [] }
 
     const allowed: string[] = []
     const capped: string[] = []
 
     for (const email of emails) {
-      if (this.canSend(orgId, email)) {
+      const cnt = await this.countInWindow(orgId, email, config.windowHours)
+      if (cnt < config.maxPerWindow) {
         allowed.push(email)
       } else {
         capped.push(email)
@@ -127,14 +87,27 @@ class FrequencyCapService {
   /**
    * Cleanup old frequency log entries (older than 30 days).
    */
-  cleanup(): number {
-    const result = this.db.prepare(`
-      DELETE FROM frequency_log WHERE sent_at < datetime('now', '-30 days')
-    `).run()
-    if (result.changes > 0) {
-      logger.info(`[FreqCap] Cleaned up ${result.changes} old frequency log entries`)
+  async cleanup(): Promise<number> {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const res = await getDb().delete(frequency_log).where(lt(frequency_log.sent_at, cutoff)).returning({ id: frequency_log.id })
+    if (res.length > 0) {
+      logger.info(`[FreqCap] Cleaned up ${res.length} old frequency log entries`)
     }
-    return result.changes
+    return res.length
+  }
+
+  // --------------------------------------------------------------------------
+  // Internals
+  // --------------------------------------------------------------------------
+
+  /** COUNT(*) of org+email rows whose sent_at falls within the last `windowHours`. */
+  private async countInWindow(orgId: string, email: string, windowHours: number): Promise<number> {
+    const cutoff = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
+    const [c] = await getDb()
+      .select({ value: count() })
+      .from(frequency_log)
+      .where(and(eq(frequency_log.org_id, orgId), eq(frequency_log.email, email), gt(frequency_log.sent_at, cutoff)))
+    return c?.value ?? 0
   }
 }
 

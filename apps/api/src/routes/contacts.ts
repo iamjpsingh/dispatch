@@ -396,13 +396,13 @@ app.get('/contacts/preferences/:contactId', requirePermission(PERMISSIONS.CONTAC
   const contact = await contactService.getContact(orgId, contactId)
   if (!contact) return error(c, 'Contact not found', 404)
 
-  const pref = preferenceCenterService.getPreference(orgId, contact.email)
-  const effective = preferenceCenterService.getEffectivePreference(orgId, contact.email)
+  const pref = await preferenceCenterService.getPreference(orgId, contact.email)
+  const effective = await preferenceCenterService.getEffectivePreference(orgId, contact.email)
 
   return success(c, {
     preference: effective,
     details: pref,
-    canReceiveMarketing: preferenceCenterService.canReceive(orgId, contact.email, 'marketing'),
+    canReceiveMarketing: await preferenceCenterService.canReceive(orgId, contact.email, 'marketing'),
   })
 })
 
@@ -416,30 +416,30 @@ app.put('/contacts/preferences/:contactId', requirePermission(PERMISSIONS.CONTAC
   if (!contact) return error(c, 'Contact not found', 404)
 
   if (body.preference === 'paused') {
-    preferenceCenterService.pause(orgId, contact.email, body.pause_days || 30)
+    await preferenceCenterService.pause(orgId, contact.email, body.pause_days || 30)
   } else {
-    preferenceCenterService.setPreference(orgId, contact.email, body.preference as PreferenceType, body.reason)
+    await preferenceCenterService.setPreference(orgId, contact.email, body.preference as PreferenceType, body.reason)
   }
 
   return success(c, undefined, `Preference updated to ${body.preference}`)
 })
 
 /** Get preference stats for the org */
-app.get('/contacts/preferences', requirePermission(PERMISSIONS.CONTACTS_VIEW), (c) => {
+app.get('/contacts/preferences', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const stats = preferenceCenterService.getStats(orgId)
+  const stats = await preferenceCenterService.getStats(orgId)
   return success(c, { stats })
 })
 
 /** Public: preference center page data (for tracking worker to call) */
-app.get('/contacts/preferences/public/:email', (c) => {
+app.get('/contacts/preferences/public/:email', async (c) => {
   // This is called by the tracking worker when a contact visits the preference page.
   // No auth required — email is the identifier.
   const email = c.req.param('email')
   const orgId = c.req.query('org') || ''
   if (!orgId || !email) return error(c, 'Missing parameters', 400)
 
-  const pref = preferenceCenterService.getEffectivePreference(orgId, email)
+  const pref = await preferenceCenterService.getEffectivePreference(orgId, email)
   return success(c, { email, preference: pref })
 })
 
@@ -453,9 +453,9 @@ app.post('/contacts/preferences/public/:email', async (c) => {
   if (!validPrefs.includes(body.preference)) return error(c, 'Invalid preference', 400)
 
   if (body.preference === 'paused') {
-    preferenceCenterService.pause(body.org, email, body.pause_days || 30)
+    await preferenceCenterService.pause(body.org, email, body.pause_days || 30)
   } else {
-    preferenceCenterService.setPreference(body.org, email, body.preference as PreferenceType, body.reason)
+    await preferenceCenterService.setPreference(body.org, email, body.preference as PreferenceType, body.reason)
   }
 
   return success(c, undefined, 'Preference updated')

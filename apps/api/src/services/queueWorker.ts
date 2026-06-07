@@ -155,7 +155,7 @@ export class QueueWorker {
       }
 
       // Check frequency cap
-      if (!frequencyCapService.canSend(job.user_id, contact.Email)) {
+      if (!(await frequencyCapService.canSend(job.user_id, contact.Email))) {
         logger.debug(`Skipping frequency-capped email: ${contact.Email}`)
         lastIndex = i + 1
         this.queueDb.updateProgress(job.id, lastIndex, sentCount, failedCount)
@@ -163,7 +163,7 @@ export class QueueWorker {
       }
 
       // Check email preferences (unsubscribed, paused, etc.)
-      if (!preferenceCenterService.canReceive(job.user_id, contact.Email)) {
+      if (!(await preferenceCenterService.canReceive(job.user_id, contact.Email))) {
         logger.debug(`Skipping unsubscribed/paused email: ${contact.Email}`)
         lastIndex = i + 1
         this.queueDb.updateProgress(job.id, lastIndex, sentCount, failedCount)
@@ -171,7 +171,7 @@ export class QueueWorker {
       }
 
       // Check graymail suppression (no engagement after N sends)
-      if (!graymailService.canSend(job.user_id, contact.Email)) {
+      if (!(await graymailService.canSend(job.user_id, contact.Email))) {
         logger.debug(`Skipping graymail: ${contact.Email}`)
         lastIndex = i + 1
         this.queueDb.updateProgress(job.id, lastIndex, sentCount, failedCount)
@@ -183,8 +183,8 @@ export class QueueWorker {
 
       if (result.success) {
         sentCount++
-        frequencyCapService.logSend(job.user_id, contact.Email, campaignId)
-        graymailService.recordSend(job.user_id, contact.Email)
+        await frequencyCapService.logSend(job.user_id, contact.Email, campaignId)
+        await graymailService.recordSend(job.user_id, contact.Email)
 
         // Emit for provider routing stats (payload.configId / payload.userId etc.)
         await eventBus.emit(

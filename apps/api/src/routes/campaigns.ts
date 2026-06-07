@@ -393,16 +393,16 @@ const FrequencyCapSchema = z.object({
   enabled: z.boolean(),
 })
 
-app.get('/campaigns/frequency-cap', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/frequency-cap', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const config = frequencyCapService.getConfig(orgId)
+  const config = await frequencyCapService.getConfig(orgId)
   return success(c, config)
 })
 
 app.put('/campaigns/frequency-cap', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const body = await validateBody(c, FrequencyCapSchema)
-  frequencyCapService.setConfig(orgId, body.maxPerWindow, body.windowHours, body.enabled)
+  await frequencyCapService.setConfig(orgId, body.maxPerWindow, body.windowHours, body.enabled)
   return success(c, undefined, 'Frequency cap updated')
 })
 
@@ -507,38 +507,38 @@ const GraymailConfigSchema = z.object({
   threshold: z.number().int().min(3).max(50),
 })
 
-app.get('/campaigns/graymail', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/graymail', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const config = graymailService.getConfig(orgId)
-  const stats = graymailService.getStats(orgId)
+  const config = await graymailService.getConfig(orgId)
+  const stats = await graymailService.getStats(orgId)
   return success(c, { config, stats })
 })
 
 app.put('/campaigns/graymail', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const body = await validateBody(c, GraymailConfigSchema)
-  graymailService.setConfig(orgId, body.enabled, body.threshold)
+  await graymailService.setConfig(orgId, body.enabled, body.threshold)
   return success(c, undefined, 'Graymail settings updated')
 })
 
-app.get('/campaigns/graymail/contacts', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/graymail/contacts', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const limit = parseInt(c.req.query('limit') || '50')
   const offset = parseInt(c.req.query('offset') || '0')
-  const contacts = graymailService.getGraymailContacts(orgId, limit, offset)
+  const contacts = await graymailService.getGraymailContacts(orgId, limit, offset)
   return success(c, { contacts })
 })
 
-app.get('/campaigns/graymail/at-risk', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/graymail/at-risk', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const contacts = graymailService.getAtRisk(orgId)
+  const contacts = await graymailService.getAtRisk(orgId)
   return success(c, { contacts })
 })
 
-app.post('/campaigns/graymail/reset/:email', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/campaigns/graymail/reset/:email', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const email = c.req.param('email')
-  graymailService.resetContact(orgId, email)
+  await graymailService.resetContact(orgId, email)
   return success(c, undefined, 'Graymail status reset')
 })
 
