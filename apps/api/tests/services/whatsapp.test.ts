@@ -2,13 +2,13 @@
 // CRUD + reads, tenant scoping, daily-counter atomic increment, webhook status
 // updates, stats aggregation, and a Postgres landing cross-check.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 
 vi.mock('../../src/utils/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), startup: vi.fn() } }))
 
 import { freshDbMigrated, type TestDb } from '../helpers/pg'
 import { __setTestDb } from '../../src/db/pg/client'
-import { organizations, whatsapp_messages } from '../../src/db/pg/schema'
+import { organizations, whatsapp_configs, whatsapp_messages } from '../../src/db/pg/schema'
 import { whatsappService } from '../../src/services/whatsappService'
 
 const ORG = 'org_wa'
@@ -172,5 +172,42 @@ describe('P2.7b — whatsappService (Drizzle/PGlite)', () => {
     expect(Number(rows[0].sent_today)).toBe(0)
     expect(rows[0].status).toBe('active')
     expect(rows[0].provider).toBe('meta')
+  })
+
+  it('encrypts access_token at rest but surfaces plaintext to callers (lookup token intact)', async () => {
+    const cfg = await whatsappService.createConfig(ORG, USER, {
+      name: 'Secret', phone_number_id: 'pn', access_token: 'plain_secret_token',
+    })
+
+    // (a) raw row in Postgres holds a v1: envelope, not the plaintext
+    const [raw] = await db
+      .select({ access_token: whatsapp_configs.access_token })
+      .from(whatsapp_configs)
+      .where(eq(whatsapp_configs.id, cfg.id))
+    expect(raw.access_token.startsWith('v1:')).toBe(true)
+    expect(raw.access_token).not.toContain('plain_secret_token')
+
+    // (b) getConfig returns the ORIGINAL plaintext
+    const got = await whatsappService.getConfig(ORG, cfg.id)
+    expect(got?.access_token).toBe('plain_secret_token')
+
+    // createConfig return value is also plaintext
+    expect(cfg.access_token).toBe('plain_secret_token')
+
+    // getConfigs read path decrypts too
+    const list = await whatsappService.getConfigs(ORG)
+    expect(list.find(c => c.id === cfg.id)?.access_token).toBe('plain_secret_token')
+
+    // (c) verifyToken still finds the config (webhook_verify_token left plaintext)
+    expect(await whatsappService.verifyToken(cfg.webhook_verify_token!)).toBe(true)
+
+    // updateConfig re-encrypts and read still surfaces the new plaintext
+    await whatsappService.updateConfig(ORG, cfg.id, { access_token: 'rotated_token' })
+    const [raw2] = await db
+      .select({ access_token: whatsapp_configs.access_token })
+      .from(whatsapp_configs)
+      .where(eq(whatsapp_configs.id, cfg.id))
+    expect(raw2.access_token.startsWith('v1:')).toBe(true)
+    expect((await whatsappService.getConfig(ORG, cfg.id))?.access_token).toBe('rotated_token')
   })
 })

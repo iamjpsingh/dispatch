@@ -50,6 +50,21 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
     expect(got?.secret).toBe(wh.secret)
   })
 
+  it('encrypts the secret at rest but surfaces plaintext to callers', async () => {
+    const wh = await webhookService.create(ORG, USER, { name: 'Enc', url: 'https://x.test/e', events: [] })
+    // create() returns plaintext to callers
+    expect(wh.secret).toMatch(/^[0-9a-f]{64}$/)
+
+    // (a) the raw Postgres row holds a v1: envelope, never the plaintext
+    const [row] = await db.select().from(webhooks).where(eq(webhooks.id, wh.id)).limit(1)
+    expect(row.secret).toMatch(/^v1:/)
+    expect(row.secret).not.toBe(wh.secret)
+
+    // (b) get() decrypts back to the original plaintext
+    const got = await webhookService.get(ORG, wh.id)
+    expect(got?.secret).toBe(wh.secret)
+  })
+
   it('honors enabled:false on create (integer 0 flag)', async () => {
     const wh = await webhookService.create(ORG, USER, { name: 'Off', url: 'https://x.test/o', events: [], enabled: false })
     expect(wh.enabled).toBe(0)
@@ -148,6 +163,8 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
     expect(row.events).toBe('["email_bounced"]') // stored verbatim as text
     expect(row.enabled).toBe(0) // integer flag landed
     expect(row.failure_count).toBe(0)
-    expect(row.secret).toBe(wh.secret)
+    // secret is encrypted at rest (envelope), not the plaintext returned to callers
+    expect(row.secret).toMatch(/^v1:/)
+    expect(row.secret).not.toBe(wh.secret)
   })
 })

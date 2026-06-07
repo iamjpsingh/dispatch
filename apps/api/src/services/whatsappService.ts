@@ -6,6 +6,7 @@ import { getDb } from '../db/pg/client'
 import { whatsapp_configs, whatsapp_templates, whatsapp_messages } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 import { logger } from '../utils/logger'
+import { encrypt, decryptOrPlain } from '../utils/crypto'
 
 const META_API_VERSION = 'v21.0'
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`
@@ -161,7 +162,7 @@ class WhatsAppService {
       provider: input.provider || 'meta',
       phone_number_id: input.phone_number_id,
       business_account_id: input.business_account_id || null,
-      access_token: input.access_token,
+      access_token: await encrypt(input.access_token),
       phone_display: input.phone_display || null,
       webhook_verify_token: verifyToken,
       daily_limit: input.daily_limit || 1000,
@@ -176,7 +177,12 @@ class WhatsAppService {
       .from(whatsapp_configs)
       .where(eq(whatsapp_configs.org_id, orgId))
       .orderBy(desc(whatsapp_configs.created_at))
-    return rows as WhatsAppConfig[]
+    return Promise.all(
+      (rows as WhatsAppConfig[]).map(async row => ({
+        ...row,
+        access_token: await decryptOrPlain(row.access_token),
+      })),
+    )
   }
 
   async getConfig(orgId: string, id: string): Promise<WhatsAppConfig | null> {
@@ -185,7 +191,9 @@ class WhatsAppService {
       .from(whatsapp_configs)
       .where(and(eq(whatsapp_configs.id, id), eq(whatsapp_configs.org_id, orgId)))
       .limit(1)
-    return (row as WhatsAppConfig) ?? null
+    if (!row) return null
+    const config = row as WhatsAppConfig
+    return { ...config, access_token: await decryptOrPlain(config.access_token) }
   }
 
   async updateConfig(orgId: string, id: string, updates: Partial<WhatsAppConfigInput>): Promise<void> {
@@ -194,7 +202,7 @@ class WhatsAppService {
     if (updates.name !== undefined) values.name = updates.name
     if (updates.phone_number_id !== undefined) values.phone_number_id = updates.phone_number_id
     if (updates.business_account_id !== undefined) values.business_account_id = updates.business_account_id
-    if (updates.access_token !== undefined) values.access_token = updates.access_token
+    if (updates.access_token !== undefined) values.access_token = await encrypt(updates.access_token)
     if (updates.phone_display !== undefined) values.phone_display = updates.phone_display
     if (updates.daily_limit !== undefined) values.daily_limit = updates.daily_limit
 

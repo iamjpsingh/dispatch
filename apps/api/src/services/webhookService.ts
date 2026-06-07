@@ -6,6 +6,7 @@ import { webhooks, webhook_logs } from '../db/pg/schema'
 import { eventBus, type EventType } from './eventBus'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
+import { encrypt, decryptOrPlain } from '../utils/crypto'
 
 // ============================================================================
 // Types
@@ -67,13 +68,15 @@ class WebhookService {
       user_id: userId,
       name: input.name,
       url: input.url,
-      secret,
+      secret: await encrypt(secret),
       events: JSON.stringify(input.events),
       enabled: input.enabled !== false ? 1 : 0,
     })
 
     const [row] = await db.select().from(webhooks).where(eq(webhooks.id, id)).limit(1)
-    return row as Webhook
+    const wh = row as Webhook
+    wh.secret = await decryptOrPlain(wh.secret)
+    return wh
   }
 
   async get(orgId: string, webhookId: string): Promise<Webhook | null> {
@@ -82,7 +85,10 @@ class WebhookService {
       .from(webhooks)
       .where(and(eq(webhooks.id, webhookId), eq(webhooks.org_id, orgId)))
       .limit(1)
-    return (row as Webhook) ?? null
+    if (!row) return null
+    const wh = row as Webhook
+    wh.secret = await decryptOrPlain(wh.secret)
+    return wh
   }
 
   async update(orgId: string, webhookId: string, updates: Partial<WebhookInput>): Promise<boolean> {
@@ -119,7 +125,9 @@ class WebhookService {
       .from(webhooks)
       .where(eq(webhooks.org_id, orgId))
       .orderBy(desc(webhooks.created_at))
-    return rows as Webhook[]
+    const list = rows as Webhook[]
+    await Promise.all(list.map(async (wh) => { wh.secret = await decryptOrPlain(wh.secret) }))
+    return list
   }
 
   async toggleEnabled(orgId: string, webhookId: string, enabled: boolean): Promise<boolean> {
@@ -147,6 +155,7 @@ class WebhookService {
       const events: string[] = JSON.parse(webhook.events || '[]')
       if (!events.includes(eventType)) continue
 
+      webhook.secret = await decryptOrPlain(webhook.secret)
       // Fire and forget - don't block the event bus
       this.sendWebhook(webhook, eventType, payload).catch((err) => {
         logger.error(`Webhook ${webhook.id} dispatch error:`, err)

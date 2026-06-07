@@ -12,8 +12,10 @@ import { runMigrations } from './src/db/pg/migrate'
 import { seedSystemRoles } from './src/db/pg/seed'
 import { templateService } from './src/services/templateService'
 import { systemSettingsService } from './src/services/systemSettingsService'
+import { assertEncryptionKey } from './src/utils/crypto'
 
 if (process.env.NODE_ENV !== 'test') {
+  assertEncryptionKey() // fail fast: never run with secrets unencryptable
   await runMigrations()
   await seedSystemRoles()
   await templateService.seedStarterTemplates()

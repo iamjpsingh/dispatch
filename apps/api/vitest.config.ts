@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    setupFiles: ['./tests/setup.ts'],
     // Many service nets each spin up an in-process PGlite (WASM, ~3.5s init) and
     // apply the full migration set per test. Running every file's forks at once
     // (12-core default) saturates the box and trips the 30s hook timeout. Cap
