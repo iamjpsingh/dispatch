@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 vi.mock('../../src/utils/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), startup: vi.fn() } }))
 
+import { eq } from 'drizzle-orm'
 import { freshDbMigrated, type TestDb } from '../helpers/pg'
 import { __setTestDb } from '../../src/db/pg/client'
 import { system_settings } from '../../src/db/pg/schema'
@@ -71,5 +72,37 @@ describe('P2.8 — systemSettingsService (Postgres + cache)', () => {
     expect(systemSettingsService.get('preexisting')).toBeNull() // not in cache yet
     await systemSettingsService.init()
     expect(systemSettingsService.get('preexisting')).toBe('loaded')
+  })
+
+  describe('secret API (encrypted at rest)', () => {
+    it('setSecret stores ciphertext in Postgres and getSecret returns plaintext', async () => {
+      await systemSettingsService.setSecret('api_secret', 'sk_live_123', 'user-1')
+      expect(await systemSettingsService.getSecret('api_secret')).toBe('sk_live_123')
+      const [row] = await db.select().from(system_settings).where(eq(system_settings.key, 'api_secret'))
+      expect(row.value).toMatch(/^v1:/) // encrypted at rest
+      expect(row.value).not.toContain('sk_live_123')
+    })
+
+    it('round-trips JSON secrets via setSecretJson/getSecretJson', async () => {
+      await systemSettingsService.setSecretJson('oauth_x', { clientId: 'cid', clientSecret: 'csecret' })
+      expect(await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('oauth_x')).toEqual({
+        clientId: 'cid',
+        clientSecret: 'csecret',
+      })
+      const [row] = await db.select().from(system_settings).where(eq(system_settings.key, 'oauth_x'))
+      expect(row.value).toMatch(/^v1:/)
+      expect(row.value).not.toContain('csecret')
+    })
+
+    it('getSecret passes through legacy plaintext (no migration needed)', async () => {
+      await db.insert(system_settings).values({ key: 'legacy', value: 'plain-secret' })
+      await systemSettingsService.init()
+      expect(await systemSettingsService.getSecret('legacy')).toBe('plain-secret')
+    })
+
+    it('getSecret returns null for missing keys', async () => {
+      expect(await systemSettingsService.getSecret('absent')).toBeNull()
+      expect(await systemSettingsService.getSecretJson('absent')).toBeNull()
+    })
   })
 })

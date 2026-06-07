@@ -74,7 +74,7 @@ async function registerSendGrid(apiKey: string, webhookBaseUrl: string): Promise
       const keyData = await keyRes.json() as any
       signingKey = keyData.public_key
       if (signingKey) {
-        systemSettingsService.set('sendgrid_webhook_verification_key', signingKey)
+        await systemSettingsService.setSecret('sendgrid_webhook_verification_key', signingKey)
       }
     }
 
@@ -145,7 +145,7 @@ async function registerMailgun(apiKey: string, domain: string, region: 'us' | 'e
   } catch { /* signing key fetch is best-effort */ }
 
   // Store Mailgun API key for signature verification (Mailgun uses HTTP API signing key)
-  systemSettingsService.set('mailgun_webhook_signing_key', apiKey)
+  await systemSettingsService.setSecret('mailgun_webhook_signing_key', apiKey)
 
   if (errors.length > 0) {
     logger.warn(`[WebhookReg] Mailgun: Some webhook registrations had issues: ${errors.join('; ')}`)
@@ -285,7 +285,7 @@ async function registerSparkPost(apiKey: string, webhookBaseUrl: string): Promis
 
       // Store auth_token for signature verification if returned
       if (data.results?.auth_token) {
-        systemSettingsService.set('sparkpost_webhook_auth_token', data.results.auth_token)
+        await systemSettingsService.setSecret('sparkpost_webhook_auth_token', data.results.auth_token)
       }
     }
 

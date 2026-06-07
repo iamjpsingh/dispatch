@@ -230,7 +230,7 @@ app.post('/auth/forgot-password', async (c) => {
     // Always return success to prevent email enumeration
     const result = await authLocalService.createPasswordResetToken(email)
     if (result) {
-      if (systemMailerService.isConfigured()) {
+      if (await systemMailerService.isConfigured()) {
         try {
           await systemMailerService.sendPasswordReset(email, result.token)
           logger.info(`Password reset email sent to ${email}`)

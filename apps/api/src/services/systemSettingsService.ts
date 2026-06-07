@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { getDb } from '../db/pg/client'
 import { system_settings } from '../db/pg/schema'
 import { logger } from '../utils/logger'
+import { encrypt, decryptOrPlain } from '../utils/crypto'
 
 /**
  * System settings (key/value config) — now Postgres-backed.
@@ -56,6 +57,41 @@ class SystemSettingsService {
 
   async setJson(key: string, value: unknown, updatedBy?: string): Promise<void> {
     await this.set(key, JSON.stringify(value), updatedBy)
+  }
+
+  // ── Secret settings (encrypted at rest) ─────────────────────────────────────
+  // Sensitive values (provider OAuth creds/tokens, webhook signing keys) are stored
+  // AES-256-GCM-encrypted; the cache holds ciphertext. Always read these via
+  // getSecret/getSecretJson (async — they decrypt) and write via setSecret/setSecretJson.
+  // decryptOrPlain passes through legacy plaintext, so existing rows keep working and
+  // upgrade to ciphertext on next write.
+
+  /** Read + decrypt a secret setting. Returns null if absent. */
+  async getSecret(key: string): Promise<string | null> {
+    const val = this.get(key)
+    if (val === null) return null
+    return decryptOrPlain(val)
+  }
+
+  /** Read + decrypt a JSON secret setting. */
+  async getSecretJson<T = unknown>(key: string): Promise<T | null> {
+    const val = await this.getSecret(key)
+    if (!val) return null
+    try {
+      return JSON.parse(val) as T
+    } catch {
+      return null
+    }
+  }
+
+  /** Encrypt + write a secret setting (cache + Postgres hold ciphertext). */
+  async setSecret(key: string, value: string, updatedBy?: string): Promise<void> {
+    await this.set(key, await encrypt(value), updatedBy)
+  }
+
+  /** Encrypt + write a JSON secret setting. */
+  async setSecretJson(key: string, value: unknown, updatedBy?: string): Promise<void> {
+    await this.setSecret(key, JSON.stringify(value), updatedBy)
   }
 
   async delete(key: string): Promise<boolean> {

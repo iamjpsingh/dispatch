@@ -15,7 +15,7 @@ class BouncePollingService {
    * Returns number of new bounces processed.
    */
   async poll(): Promise<number> {
-    const config = systemMailerService.getConfig()
+    const config = await systemMailerService.getConfig()
     if (!config) return 0
 
     const pc = config.providerConfig

@@ -12,8 +12,8 @@ import { systemSettingsService } from './systemSettingsService'
  * No .env fallback — platform admin configures via UI.
  * Redirect URI is auto-computed from BASE_URL.
  */
-function getGoogleOAuth() {
-  const stored = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('oauth_google')
+async function getGoogleOAuth() {
+  const stored = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('oauth_google')
   return {
     CLIENT_ID: stored?.clientId || '',
     CLIENT_SECRET: stored?.clientSecret || '',
@@ -27,8 +27,8 @@ function getGoogleOAuth() {
   }
 }
 
-function getMicrosoftOAuth() {
-  const stored = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('oauth_microsoft')
+async function getMicrosoftOAuth() {
+  const stored = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('oauth_microsoft')
   return {
     CLIENT_ID: stored?.clientId || '',
     CLIENT_SECRET: stored?.clientSecret || '',
@@ -113,8 +113,8 @@ class OAuthService {
   /**
    * Get Google OAuth authorization URL
    */
-  getGoogleAuthUrl(userId: string): string {
-    const { CLIENT_ID, REDIRECT_URI, SCOPES } = getGoogleOAuth()
+  async getGoogleAuthUrl(userId: string): Promise<string> {
+    const { CLIENT_ID, REDIRECT_URI, SCOPES } = await getGoogleOAuth()
 
     if (!CLIENT_ID) {
       throw new Error('Google OAuth not configured — set it up in Platform Settings')
@@ -137,8 +137,8 @@ class OAuthService {
   /**
    * Get Microsoft OAuth authorization URL
    */
-  getMicrosoftAuthUrl(userId: string): string {
-    const { CLIENT_ID, REDIRECT_URI, SCOPES } = getMicrosoftOAuth()
+  async getMicrosoftAuthUrl(userId: string): Promise<string> {
+    const { CLIENT_ID, REDIRECT_URI, SCOPES } = await getMicrosoftOAuth()
 
     if (!CLIENT_ID) {
       throw new Error('Microsoft OAuth not configured — set it up in Platform Settings')
@@ -160,8 +160,8 @@ class OAuthService {
    * Get Google OAuth URL for platform system mailer
    * Uses the SAME redirect URI as user OAuth to avoid redirect_uri_mismatch
    */
-  getPlatformGoogleAuthUrl(userId: string): string {
-    const { CLIENT_ID, REDIRECT_URI } = getGoogleOAuth()
+  async getPlatformGoogleAuthUrl(userId: string): Promise<string> {
+    const { CLIENT_ID, REDIRECT_URI } = await getGoogleOAuth()
     if (!CLIENT_ID) throw new Error('Google OAuth not configured — save Client ID and Secret first')
 
     const state = this.generateState(userId, 'google', 'platform_mailer')
@@ -181,8 +181,8 @@ class OAuthService {
    * Get Microsoft OAuth URL for platform system mailer
    * Uses the SAME redirect URI as user OAuth to avoid redirect_uri_mismatch
    */
-  getPlatformMicrosoftAuthUrl(userId: string): string {
-    const { CLIENT_ID, REDIRECT_URI } = getMicrosoftOAuth()
+  async getPlatformMicrosoftAuthUrl(userId: string): Promise<string> {
+    const { CLIENT_ID, REDIRECT_URI } = await getMicrosoftOAuth()
     if (!CLIENT_ID) throw new Error('Microsoft OAuth not configured — save Client ID and Secret first')
 
     const state = this.generateState(userId, 'microsoft', 'platform_mailer')
@@ -204,7 +204,7 @@ class OAuthService {
    * Exchange Google authorization code for tokens
    */
   async exchangeGoogleCode(code: string): Promise<OAuthTokens & { email: string; name: string }> {
-    const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI } = getGoogleOAuth()
+    const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI } = await getGoogleOAuth()
 
     if (!CLIENT_ID || !CLIENT_SECRET) {
       throw new Error('Google OAuth credentials not configured')
@@ -256,7 +256,7 @@ class OAuthService {
    * Exchange Microsoft authorization code for tokens
    */
   async exchangeMicrosoftCode(code: string): Promise<OAuthTokens & { email: string; name: string }> {
-    const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SCOPES } = getMicrosoftOAuth()
+    const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SCOPES } = await getMicrosoftOAuth()
 
     if (!CLIENT_ID || !CLIENT_SECRET) {
       throw new Error('Microsoft OAuth credentials not configured')
@@ -313,7 +313,7 @@ class OAuthService {
    * Refresh Google access token
    */
   async refreshGoogleToken(refreshToken: string): Promise<{ access_token: string; expires_at: number }> {
-    const { CLIENT_ID, CLIENT_SECRET } = getGoogleOAuth()
+    const { CLIENT_ID, CLIENT_SECRET } = await getGoogleOAuth()
 
     if (!CLIENT_ID || !CLIENT_SECRET) {
       throw new Error('Google OAuth credentials not configured')
@@ -345,7 +345,7 @@ class OAuthService {
    * Refresh Microsoft access token
    */
   async refreshMicrosoftToken(refreshToken: string): Promise<{ access_token: string; expires_at: number }> {
-    const { CLIENT_ID, CLIENT_SECRET, SCOPES } = getMicrosoftOAuth()
+    const { CLIENT_ID, CLIENT_SECRET, SCOPES } = await getMicrosoftOAuth()
 
     if (!CLIENT_ID || !CLIENT_SECRET) {
       throw new Error('Microsoft OAuth credentials not configured')

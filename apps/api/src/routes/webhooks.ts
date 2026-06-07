@@ -194,7 +194,7 @@ app.post('/webhooks/bounce/mailgun', async (c) => {
     const payload = await c.req.json()
 
     // Verify Mailgun signature if signing key is available
-    const signingKey = getMailgunSigningKey()
+    const signingKey = await getMailgunSigningKey()
     if (signingKey) {
       const eventData = payload['event-data'] || payload
       const sig = eventData.signature || payload.signature
@@ -228,7 +228,7 @@ app.post('/webhooks/bounce/sendgrid', async (c) => {
     const rawBody = await c.req.text()
 
     // Verify SendGrid signature if verification key is available
-    const verificationKey = getSendGridVerificationKey()
+    const verificationKey = await getSendGridVerificationKey()
     if (verificationKey) {
       const signature = c.req.header('x-twilio-email-event-webhook-signature')
       const timestamp = c.req.header('x-twilio-email-event-webhook-timestamp')
@@ -284,7 +284,7 @@ app.post('/webhooks/bounce/sparkpost', async (c) => {
     const rawBody = await c.req.text()
 
     // Verify SparkPost signature if auth token is available
-    const authToken = getSparkPostAuthToken()
+    const authToken = await getSparkPostAuthToken()
     if (authToken) {
       const signature = c.req.header('x-messagesystems-webhook-token')
       if (signature) {

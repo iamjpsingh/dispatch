@@ -91,7 +91,7 @@ class InvitationService {
 
     // Send invitation email
     const invitation = (await this.getById(id))!
-    if (systemMailerService.isConfigured()) {
+    if (await systemMailerService.isConfigured()) {
       systemMailerService.sendInvitation(
         normalizedEmail,
         invitation.org_name || 'the organization',
@@ -198,7 +198,7 @@ class InvitationService {
     await getDb().update(invitations).set({ expires_at: newExpiry }).where(eq(invitations.id, invitationId))
 
     // Resend invitation email
-    if (systemMailerService.isConfigured()) {
+    if (await systemMailerService.isConfigured()) {
       systemMailerService.sendInvitation(
         invitation.email,
         invitation.org_name || 'the organization',

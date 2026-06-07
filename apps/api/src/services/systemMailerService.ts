@@ -268,12 +268,12 @@ async function refreshGmailToken(cfg: GmailOAuthProviderConfig): Promise<string>
   const data = await res.json() as any
 
   // Update stored config with new access token
-  const fullConfig = systemSettingsService.getJson<SystemMailerConfig>(SETTINGS_KEY)
+  const fullConfig = await systemSettingsService.getSecretJson<SystemMailerConfig>(SETTINGS_KEY)
   if (fullConfig && fullConfig.providerConfig.provider === 'gmail') {
     const gmailCfg = fullConfig.providerConfig as GmailOAuthProviderConfig
     gmailCfg.accessToken = data.access_token
     gmailCfg.expiresAt = Date.now() + data.expires_in * 1000
-    systemSettingsService.setJson(SETTINGS_KEY, fullConfig)
+    await systemSettingsService.setSecretJson(SETTINGS_KEY, fullConfig)
   }
 
   return data.access_token
@@ -296,12 +296,12 @@ async function refreshOutlookToken(cfg: OutlookOAuthProviderConfig): Promise<str
   if (!res.ok) throw new Error('Failed to refresh Outlook token')
   const data = await res.json() as any
 
-  const fullConfig = systemSettingsService.getJson<SystemMailerConfig>(SETTINGS_KEY)
+  const fullConfig = await systemSettingsService.getSecretJson<SystemMailerConfig>(SETTINGS_KEY)
   if (fullConfig && fullConfig.providerConfig.provider === 'outlook') {
     const olCfg = fullConfig.providerConfig as OutlookOAuthProviderConfig
     olCfg.accessToken = data.access_token
     olCfg.expiresAt = Date.now() + data.expires_in * 1000
-    systemSettingsService.setJson(SETTINGS_KEY, fullConfig)
+    await systemSettingsService.setSecretJson(SETTINGS_KEY, fullConfig)
   }
 
   return data.access_token
@@ -312,24 +312,24 @@ async function refreshOutlookToken(cfg: OutlookOAuthProviderConfig): Promise<str
 // ============================================================================
 
 class SystemMailerService {
-  getConfig(): SystemMailerConfig | null {
-    return systemSettingsService.getJson<SystemMailerConfig>(SETTINGS_KEY)
+  async getConfig(): Promise<SystemMailerConfig | null> {
+    return await systemSettingsService.getSecretJson<SystemMailerConfig>(SETTINGS_KEY)
   }
 
-  saveConfig(config: SystemMailerConfig, updatedBy: string): void {
-    systemSettingsService.setJson(SETTINGS_KEY, config, updatedBy)
+  async saveConfig(config: SystemMailerConfig, updatedBy: string): Promise<void> {
+    await systemSettingsService.setSecretJson(SETTINGS_KEY, config, updatedBy)
   }
 
-  removeConfig(updatedBy: string): void {
+  async removeConfig(updatedBy: string): Promise<void> {
     systemSettingsService.delete(SETTINGS_KEY)
   }
 
-  isConfigured(): boolean {
-    return this.getConfig() !== null
+  async isConfigured(): Promise<boolean> {
+    return (await this.getConfig()) !== null
   }
 
-  getMaskedConfig(): (SystemMailerConfig & { _masked: true }) | null {
-    const cfg = this.getConfig()
+  async getMaskedConfig(): Promise<(SystemMailerConfig & { _masked: true }) | null> {
+    const cfg = await this.getConfig()
     if (!cfg) return null
     const masked = JSON.parse(JSON.stringify(cfg)) as any
     const pc = masked.providerConfig
@@ -346,7 +346,7 @@ class SystemMailerService {
 
   async verify(): Promise<{ success: boolean; error?: string }> {
     try {
-      const cfg = this.getConfig()
+      const cfg = await this.getConfig()
       if (!cfg) return { success: false, error: 'Not configured' }
 
       const pc = cfg.providerConfig
@@ -398,7 +398,7 @@ class SystemMailerService {
   }
 
   async send(options: { to: string; subject: string; html: string; text?: string }): Promise<{ messageId: string }> {
-    const cfg = this.getConfig()
+    const cfg = await this.getConfig()
     if (!cfg) throw new Error('System mailer is not configured')
 
     const from = { name: cfg.fromName, email: cfg.fromEmail }

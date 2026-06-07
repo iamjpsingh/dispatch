@@ -142,7 +142,7 @@ async function handlePlatformMailerCallback(
       return { success: false, redirectUrl: `${frontendUrl}${settingsPath}?oauth_error=no_credentials` }
     }
 
-    const existing = systemMailerService.getConfig()
+    const existing = await systemMailerService.getConfig()
     const config: SystemMailerConfig = {
       fromName: existing?.fromName || 'Dispatch',
       fromEmail: tokens.email,

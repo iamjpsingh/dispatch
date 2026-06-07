@@ -114,14 +114,14 @@ export async function verifySNSSignature(payload: any): Promise<boolean> {
 // Helpers for webhook routes
 // ============================================================================
 
-export function getMailgunSigningKey(): string | null {
-  return systemSettingsService.get('mailgun_webhook_signing_key') || null
+export async function getMailgunSigningKey(): Promise<string | null> {
+  return (await systemSettingsService.getSecret('mailgun_webhook_signing_key')) || null
 }
 
-export function getSendGridVerificationKey(): string | null {
-  return systemSettingsService.get('sendgrid_webhook_verification_key') || null
+export async function getSendGridVerificationKey(): Promise<string | null> {
+  return (await systemSettingsService.getSecret('sendgrid_webhook_verification_key')) || null
 }
 
-export function getSparkPostAuthToken(): string | null {
-  return systemSettingsService.get('sparkpost_webhook_auth_token') || null
+export async function getSparkPostAuthToken(): Promise<string | null> {
+  return (await systemSettingsService.getSecret('sparkpost_webhook_auth_token')) || null
 }

@@ -17,9 +17,9 @@ const app = new Hono()
  * Get OAuth configuration status
  * GET /oauth/status
  */
-app.get('/oauth/status', (c) => {
-  const googleStored = systemSettingsService.getJson<{ clientId: string }>('oauth_google')
-  const msStored = systemSettingsService.getJson<{ clientId: string }>('oauth_microsoft')
+app.get('/oauth/status', async (c) => {
+  const googleStored = await systemSettingsService.getSecretJson<{ clientId: string }>('oauth_google')
+  const msStored = await systemSettingsService.getSecretJson<{ clientId: string }>('oauth_microsoft')
   return success(c, {
     providers: {
       google: {

@@ -90,8 +90,8 @@ class CloudflareService {
 
   // ---------- OAuth ----------
 
-  getAuthUrl(orgId: string): string {
-    const cfOAuth = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
+  async getAuthUrl(orgId: string): Promise<string> {
+    const cfOAuth = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
     if (!cfOAuth) throw new Error('Cloudflare OAuth credentials not configured')
 
     const state = Buffer.from(JSON.stringify({ orgId, purpose: 'cloudflare_connect' })).toString('base64url')
@@ -108,7 +108,7 @@ class CloudflareService {
   }
 
   async exchangeCode(code: string): Promise<CloudflareConnection> {
-    const cfOAuth = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
+    const cfOAuth = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
     if (!cfOAuth) throw new Error('Cloudflare OAuth credentials not configured')
 
     const res = await fetch('https://dash.cloudflare.com/oauth2/token', {
@@ -146,7 +146,7 @@ class CloudflareService {
   async refreshToken(connection: CloudflareConnection): Promise<string> {
     if (Date.now() < connection.expiresAt - 60000) return connection.accessToken
 
-    const cfOAuth = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
+    const cfOAuth = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
     if (!cfOAuth) throw new Error('Cloudflare OAuth credentials not configured')
 
     const res = await fetch('https://dash.cloudflare.com/oauth2/token', {

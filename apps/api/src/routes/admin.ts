@@ -154,8 +154,8 @@ app.delete('/admin/platform/orgs/:orgId', requirePlatformAdmin(), async (c) => {
 // ============================================================================
 
 /** Get system mailer config (sensitive fields masked) */
-app.get('/admin/platform/settings/mailer', requirePlatformAdmin(), (c) => {
-  const masked = systemMailerService.getMaskedConfig()
+app.get('/admin/platform/settings/mailer', requirePlatformAdmin(), async (c) => {
+  const masked = await systemMailerService.getMaskedConfig()
   return success(c, { configured: !!masked, config: masked })
 })
 
@@ -167,7 +167,7 @@ app.put('/admin/platform/settings/mailer', requirePlatformAdmin(), async (c) => 
     if (!body.fromName || !body.fromEmail || !body.providerConfig?.provider) {
       return error(c, 'fromName, fromEmail, and providerConfig are required', 400)
     }
-    systemMailerService.saveConfig(body, user.id)
+    await systemMailerService.saveConfig(body, user.id)
 
     // Auto-register bounce webhooks with provider API (fire-and-forget)
     webhookRegistrationService.register(body.providerConfig).then(result => {
@@ -214,16 +214,16 @@ app.post('/admin/platform/settings/mailer/send-test', requirePlatformAdmin(), as
 })
 
 /** Remove system mailer config */
-app.delete('/admin/platform/settings/mailer', requirePlatformAdmin(), (c) => {
+app.delete('/admin/platform/settings/mailer', requirePlatformAdmin(), async (c) => {
   const user = requireAuth(c)
-  systemMailerService.removeConfig(user.id)
+  await systemMailerService.removeConfig(user.id)
   return success(c, undefined, 'System mailer configuration removed')
 })
 
 /** Get/save OAuth credentials (Google/Microsoft client ID+secret for the platform) */
-app.get('/admin/platform/settings/oauth', requirePlatformAdmin(), (c) => {
-  const google = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('oauth_google') || null
-  const microsoft = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('oauth_microsoft') || null
+app.get('/admin/platform/settings/oauth', requirePlatformAdmin(), async (c) => {
+  const google = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('oauth_google') || null
+  const microsoft = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('oauth_microsoft') || null
   return success(c, {
     google: google ? { clientId: google.clientId, clientSecret: '********' } : null,
     microsoft: microsoft ? { clientId: microsoft.clientId, clientSecret: '********' } : null,
@@ -240,14 +240,14 @@ app.put('/admin/platform/settings/oauth', requirePlatformAdmin(), async (c) => {
     // If secret is masked placeholder, preserve the existing secret
     let finalSecret = body.clientSecret
     if (finalSecret === '********') {
-      const existing = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>(`oauth_${body.provider}`)
+      const existing = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>(`oauth_${body.provider}`)
       if (existing?.clientSecret && existing.clientSecret !== '********') {
         finalSecret = existing.clientSecret
       } else {
         return error(c, 'Please enter the actual client secret', 400)
       }
     }
-    systemSettingsService.setJson(`oauth_${body.provider}`, { clientId: body.clientId, clientSecret: finalSecret }, user.id)
+    await systemSettingsService.setSecretJson(`oauth_${body.provider}`, { clientId: body.clientId, clientSecret: finalSecret }, user.id)
     return success(c, undefined, `${body.provider} OAuth credentials saved`)
   } catch (e: any) {
     return error(c, e.message || 'Failed', 500)
@@ -283,7 +283,7 @@ app.put('/admin/platform/settings/cloudflare', requirePlatformAdmin(), async (c)
     if (!body.clientId || !body.clientSecret) {
       return error(c, 'clientId and clientSecret required', 400)
     }
-    systemSettingsService.setJson('cloudflare_oauth', body, user.id)
+    await systemSettingsService.setSecretJson('cloudflare_oauth', body, user.id)
     return success(c, undefined, 'Cloudflare OAuth credentials saved')
   } catch (e: any) {
     return error(c, e.message || 'Failed', 500)
@@ -291,8 +291,8 @@ app.put('/admin/platform/settings/cloudflare', requirePlatformAdmin(), async (c)
 })
 
 /** Get Cloudflare OAuth credentials (masked) */
-app.get('/admin/platform/settings/cloudflare', requirePlatformAdmin(), (c) => {
-  const creds = systemSettingsService.getJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
+app.get('/admin/platform/settings/cloudflare', requirePlatformAdmin(), async (c) => {
+  const creds = await systemSettingsService.getSecretJson<{ clientId: string; clientSecret: string }>('cloudflare_oauth')
   return success(c, {
     configured: !!creds,
     clientId: creds?.clientId || null,
