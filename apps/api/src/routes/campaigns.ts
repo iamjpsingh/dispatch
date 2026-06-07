@@ -63,7 +63,7 @@ const app = new Hono()
 // Campaign CRUD
 // ============================================================================
 
-app.get('/campaigns', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
 
   const filters = {
@@ -75,7 +75,7 @@ app.get('/campaigns', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
     limit: parseInt(c.req.query('limit') || '20'),
   }
 
-  const { campaigns, total } = campaignService.list(orgId, filters)
+  const { campaigns, total } = await campaignService.list(orgId, filters)
 
   return c.json({
     success: true,
@@ -97,23 +97,23 @@ app.post('/campaigns', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c
   const orgId = getOrgId(c)
   const body = await validateBody(c, CreateCampaignSchema)
 
-  const campaign = campaignService.create(orgId, user.id, body)
+  const campaign = await campaignService.create(orgId, user.id, body)
   return success(c, campaign, 'Campaign created', 201)
 })
 
-app.get('/campaigns/dashboard', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/dashboard', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const stats = campaignService.getDashboardStats(orgId)
+  const stats = await campaignService.getDashboardStats(orgId)
   return success(c, stats)
 })
 
-app.get('/campaigns/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
   if (campaignId === 'dashboard') return c.notFound()
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
 
   return success(c, campaign)
@@ -124,17 +124,17 @@ app.put('/campaigns/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async
   const campaignId = c.req.param('id')
   const body = await validateBody(c, UpdateCampaignSchema)
 
-  const updated = campaignService.update(orgId, campaignId, body)
+  const updated = await campaignService.update(orgId, campaignId, body)
   if (!updated) return error(c, 'Campaign not found or cannot be edited', 404)
 
   return success(c, undefined, 'Campaign updated')
 })
 
-app.delete('/campaigns/:id', requirePermission(PERMISSIONS.CAMPAIGNS_DELETE), (c) => {
+app.delete('/campaigns/:id', requirePermission(PERMISSIONS.CAMPAIGNS_DELETE), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const deleted = campaignService.delete(orgId, campaignId)
+  const deleted = await campaignService.delete(orgId, campaignId)
   if (!deleted) return error(c, 'Campaign not found or cannot be deleted', 404)
 
   return success(c, undefined, 'Campaign deleted')
@@ -149,7 +149,7 @@ app.post('/campaigns/:id/draft', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE)
   const campaignId = c.req.param('id')
   const body = await validateBody(c, UpdateCampaignSchema)
 
-  const saved = campaignService.saveDraft(orgId, campaignId, body)
+  const saved = await campaignService.saveDraft(orgId, campaignId, body)
   if (!saved) return error(c, 'Campaign not found', 404)
 
   return success(c, undefined, 'Draft saved')
@@ -160,7 +160,7 @@ app.post('/campaigns/:id/schedule', requirePermission(PERMISSIONS.CAMPAIGNS_MANA
   const campaignId = c.req.param('id')
   const { scheduled_at } = await validateBody(c, ScheduleSchema)
 
-  const scheduled = campaignService.schedule(orgId, campaignId, scheduled_at)
+  const scheduled = await campaignService.schedule(orgId, campaignId, scheduled_at)
   if (!scheduled) return error(c, 'Campaign not found or not in draft/testing status', 404)
 
   return success(c, undefined, 'Campaign scheduled')
@@ -172,13 +172,13 @@ app.post('/campaigns/:id/reschedule', requirePermission(PERMISSIONS.CAMPAIGNS_MA
   const campaignId = c.req.param('id')
   const { scheduled_at } = await validateBody(c, ScheduleSchema)
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
   if (!['draft', 'scheduled', 'testing'].includes(campaign.status)) {
     return error(c, 'Can only reschedule draft or scheduled campaigns', 400)
   }
 
-  const rescheduled = campaignService.schedule(orgId, campaignId, scheduled_at)
+  const rescheduled = await campaignService.schedule(orgId, campaignId, scheduled_at)
   if (!rescheduled) return error(c, 'Failed to reschedule', 500)
 
   return success(c, { scheduled_at }, 'Campaign rescheduled')
@@ -190,7 +190,7 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
   const campaignId = c.req.param('id')
 
   // 1. Load the campaign.
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
 
   // 2. Only draft/scheduled/testing campaigns can be launched.
@@ -201,7 +201,7 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
   // 3. Resolve the HTML body: prefer the linked template, else fall back to draft_data.
   let htmlContent = ''
   if (campaign.template_id) {
-    const template = templateService.get(orgId, campaign.template_id)
+    const template = await templateService.get(orgId, campaign.template_id)
     if (template?.html_content) htmlContent = template.html_content
   }
   if (!htmlContent && campaign.draft_data) {
@@ -265,9 +265,9 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
   })
 
   // 7. Link the job to the campaign and flip it to sending.
-  campaignService.setJobId(campaignId, jobId)
-  campaignService.setTotalRecipients(campaignId, contacts.length)
-  campaignService.setStatus(orgId, campaignId, 'sending')
+  await campaignService.setJobId(campaignId, jobId)
+  await campaignService.setTotalRecipients(campaignId, contacts.length)
+  await campaignService.setStatus(orgId, campaignId, 'sending')
 
   logger.info(`Campaign ${campaignId} launched: job ${jobId}, ${contacts.length} recipients`)
 
@@ -275,42 +275,42 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
   return success(c, { jobId, recipientCount: contacts.length }, 'Campaign launched')
 })
 
-app.post('/campaigns/:id/pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/campaigns/:id/pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const paused = campaignService.setStatus(orgId, campaignId, 'paused')
+  const paused = await campaignService.setStatus(orgId, campaignId, 'paused')
   if (!paused) return error(c, 'Campaign not found', 404)
 
   return success(c, undefined, 'Campaign paused')
 })
 
-app.post('/campaigns/:id/cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/campaigns/:id/cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const cancelled = campaignService.setStatus(orgId, campaignId, 'cancelled')
+  const cancelled = await campaignService.setStatus(orgId, campaignId, 'cancelled')
   if (!cancelled) return error(c, 'Campaign not found', 404)
 
   return success(c, undefined, 'Campaign cancelled')
 })
 
-app.post('/campaigns/:id/clone', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/campaigns/:id/clone', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const cloned = campaignService.clone(orgId, user.id, campaignId)
+  const cloned = await campaignService.clone(orgId, user.id, campaignId)
   if (!cloned) return error(c, 'Campaign not found', 404)
 
   return success(c, cloned, 'Campaign cloned', 201)
 })
 
-app.post('/campaigns/:id/archive', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+app.post('/campaigns/:id/archive', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const archived = campaignService.setStatus(orgId, campaignId, 'archived')
+  const archived = await campaignService.setStatus(orgId, campaignId, 'archived')
   if (!archived) return error(c, 'Campaign not found', 404)
 
   return success(c, undefined, 'Campaign archived')
@@ -320,11 +320,11 @@ app.post('/campaigns/:id/archive', requirePermission(PERMISSIONS.CAMPAIGNS_MANAG
 // Campaign Stats
 // ============================================================================
 
-app.get('/campaigns/:id/stats', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/:id/stats', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const stats = campaignService.getStats(orgId, campaignId)
+  const stats = await campaignService.getStats(orgId, campaignId)
   if (!stats) return error(c, 'Campaign not found', 404)
 
   return success(c, {
@@ -349,10 +349,10 @@ app.post('/campaigns/:id/ab/variant', requirePermission(PERMISSIONS.CAMPAIGNS_MA
   const campaignId = c.req.param('id')
   const body = await validateBody(c, ABVariantSchema)
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
 
-  const variant = campaignService.createABVariant(campaignId, body.label || 'A', body.percentage || 50, {
+  const variant = await campaignService.createABVariant(campaignId, body.label || 'A', body.percentage || 50, {
     subject: body.subject,
     templateId: body.template_id,
     senderName: body.sender_name,
@@ -362,14 +362,14 @@ app.post('/campaigns/:id/ab/variant', requirePermission(PERMISSIONS.CAMPAIGNS_MA
   return success(c, variant, 'Variant created', 201)
 })
 
-app.get('/campaigns/:id/ab/variants', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/:id/ab/variants', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
 
-  const variants = campaignService.getABVariants(campaignId)
+  const variants = await campaignService.getABVariants(campaignId)
   return success(c, { variants })
 })
 
@@ -377,7 +377,7 @@ app.post('/campaigns/:id/ab/winner', requirePermission(PERMISSIONS.CAMPAIGNS_MAN
   const campaignId = c.req.param('id')
   const { variant_id } = await validateBody(c, ABWinnerSchema)
 
-  const declared = campaignService.declareWinner(campaignId, variant_id)
+  const declared = await campaignService.declareWinner(campaignId, variant_id)
   if (!declared) return error(c, 'Variant not found', 404)
 
   return success(c, undefined, 'Winner declared')
@@ -421,14 +421,14 @@ app.put('/campaigns/:id/ab/auto-winner', requirePermission(PERMISSIONS.CAMPAIGNS
   const campaignId = c.req.param('id')
   const body = await validateBody(c, ABAutoWinnerSchema)
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
   if (campaign.type !== 'ab_test') return error(c, 'Campaign is not an A/B test', 400)
 
   // Store auto-winner config in ab_config
   const existing = campaign.ab_config ? JSON.parse(campaign.ab_config) : {}
   const updated = { ...existing, auto_winner: true, winner_metric: body.winner_metric, auto_winner_after_hours: body.auto_winner_after_hours }
-  campaignService.update(orgId, campaignId, { ab_config: JSON.stringify(updated) })
+  await campaignService.update(orgId, campaignId, { ab_config: JSON.stringify(updated) })
 
   return success(c, undefined, `Auto-winner configured: declare based on ${body.winner_metric} after ${body.auto_winner_after_hours}h`)
 })
@@ -438,7 +438,7 @@ app.post('/campaigns/:id/ab/check-winner', requirePermission(PERMISSIONS.CAMPAIG
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
   if (campaign.type !== 'ab_test') return error(c, 'Campaign is not an A/B test', 400)
 
@@ -459,7 +459,7 @@ app.post('/campaigns/:id/ab/check-winner', requirePermission(PERMISSIONS.CAMPAIG
   }
 
   // Get variants and their stats
-  const variants = campaignService.getABVariants(campaignId)
+  const variants = await campaignService.getABVariants(campaignId)
   if (variants.length < 2) return error(c, 'Need at least 2 variants', 400)
 
   // Already has a winner?
@@ -488,7 +488,7 @@ app.post('/campaigns/:id/ab/check-winner', requirePermission(PERMISSIONS.CAMPAIG
     }
   }
 
-  campaignService.declareWinner(campaignId, bestVariant.id)
+  await campaignService.declareWinner(campaignId, bestVariant.id)
   logger.info(`[AB] Auto-declared winner for ${campaignId}: variant ${bestVariant.variant_label}`)
 
   return success(c, {
@@ -558,19 +558,19 @@ app.put('/campaigns/:id/rotation', requirePermission(PERMISSIONS.CAMPAIGNS_MANAG
   const campaignId = c.req.param('id')
   const body = await validateBody(c, RotationConfigSchema)
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
 
-  campaignService.update(orgId, campaignId, { rotation_config: JSON.stringify(body) })
+  await campaignService.update(orgId, campaignId, { rotation_config: JSON.stringify(body) })
   return success(c, undefined, `Rotation set to ${body.mode}`)
 })
 
 /** Get rotation config for a campaign */
-app.get('/campaigns/:id/rotation', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/campaigns/:id/rotation', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const campaignId = c.req.param('id')
 
-  const campaign = campaignService.get(orgId, campaignId)
+  const campaign = await campaignService.get(orgId, campaignId)
   if (!campaign) return error(c, 'Campaign not found', 404)
 
   const config = campaign.rotation_config ? JSON.parse(campaign.rotation_config) : { mode: 'smart', config_ids: [], weights: {} }

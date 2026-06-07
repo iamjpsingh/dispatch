@@ -15,6 +15,13 @@
       "when": 1780807952624,
       "tag": "0001_cold_rattler",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780812594778,
+      "tag": "0002_tiny_caretaker",
+      "breakpoints": true
     }
   ]
 }

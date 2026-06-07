@@ -10,10 +10,12 @@
 import app from './src/app'
 import { runMigrations } from './src/db/pg/migrate'
 import { seedSystemRoles } from './src/db/pg/seed'
+import { templateService } from './src/services/templateService'
 
 if (process.env.NODE_ENV !== 'test') {
   await runMigrations()
   await seedSystemRoles()
+  await templateService.seedStarterTemplates()
 }
 
 export default app

@@ -1,8 +1,8 @@
-// src/services/templateService.ts - Email Template CRUD + Management
+// src/services/templateService.ts - Email Template CRUD + Management (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, ilike, or, desc, count, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { templates, template_sections, type TemplateSectionRow } from '../db/pg/schema'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 
@@ -52,81 +52,11 @@ export interface TemplateFilters {
 // ============================================================================
 
 class TemplateService {
-  private db: Database
-
-  constructor() {
-    const dbPath = './data/templates.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-    this.seedStarterTemplates()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS templates (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        category TEXT DEFAULT 'general' CHECK (category IN (
-          'newsletter', 'promotional', 'transactional', 'welcome',
-          'follow_up', 'announcement', 'general'
-        )),
-        subject TEXT,
-        html_content TEXT NOT NULL,
-        text_content TEXT,
-        variables TEXT DEFAULT '[]',
-        is_starter INTEGER DEFAULT 0,
-        version INTEGER DEFAULT 1,
-        parent_id TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_tpl_user ON templates(user_id);
-      CREATE INDEX IF NOT EXISTS idx_tpl_category ON templates(category);
-      CREATE INDEX IF NOT EXISTS idx_tpl_starter ON templates(is_starter);
-    `)
-
-    // Add columns to existing tables (idempotent)
-    try { this.db.exec('ALTER TABLE templates ADD COLUMN org_id TEXT') } catch {}
-    try { this.db.exec('ALTER TABLE templates ADD COLUMN mjml_source TEXT') } catch {}
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_tpl_org ON templates(org_id)')
-
-    // Reusable template sections (headers, footers, CTAs, etc.)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS template_sections (
-        id TEXT PRIMARY KEY,
-        org_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        category TEXT DEFAULT 'general' CHECK (category IN ('header', 'footer', 'cta', 'hero', 'social', 'divider', 'general')),
-        html_content TEXT NOT NULL,
-        thumbnail TEXT,
-        usage_count INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_ts_org ON template_sections(org_id);
-      CREATE INDEX IF NOT EXISTS idx_ts_category ON template_sections(category);
-    `)
-
-    logger.info('Templates database initialized (data/templates.db)')
-  }
-
-  private seedStarterTemplates() {
-    const count = (this.db.prepare('SELECT COUNT(*) as c FROM templates WHERE is_starter = 1').get() as any).c
-    if (count > 0) return
+  /** Idempotently seed system starter templates (org_id null, is_starter 1). Called at boot. */
+  async seedStarterTemplates(): Promise<void> {
+    const db = getDb()
+    const [existing] = await db.select({ value: count() }).from(templates).where(eq(templates.is_starter, 1))
+    if ((existing?.value ?? 0) > 0) return
 
     const starters: { name: string; category: TemplateCategory; subject: string; html: string; description: string }[] = [
       {
@@ -201,129 +131,121 @@ class TemplateService {
       },
     ]
 
-    const stmt = this.db.prepare(`
-      INSERT INTO templates (id, user_id, name, description, category, subject, html_content, variables, is_starter)
-      VALUES (?, '__system__', ?, ?, ?, ?, ?, ?, 1)
-    `)
-
-    const transaction = this.db.transaction(() => {
-      for (let i = 0; i < starters.length; i++) {
-        const s = starters[i]
-        const variables = this.extractVariables(s.html)
-        stmt.run(`starter_${i + 1}`, s.name, s.description, s.category, s.subject, s.html, JSON.stringify(variables))
-      }
-    })
-
-    transaction()
-    logger.debug(`Seeded ${starters.length} starter templates`)
+    const rows = starters.map((s, i) => ({
+      id: `starter_${i + 1}`,
+      user_id: '__system__',
+      name: s.name,
+      description: s.description,
+      category: s.category,
+      subject: s.subject,
+      html_content: s.html,
+      variables: JSON.stringify(this.extractVariables(s.html)),
+      is_starter: 1,
+    }))
+    await db.insert(templates).values(rows).onConflictDoNothing()
+    logger.debug(`Seeded ${rows.length} starter templates`)
   }
 
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(orgId: string, userId: string, input: TemplateInput): Template {
+  async create(orgId: string, userId: string, input: TemplateInput): Promise<Template> {
+    const db = getDb()
     const id = generateId('tpl')
     const variables = this.extractVariables(input.html_content)
 
-    this.db.prepare(`
-      INSERT INTO templates (id, org_id, user_id, name, description, category, subject, html_content, text_content, variables, mjml_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId,
-      input.name,
-      input.description || null,
-      input.category || 'general',
-      input.subject || null,
-      input.html_content,
-      input.text_content || null,
-      JSON.stringify(variables),
-      input.mjml_source || null
-    )
+    await db.insert(templates).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: input.name,
+      description: input.description || null,
+      category: input.category || 'general',
+      subject: input.subject || null,
+      html_content: input.html_content,
+      text_content: input.text_content || null,
+      variables: JSON.stringify(variables),
+      mjml_source: input.mjml_source || null,
+    })
 
-    return this.db.prepare('SELECT * FROM templates WHERE id = ?').get(id) as Template
+    const [row] = await db.select().from(templates).where(eq(templates.id, id)).limit(1)
+    return row as Template
   }
 
-  get(orgId: string, templateId: string): Template | null {
-    return this.db.prepare(`
-      SELECT * FROM templates WHERE id = ? AND (org_id = ? OR is_starter = 1)
-    `).get(templateId, orgId) as Template | null
+  async get(orgId: string, templateId: string): Promise<Template | null> {
+    const [row] = await getDb()
+      .select()
+      .from(templates)
+      .where(and(eq(templates.id, templateId), or(eq(templates.org_id, orgId), eq(templates.is_starter, 1))))
+      .limit(1)
+    return (row as Template) ?? null
   }
 
-  update(orgId: string, templateId: string, updates: Partial<TemplateInput>): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, templateId: string, updates: Partial<TemplateInput>): Promise<boolean> {
+    const values: Partial<typeof templates.$inferInsert> = {}
 
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.description !== undefined) { sets.push('description = ?'); params.push(updates.description) }
-    if (updates.category !== undefined) { sets.push('category = ?'); params.push(updates.category) }
-    if (updates.subject !== undefined) { sets.push('subject = ?'); params.push(updates.subject) }
+    if (updates.name !== undefined) values.name = updates.name
+    if (updates.description !== undefined) values.description = updates.description
+    if (updates.category !== undefined) values.category = updates.category
+    if (updates.subject !== undefined) values.subject = updates.subject
     if (updates.html_content !== undefined) {
-      sets.push('html_content = ?')
-      params.push(updates.html_content)
-      sets.push('variables = ?')
-      params.push(JSON.stringify(this.extractVariables(updates.html_content)))
+      values.html_content = updates.html_content
+      values.variables = JSON.stringify(this.extractVariables(updates.html_content))
     }
-    if (updates.text_content !== undefined) { sets.push('text_content = ?'); params.push(updates.text_content) }
+    if (updates.text_content !== undefined) values.text_content = updates.text_content
 
-    if (sets.length === 0) return false
+    if (Object.keys(values).length === 0) return false
 
-    sets.push("updated_at = datetime('now')")
-    sets.push('version = version + 1')
-    params.push(templateId, orgId)
+    const res = await getDb()
+      .update(templates)
+      .set({ ...values, updated_at: new Date().toISOString(), version: sql`${templates.version} + 1` })
+      .where(and(eq(templates.id, templateId), eq(templates.org_id, orgId)))
+      .returning({ id: templates.id })
 
-    const result = this.db.prepare(`
-      UPDATE templates SET ${sets.join(', ')} WHERE id = ? AND org_id = ?
-    `).run(...params)
-
-    return result.changes > 0
+    return res.length > 0
   }
 
-  delete(orgId: string, templateId: string): boolean {
-    const result = this.db.prepare(`
-      DELETE FROM templates WHERE id = ? AND org_id = ? AND is_starter = 0
-    `).run(templateId, orgId)
-    return result.changes > 0
+  async delete(orgId: string, templateId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(templates)
+      .where(and(eq(templates.id, templateId), eq(templates.org_id, orgId), eq(templates.is_starter, 0)))
+      .returning({ id: templates.id })
+    return res.length > 0
   }
 
-  list(orgId: string, filters: TemplateFilters = {}): { templates: Template[]; total: number } {
+  async list(orgId: string, filters: TemplateFilters = {}): Promise<{ templates: Template[]; total: number }> {
+    const db = getDb()
     const page = filters.page || 1
     const limit = Math.min(filters.limit || 50, 200)
     const offset = (page - 1) * limit
 
-    const conditions: string[] = ['(org_id = ? OR is_starter = 1)']
-    const params: any[] = [orgId]
-
-    if (filters.category) {
-      conditions.push('category = ?')
-      params.push(filters.category)
-    }
-
+    const conditions = [or(eq(templates.org_id, orgId), eq(templates.is_starter, 1))!]
+    if (filters.category) conditions.push(eq(templates.category, filters.category))
     if (filters.search) {
-      conditions.push('(name LIKE ? OR description LIKE ?)')
       const q = `%${filters.search}%`
-      params.push(q, q)
+      conditions.push(or(ilike(templates.name, q), ilike(templates.description, q))!)
     }
+    const where = and(...conditions)
 
-    const where = conditions.join(' AND ')
+    const [tot] = await db.select({ value: count() }).from(templates).where(where)
+    const rows = await db
+      .select()
+      .from(templates)
+      .where(where)
+      .orderBy(desc(templates.is_starter), desc(templates.updated_at))
+      .limit(limit)
+      .offset(offset)
 
-    const total = (this.db.prepare(`SELECT COUNT(*) as count FROM templates WHERE ${where}`).get(...params) as any).count
-
-    const templates = this.db.prepare(`
-      SELECT * FROM templates WHERE ${where}
-      ORDER BY is_starter DESC, updated_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset) as Template[]
-
-    return { templates, total }
+    return { templates: rows as Template[], total: tot?.value ?? 0 }
   }
 
   // --------------------------------------------------------------------------
   // Operations
   // --------------------------------------------------------------------------
 
-  duplicate(orgId: string, userId: string, templateId: string, newName: string): Template | null {
-    const original = this.get(orgId, templateId)
+  async duplicate(orgId: string, userId: string, templateId: string, newName: string): Promise<Template | null> {
+    const original = await this.get(orgId, templateId)
     if (!original) return null
 
     return this.create(orgId, userId, {
@@ -363,56 +285,68 @@ class TemplateService {
   /**
    * Get starter templates only
    */
-  getStarterTemplates(): Template[] {
-    return this.db.prepare(`
-      SELECT * FROM templates WHERE is_starter = 1 ORDER BY category, name
-    `).all() as Template[]
+  async getStarterTemplates(): Promise<Template[]> {
+    const rows = await getDb()
+      .select()
+      .from(templates)
+      .where(eq(templates.is_starter, 1))
+      .orderBy(templates.category, templates.name)
+    return rows as Template[]
   }
 
   // --------------------------------------------------------------------------
   // Multi-Language Support
   // --------------------------------------------------------------------------
 
-  createTranslation(orgId: string, userId: string, templateId: string, language: string, input: TemplateInput): Template | null {
-    const parent = this.get(orgId, templateId)
+  async createTranslation(orgId: string, userId: string, templateId: string, language: string, input: TemplateInput): Promise<Template | null> {
+    const db = getDb()
+    const parent = await this.get(orgId, templateId)
     if (!parent) return null
 
     const id = generateId('tpl')
     const variables = this.extractVariables(input.html_content)
 
-    this.db.prepare(`
-      INSERT INTO templates (id, org_id, user_id, name, description, category, subject, html_content, text_content, variables, parent_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId,
-      `${input.name} [${language.toUpperCase()}]`,
-      input.description || `${language} translation of ${parent.name}`,
-      parent.category,
-      input.subject || parent.subject,
-      input.html_content,
-      input.text_content || null,
-      JSON.stringify(variables),
-      templateId
-    )
+    await db.insert(templates).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: `${input.name} [${language.toUpperCase()}]`,
+      description: input.description || `${language} translation of ${parent.name}`,
+      category: parent.category,
+      subject: input.subject || parent.subject,
+      html_content: input.html_content,
+      text_content: input.text_content || null,
+      variables: JSON.stringify(variables),
+      parent_id: templateId,
+    })
 
-    return this.db.prepare('SELECT * FROM templates WHERE id = ?').get(id) as Template
+    const [row] = await db.select().from(templates).where(eq(templates.id, id)).limit(1)
+    return row as Template
   }
 
-  getTranslations(orgId: string, templateId: string): Template[] {
-    return this.db.prepare(`
-      SELECT * FROM templates WHERE parent_id = ? AND (org_id = ? OR is_starter = 1)
-      ORDER BY name ASC
-    `).all(templateId, orgId) as Template[]
+  async getTranslations(orgId: string, templateId: string): Promise<Template[]> {
+    const rows = await getDb()
+      .select()
+      .from(templates)
+      .where(and(eq(templates.parent_id, templateId), or(eq(templates.org_id, orgId), eq(templates.is_starter, 1))))
+      .orderBy(templates.name)
+    return rows as Template[]
   }
 
-  getTemplateForLanguage(orgId: string, templateId: string, language: string): Template | null {
+  async getTemplateForLanguage(orgId: string, templateId: string, language: string): Promise<Template | null> {
     // Try to find translation matching the language code in the name suffix
     const langTag = `[${language.toUpperCase()}]`
-    const translation = this.db.prepare(`
-      SELECT * FROM templates WHERE parent_id = ? AND (org_id = ? OR is_starter = 1) AND name LIKE ?
-    `).get(templateId, orgId, `%${langTag}`) as Template | null
+    const [translation] = await getDb()
+      .select()
+      .from(templates)
+      .where(and(
+        eq(templates.parent_id, templateId),
+        or(eq(templates.org_id, orgId), eq(templates.is_starter, 1)),
+        ilike(templates.name, `%${langTag}`),
+      ))
+      .limit(1)
 
-    if (translation) return translation
+    if (translation) return translation as Template
 
     // Fallback to the original template
     return this.get(orgId, templateId)
@@ -422,46 +356,59 @@ class TemplateService {
   // Reusable Template Sections
   // --------------------------------------------------------------------------
 
-  createSection(orgId: string, userId: string, input: { name: string; category?: string; html_content: string }): any {
+  async createSection(orgId: string, userId: string, input: { name: string; category?: string; html_content: string }): Promise<TemplateSectionRow> {
+    const db = getDb()
     const id = generateId('sec')
-    this.db.prepare(`
-      INSERT INTO template_sections (id, org_id, user_id, name, category, html_content)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, orgId, userId, input.name, input.category || 'general', input.html_content)
-    return this.db.prepare('SELECT * FROM template_sections WHERE id = ?').get(id)
+    await db.insert(template_sections).values({ id, org_id: orgId, user_id: userId, name: input.name, category: input.category || 'general', html_content: input.html_content })
+    const [row] = await db.select().from(template_sections).where(eq(template_sections.id, id)).limit(1)
+    return row
   }
 
-  listSections(orgId: string, category?: string): any[] {
-    if (category) {
-      return this.db.prepare('SELECT * FROM template_sections WHERE org_id = ? AND category = ? ORDER BY usage_count DESC, created_at DESC').all(orgId, category) as any[]
-    }
-    return this.db.prepare('SELECT * FROM template_sections WHERE org_id = ? ORDER BY usage_count DESC, created_at DESC').all(orgId) as any[]
+  async listSections(orgId: string, category?: string): Promise<TemplateSectionRow[]> {
+    const where = category
+      ? and(eq(template_sections.org_id, orgId), eq(template_sections.category, category))
+      : eq(template_sections.org_id, orgId)
+    return getDb()
+      .select()
+      .from(template_sections)
+      .where(where)
+      .orderBy(desc(template_sections.usage_count), desc(template_sections.created_at))
   }
 
-  getSection(orgId: string, sectionId: string): any {
-    return this.db.prepare('SELECT * FROM template_sections WHERE id = ? AND org_id = ?').get(sectionId, orgId)
+  async getSection(orgId: string, sectionId: string): Promise<TemplateSectionRow | null> {
+    const [row] = await getDb()
+      .select()
+      .from(template_sections)
+      .where(and(eq(template_sections.id, sectionId), eq(template_sections.org_id, orgId)))
+      .limit(1)
+    return row ?? null
   }
 
-  updateSection(orgId: string, sectionId: string, updates: { name?: string; category?: string; html_content?: string }): boolean {
-    const sets: string[] = []
-    const params: any[] = []
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.category !== undefined) { sets.push('category = ?'); params.push(updates.category) }
-    if (updates.html_content !== undefined) { sets.push('html_content = ?'); params.push(updates.html_content) }
-    if (sets.length === 0) return false
-    sets.push("updated_at = datetime('now')")
-    params.push(sectionId, orgId)
-    const result = this.db.prepare(`UPDATE template_sections SET ${sets.join(', ')} WHERE id = ? AND org_id = ?`).run(...params)
-    return result.changes > 0
+  async updateSection(orgId: string, sectionId: string, updates: { name?: string; category?: string; html_content?: string }): Promise<boolean> {
+    const values: Partial<typeof template_sections.$inferInsert> = {}
+    if (updates.name !== undefined) values.name = updates.name
+    if (updates.category !== undefined) values.category = updates.category
+    if (updates.html_content !== undefined) values.html_content = updates.html_content
+    if (Object.keys(values).length === 0) return false
+    values.updated_at = new Date().toISOString()
+    const res = await getDb()
+      .update(template_sections)
+      .set(values)
+      .where(and(eq(template_sections.id, sectionId), eq(template_sections.org_id, orgId)))
+      .returning({ id: template_sections.id })
+    return res.length > 0
   }
 
-  deleteSection(orgId: string, sectionId: string): boolean {
-    const result = this.db.prepare('DELETE FROM template_sections WHERE id = ? AND org_id = ?').run(sectionId, orgId)
-    return result.changes > 0
+  async deleteSection(orgId: string, sectionId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(template_sections)
+      .where(and(eq(template_sections.id, sectionId), eq(template_sections.org_id, orgId)))
+      .returning({ id: template_sections.id })
+    return res.length > 0
   }
 
-  incrementSectionUsage(sectionId: string): void {
-    this.db.prepare('UPDATE template_sections SET usage_count = usage_count + 1 WHERE id = ?').run(sectionId)
+  async incrementSectionUsage(sectionId: string): Promise<void> {
+    await getDb().update(template_sections).set({ usage_count: sql`${template_sections.usage_count} + 1` }).where(eq(template_sections.id, sectionId))
   }
 }
 

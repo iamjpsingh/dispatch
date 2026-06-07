@@ -1,10 +1,9 @@
-// src/services/campaignService.ts - Campaign Lifecycle Management
+// src/services/campaignService.ts - Campaign Lifecycle Management (Postgres/Drizzle, async)
 
-import Database from 'bun:sqlite'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { and, eq, ilike, or, inArray, desc, count, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { campaigns, ab_variants } from '../db/pg/schema'
 import { eventBus } from './eventBus'
-import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 
 // ============================================================================
@@ -32,6 +31,7 @@ export interface CampaignRecord {
   folder: string | null
   draft_data: string | null // JSON
   ab_config: string | null // JSON
+  rotation_config: string | null // JSON
   batch_size: number
   email_delay: number
   batch_delay: number
@@ -92,254 +92,171 @@ export interface ABVariant {
   created_at: string
 }
 
+type StatField = 'sent_count' | 'failed_count' | 'open_count' | 'click_count' | 'bounce_count' | 'unsubscribe_count'
+const STAT_COLUMNS = {
+  sent_count: campaigns.sent_count,
+  failed_count: campaigns.failed_count,
+  open_count: campaigns.open_count,
+  click_count: campaigns.click_count,
+  bounce_count: campaigns.bounce_count,
+  unsubscribe_count: campaigns.unsubscribe_count,
+} as const
+
+const now = () => new Date().toISOString()
+
 // ============================================================================
 // Service
 // ============================================================================
 
 class CampaignService {
-  private db: Database
-
-  constructor() {
-    const dbPath = './data/campaigns.db'
-    const dbDir = dirname(dbPath)
-
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true })
-    }
-
-    this.db = new Database(dbPath)
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec('PRAGMA busy_timeout=5000')
-    this.initSchema()
-  }
-
-  private initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS campaigns (
-        id TEXT PRIMARY KEY,
-        org_id TEXT,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        type TEXT DEFAULT 'one_time' CHECK (type IN ('one_time', 'recurring', 'ab_test', 'automation')),
-        status TEXT DEFAULT 'draft' CHECK (status IN (
-          'draft', 'testing', 'scheduled', 'sending', 'paused', 'completed', 'cancelled', 'archived'
-        )),
-        template_id TEXT,
-        list_id TEXT,
-        segment_id TEXT,
-        subject TEXT NOT NULL,
-        from_name TEXT NOT NULL,
-        from_email TEXT NOT NULL,
-        reply_to TEXT,
-        tags TEXT DEFAULT '[]',
-        folder TEXT,
-        draft_data TEXT,
-        ab_config TEXT,
-        batch_size INTEGER DEFAULT 20,
-        email_delay INTEGER DEFAULT 45,
-        batch_delay INTEGER DEFAULT 60,
-        total_recipients INTEGER DEFAULT 0,
-        sent_count INTEGER DEFAULT 0,
-        failed_count INTEGER DEFAULT 0,
-        open_count INTEGER DEFAULT 0,
-        click_count INTEGER DEFAULT 0,
-        bounce_count INTEGER DEFAULT 0,
-        unsubscribe_count INTEGER DEFAULT 0,
-        job_id TEXT,
-        scheduled_at TEXT,
-        sent_at TEXT,
-        completed_at TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_camp_user ON campaigns(user_id);
-      CREATE INDEX IF NOT EXISTS idx_camp_status ON campaigns(status);
-      CREATE INDEX IF NOT EXISTS idx_camp_type ON campaigns(type);
-      CREATE INDEX IF NOT EXISTS idx_camp_scheduled ON campaigns(scheduled_at) WHERE status = 'scheduled';
-
-      CREATE TABLE IF NOT EXISTS ab_variants (
-        id TEXT PRIMARY KEY,
-        campaign_id TEXT NOT NULL,
-        variant_label TEXT NOT NULL,
-        subject TEXT,
-        template_id TEXT,
-        sender_name TEXT,
-        sender_email TEXT,
-        percentage INTEGER NOT NULL,
-        sent_count INTEGER DEFAULT 0,
-        open_count INTEGER DEFAULT 0,
-        click_count INTEGER DEFAULT 0,
-        is_winner INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_ab_campaign ON ab_variants(campaign_id);
-    `)
-
-    // Add columns to existing tables (idempotent)
-    try { this.db.exec('ALTER TABLE campaigns ADD COLUMN org_id TEXT') } catch {}
-    try { this.db.exec('ALTER TABLE campaigns ADD COLUMN rotation_config TEXT') } catch {}
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_camp_org ON campaigns(org_id)')
-
-    logger.info('Campaigns database initialized (data/campaigns.db)')
-  }
-
   // --------------------------------------------------------------------------
   // CRUD
   // --------------------------------------------------------------------------
 
-  create(orgId: string, userId: string, input: CampaignInput): CampaignRecord {
+  async create(orgId: string, userId: string, input: CampaignInput): Promise<CampaignRecord> {
+    const db = getDb()
     const id = generateId('camp')
 
-    this.db.prepare(`
-      INSERT INTO campaigns (id, org_id, user_id, name, type, subject, from_name, from_email, reply_to, template_id, list_id, segment_id, tags, folder, batch_size, email_delay, batch_delay)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId, input.name,
-      input.type || 'one_time',
-      input.subject, input.from_name, input.from_email,
-      input.reply_to || null,
-      input.template_id || null,
-      input.list_id || null,
-      input.segment_id || null,
-      JSON.stringify(input.tags || []),
-      input.folder || null,
-      input.batch_size || 20,
-      input.email_delay || 45,
-      input.batch_delay || 60
-    )
+    await db.insert(campaigns).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: input.name,
+      type: input.type || 'one_time',
+      subject: input.subject,
+      from_name: input.from_name,
+      from_email: input.from_email,
+      reply_to: input.reply_to || null,
+      template_id: input.template_id || null,
+      list_id: input.list_id || null,
+      segment_id: input.segment_id || null,
+      tags: JSON.stringify(input.tags || []),
+      folder: input.folder || null,
+      batch_size: input.batch_size || 20,
+      email_delay: input.email_delay || 45,
+      batch_delay: input.batch_delay || 60,
+    })
 
-    return this.db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as CampaignRecord
+    const [row] = await db.select().from(campaigns).where(eq(campaigns.id, id)).limit(1)
+    return row as CampaignRecord
   }
 
-  get(orgId: string, campaignId: string): CampaignRecord | null {
-    return this.db.prepare(`
-      SELECT * FROM campaigns WHERE id = ? AND org_id = ?
-    `).get(campaignId, orgId) as CampaignRecord | null
+  async get(orgId: string, campaignId: string): Promise<CampaignRecord | null> {
+    const [row] = await getDb()
+      .select()
+      .from(campaigns)
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.org_id, orgId)))
+      .limit(1)
+    return (row as CampaignRecord) ?? null
   }
 
-  update(orgId: string, campaignId: string, updates: Partial<CampaignInput>): boolean {
-    const sets: string[] = []
-    const params: any[] = []
+  async update(orgId: string, campaignId: string, updates: Partial<CampaignInput> & { ab_config?: string; rotation_config?: string }): Promise<boolean> {
+    const u = updates
+    const values: Partial<typeof campaigns.$inferInsert> = {}
 
-    if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name) }
-    if (updates.type !== undefined) { sets.push('type = ?'); params.push(updates.type) }
-    if (updates.subject !== undefined) { sets.push('subject = ?'); params.push(updates.subject) }
-    if (updates.from_name !== undefined) { sets.push('from_name = ?'); params.push(updates.from_name) }
-    if (updates.from_email !== undefined) { sets.push('from_email = ?'); params.push(updates.from_email) }
-    if (updates.reply_to !== undefined) { sets.push('reply_to = ?'); params.push(updates.reply_to) }
-    if (updates.template_id !== undefined) { sets.push('template_id = ?'); params.push(updates.template_id) }
-    if (updates.list_id !== undefined) { sets.push('list_id = ?'); params.push(updates.list_id) }
-    if (updates.segment_id !== undefined) { sets.push('segment_id = ?'); params.push(updates.segment_id) }
-    if (updates.tags !== undefined) { sets.push('tags = ?'); params.push(JSON.stringify(updates.tags)) }
-    if (updates.folder !== undefined) { sets.push('folder = ?'); params.push(updates.folder) }
-    if (updates.batch_size !== undefined) { sets.push('batch_size = ?'); params.push(updates.batch_size) }
-    if (updates.email_delay !== undefined) { sets.push('email_delay = ?'); params.push(updates.email_delay) }
-    if (updates.batch_delay !== undefined) { sets.push('batch_delay = ?'); params.push(updates.batch_delay) }
-    if ((updates as any).ab_config !== undefined) { sets.push('ab_config = ?'); params.push((updates as any).ab_config) }
-    if ((updates as any).rotation_config !== undefined) { sets.push('rotation_config = ?'); params.push((updates as any).rotation_config) }
+    if (u.name !== undefined) values.name = u.name
+    if (u.type !== undefined) values.type = u.type
+    if (u.subject !== undefined) values.subject = u.subject
+    if (u.from_name !== undefined) values.from_name = u.from_name
+    if (u.from_email !== undefined) values.from_email = u.from_email
+    if (u.reply_to !== undefined) values.reply_to = u.reply_to
+    if (u.template_id !== undefined) values.template_id = u.template_id
+    if (u.list_id !== undefined) values.list_id = u.list_id
+    if (u.segment_id !== undefined) values.segment_id = u.segment_id
+    if (u.tags !== undefined) values.tags = JSON.stringify(u.tags)
+    if (u.folder !== undefined) values.folder = u.folder
+    if (u.batch_size !== undefined) values.batch_size = u.batch_size
+    if (u.email_delay !== undefined) values.email_delay = u.email_delay
+    if (u.batch_delay !== undefined) values.batch_delay = u.batch_delay
+    if (u.ab_config !== undefined) values.ab_config = u.ab_config
+    if (u.rotation_config !== undefined) values.rotation_config = u.rotation_config
 
-    if (sets.length === 0) return false
+    if (Object.keys(values).length === 0) return false
 
-    sets.push("updated_at = datetime('now')")
-    params.push(campaignId, orgId)
+    values.updated_at = now()
 
-    const result = this.db.prepare(`
-      UPDATE campaigns SET ${sets.join(', ')} WHERE id = ? AND org_id = ? AND status IN ('draft', 'testing')
-    `).run(...params)
-
-    return result.changes > 0
+    // Only editable while in draft/testing (matches original gate).
+    const res = await getDb()
+      .update(campaigns)
+      .set(values)
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.org_id, orgId), inArray(campaigns.status, ['draft', 'testing'])))
+      .returning({ id: campaigns.id })
+    return res.length > 0
   }
 
-  delete(orgId: string, campaignId: string): boolean {
-    const result = this.db.prepare(`
-      DELETE FROM campaigns WHERE id = ? AND org_id = ? AND status IN ('draft', 'cancelled', 'archived')
-    `).run(campaignId, orgId)
-    return result.changes > 0
+  async delete(orgId: string, campaignId: string): Promise<boolean> {
+    const res = await getDb()
+      .delete(campaigns)
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.org_id, orgId), inArray(campaigns.status, ['draft', 'cancelled', 'archived'])))
+      .returning({ id: campaigns.id })
+    return res.length > 0
   }
 
-  list(orgId: string, filters: CampaignFilters = {}): { campaigns: CampaignRecord[]; total: number } {
+  async list(orgId: string, filters: CampaignFilters = {}): Promise<{ campaigns: CampaignRecord[]; total: number }> {
+    const db = getDb()
     const page = filters.page || 1
     const limit = Math.min(filters.limit || 20, 100)
     const offset = (page - 1) * limit
 
-    const conditions: string[] = ['org_id = ?']
-    const params: any[] = [orgId]
-
-    if (filters.status) {
-      conditions.push('status = ?')
-      params.push(filters.status)
-    }
-    if (filters.type) {
-      conditions.push('type = ?')
-      params.push(filters.type)
-    }
-    if (filters.folder) {
-      conditions.push('folder = ?')
-      params.push(filters.folder)
-    }
+    const conditions = [eq(campaigns.org_id, orgId)]
+    if (filters.status) conditions.push(eq(campaigns.status, filters.status))
+    if (filters.type) conditions.push(eq(campaigns.type, filters.type))
+    if (filters.folder) conditions.push(eq(campaigns.folder, filters.folder))
     if (filters.search) {
-      conditions.push('(name LIKE ? OR subject LIKE ?)')
       const q = `%${filters.search}%`
-      params.push(q, q)
+      conditions.push(or(ilike(campaigns.name, q), ilike(campaigns.subject, q))!)
     }
+    const where = and(...conditions)
 
-    const where = conditions.join(' AND ')
+    const [tot] = await db.select({ value: count() }).from(campaigns).where(where)
+    const rows = await db.select().from(campaigns).where(where).orderBy(desc(campaigns.updated_at)).limit(limit).offset(offset)
 
-    const total = (this.db.prepare(`SELECT COUNT(*) as count FROM campaigns WHERE ${where}`).get(...params) as any).count
-
-    const campaigns = this.db.prepare(`
-      SELECT * FROM campaigns WHERE ${where}
-      ORDER BY updated_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset) as CampaignRecord[]
-
-    return { campaigns, total }
+    return { campaigns: rows as CampaignRecord[], total: tot?.value ?? 0 }
   }
 
   // --------------------------------------------------------------------------
   // Lifecycle
   // --------------------------------------------------------------------------
 
-  saveDraft(orgId: string, campaignId: string, draftData: unknown): boolean {
-    const result = this.db.prepare(`
-      UPDATE campaigns SET draft_data = ?, updated_at = datetime('now')
-      WHERE id = ? AND org_id = ?
-    `).run(JSON.stringify(draftData), campaignId, orgId)
-    return result.changes > 0
+  async saveDraft(orgId: string, campaignId: string, draftData: unknown): Promise<boolean> {
+    const res = await getDb()
+      .update(campaigns)
+      .set({ draft_data: JSON.stringify(draftData), updated_at: now() })
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.org_id, orgId)))
+      .returning({ id: campaigns.id })
+    return res.length > 0
   }
 
-  setStatus(orgId: string, campaignId: string, status: CampaignLifecycleStatus): boolean {
-    const extra: string[] = []
-    if (status === 'sending') extra.push("sent_at = datetime('now')")
-    if (status === 'completed') extra.push("completed_at = datetime('now')")
+  async setStatus(orgId: string, campaignId: string, status: CampaignLifecycleStatus): Promise<boolean> {
+    const values: Partial<typeof campaigns.$inferInsert> = { status, updated_at: now() }
+    if (status === 'sending') values.sent_at = now()
+    if (status === 'completed') values.completed_at = now()
 
-    const setClause = [`status = ?`, "updated_at = datetime('now')", ...extra].join(', ')
+    const res = await getDb()
+      .update(campaigns)
+      .set(values)
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.org_id, orgId)))
+      .returning({ id: campaigns.id })
 
-    const result = this.db.prepare(`
-      UPDATE campaigns SET ${setClause} WHERE id = ? AND org_id = ?
-    `).run(status, campaignId, orgId)
-
-    if (result.changes > 0) {
+    if (res.length > 0) {
       if (status === 'sending') eventBus.emit('campaign_launched', orgId, { campaignId })
       if (status === 'completed') eventBus.emit('campaign_completed', orgId, { campaignId })
     }
 
-    return result.changes > 0
+    return res.length > 0
   }
 
-  schedule(orgId: string, campaignId: string, scheduledAt: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE campaigns SET status = 'scheduled', scheduled_at = ?, updated_at = datetime('now')
-      WHERE id = ? AND org_id = ? AND status IN ('draft', 'testing')
-    `).run(scheduledAt, campaignId, orgId)
-    return result.changes > 0
+  async schedule(orgId: string, campaignId: string, scheduledAt: string): Promise<boolean> {
+    const res = await getDb()
+      .update(campaigns)
+      .set({ status: 'scheduled', scheduled_at: scheduledAt, updated_at: now() })
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.org_id, orgId), inArray(campaigns.status, ['draft', 'testing'])))
+      .returning({ id: campaigns.id })
+    return res.length > 0
   }
 
-  clone(orgId: string, userId: string, campaignId: string): CampaignRecord | null {
-    const original = this.get(orgId, campaignId)
+  async clone(orgId: string, userId: string, campaignId: string): Promise<CampaignRecord | null> {
+    const original = await this.get(orgId, campaignId)
     if (!original) return null
 
     return this.create(orgId, userId, {
@@ -363,25 +280,23 @@ class CampaignService {
   // Stats
   // --------------------------------------------------------------------------
 
-  updateStats(campaignId: string, field: 'sent_count' | 'failed_count' | 'open_count' | 'click_count' | 'bounce_count' | 'unsubscribe_count', increment = 1): void {
-    this.db.prepare(`
-      UPDATE campaigns SET ${field} = ${field} + ?, updated_at = datetime('now') WHERE id = ?
-    `).run(increment, campaignId)
+  async updateStats(campaignId: string, field: StatField, increment = 1): Promise<void> {
+    const col = STAT_COLUMNS[field]
+    await getDb()
+      .update(campaigns)
+      .set({ [field]: sql`${col} + ${increment}`, updated_at: now() })
+      .where(eq(campaigns.id, campaignId))
   }
 
-  setTotalRecipients(campaignId: string, total: number): void {
-    this.db.prepare(`
-      UPDATE campaigns SET total_recipients = ?, updated_at = datetime('now') WHERE id = ?
-    `).run(total, campaignId)
+  async setTotalRecipients(campaignId: string, total: number): Promise<void> {
+    await getDb().update(campaigns).set({ total_recipients: total, updated_at: now() }).where(eq(campaigns.id, campaignId))
   }
 
-  setJobId(campaignId: string, jobId: string): void {
-    this.db.prepare(`
-      UPDATE campaigns SET job_id = ?, updated_at = datetime('now') WHERE id = ?
-    `).run(jobId, campaignId)
+  async setJobId(campaignId: string, jobId: string): Promise<void> {
+    await getDb().update(campaigns).set({ job_id: jobId, updated_at: now() }).where(eq(campaigns.id, campaignId))
   }
 
-  getStats(orgId: string, campaignId: string): CampaignRecord | null {
+  async getStats(orgId: string, campaignId: string): Promise<CampaignRecord | null> {
     return this.get(orgId, campaignId)
   }
 
@@ -389,49 +304,66 @@ class CampaignService {
   // A/B Testing
   // --------------------------------------------------------------------------
 
-  createABVariant(campaignId: string, label: string, percentage: number, opts: { subject?: string; templateId?: string; senderName?: string; senderEmail?: string } = {}): ABVariant {
+  async createABVariant(campaignId: string, label: string, percentage: number, opts: { subject?: string; templateId?: string; senderName?: string; senderEmail?: string } = {}): Promise<ABVariant> {
+    const db = getDb()
     const id = generateId('var')
 
-    this.db.prepare(`
-      INSERT INTO ab_variants (id, campaign_id, variant_label, subject, template_id, sender_name, sender_email, percentage)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, campaignId, label, opts.subject || null, opts.templateId || null, opts.senderName || null, opts.senderEmail || null, percentage)
+    await db.insert(ab_variants).values({
+      id,
+      campaign_id: campaignId,
+      variant_label: label,
+      subject: opts.subject || null,
+      template_id: opts.templateId || null,
+      sender_name: opts.senderName || null,
+      sender_email: opts.senderEmail || null,
+      percentage,
+    })
 
-    return this.db.prepare('SELECT * FROM ab_variants WHERE id = ?').get(id) as ABVariant
+    const [row] = await db.select().from(ab_variants).where(eq(ab_variants.id, id)).limit(1)
+    return row as ABVariant
   }
 
-  getABVariants(campaignId: string): ABVariant[] {
-    return this.db.prepare(`
-      SELECT * FROM ab_variants WHERE campaign_id = ? ORDER BY variant_label
-    `).all(campaignId) as ABVariant[]
+  async getABVariants(campaignId: string): Promise<ABVariant[]> {
+    const rows = await getDb()
+      .select()
+      .from(ab_variants)
+      .where(eq(ab_variants.campaign_id, campaignId))
+      .orderBy(ab_variants.variant_label)
+    return rows as ABVariant[]
   }
 
-  declareWinner(campaignId: string, variantId: string): boolean {
-    this.db.prepare(`UPDATE ab_variants SET is_winner = 0 WHERE campaign_id = ?`).run(campaignId)
-    const result = this.db.prepare(`UPDATE ab_variants SET is_winner = 1 WHERE id = ? AND campaign_id = ?`).run(variantId, campaignId)
-    return result.changes > 0
+  async declareWinner(campaignId: string, variantId: string): Promise<boolean> {
+    const db = getDb()
+    await db.update(ab_variants).set({ is_winner: 0 }).where(eq(ab_variants.campaign_id, campaignId))
+    const res = await db
+      .update(ab_variants)
+      .set({ is_winner: 1 })
+      .where(and(eq(ab_variants.id, variantId), eq(ab_variants.campaign_id, campaignId)))
+      .returning({ id: ab_variants.id })
+    return res.length > 0
   }
 
   /**
    * Get dashboard overview for campaigns
    */
-  getDashboardStats(orgId: string): { total: number; drafts: number; sending: number; completed: number; scheduled: number } {
-    const row = this.db.prepare(`
-      SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as drafts,
-        SUM(CASE WHEN status = 'sending' THEN 1 ELSE 0 END) as sending,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END) as scheduled
-      FROM campaigns WHERE org_id = ?
-    `).get(orgId) as any
+  async getDashboardStats(orgId: string): Promise<{ total: number; drafts: number; sending: number; completed: number; scheduled: number }> {
+    const [row] = await getDb()
+      .select({
+        total: count(),
+        drafts: sql<number>`sum(case when ${campaigns.status} = 'draft' then 1 else 0 end)::int`,
+        sending: sql<number>`sum(case when ${campaigns.status} = 'sending' then 1 else 0 end)::int`,
+        completed: sql<number>`sum(case when ${campaigns.status} = 'completed' then 1 else 0 end)::int`,
+        scheduled: sql<number>`sum(case when ${campaigns.status} = 'scheduled' then 1 else 0 end)::int`,
+      })
+      .from(campaigns)
+      .where(eq(campaigns.org_id, orgId))
 
     return {
-      total: row.total || 0,
-      drafts: row.drafts || 0,
-      sending: row.sending || 0,
-      completed: row.completed || 0,
-      scheduled: row.scheduled || 0,
+      total: row?.total ?? 0,
+      drafts: row?.drafts ?? 0,
+      sending: row?.sending ?? 0,
+      completed: row?.completed ?? 0,
+      scheduled: row?.scheduled ?? 0,
     }
   }
 }

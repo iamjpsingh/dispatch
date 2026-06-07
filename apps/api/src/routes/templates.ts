@@ -45,7 +45,7 @@ const app = new Hono()
 // Template CRUD
 // ============================================================================
 
-app.get('/templates', requirePermission(PERMISSIONS.TEMPLATES_VIEW), (c) => {
+app.get('/templates', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
   const orgId = getOrgId(c)
 
   const filters = {
@@ -55,7 +55,7 @@ app.get('/templates', requirePermission(PERMISSIONS.TEMPLATES_VIEW), (c) => {
     limit: parseInt(c.req.query('limit') || '50'),
   }
 
-  const { templates, total } = templateService.list(orgId, filters)
+  const { templates, total } = await templateService.list(orgId, filters)
 
   return c.json({
     success: true,
@@ -77,22 +77,22 @@ app.post('/templates', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async (c
   const orgId = getOrgId(c)
   const body = await validateBody(c, CreateTemplateSchema)
 
-  const template = templateService.create(orgId, user.id, body)
+  const template = await templateService.create(orgId, user.id, body)
   return success(c, template, 'Template created', 201)
 })
 
-app.get('/templates/starters', (c) => {
-  const starters = templateService.getStarterTemplates()
+app.get('/templates/starters', async (c) => {
+  const starters = await templateService.getStarterTemplates()
   return success(c, { templates: starters })
 })
 
-app.get('/templates/:id', requirePermission(PERMISSIONS.TEMPLATES_VIEW), (c) => {
+app.get('/templates/:id', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const templateId = c.req.param('id')
 
   if (templateId === 'starters') return c.notFound()
 
-  const template = templateService.get(orgId, templateId)
+  const template = await templateService.get(orgId, templateId)
   if (!template) return error(c, 'Template not found', 404)
 
   return success(c, template)
@@ -103,17 +103,17 @@ app.put('/templates/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async
   const templateId = c.req.param('id')
   const body = await validateBody(c, UpdateTemplateSchema)
 
-  const updated = templateService.update(orgId, templateId, body)
+  const updated = await templateService.update(orgId, templateId, body)
   if (!updated) return error(c, 'Template not found or is a starter template', 404)
 
   return success(c, undefined, 'Template updated')
 })
 
-app.delete('/templates/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), (c) => {
+app.delete('/templates/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const templateId = c.req.param('id')
 
-  const deleted = templateService.delete(orgId, templateId)
+  const deleted = await templateService.delete(orgId, templateId)
   if (!deleted) return error(c, 'Template not found or cannot be deleted', 404)
 
   return success(c, undefined, 'Template deleted')
@@ -130,7 +130,7 @@ app.post('/templates/:id/duplicate', requirePermission(PERMISSIONS.TEMPLATES_MAN
   const body = await c.req.json().catch(() => ({}))
   const newName = body.name || 'Copy'
 
-  const duplicate = templateService.duplicate(orgId, user.id, templateId, newName)
+  const duplicate = await templateService.duplicate(orgId, user.id, templateId, newName)
   if (!duplicate) return error(c, 'Template not found', 404)
 
   return success(c, duplicate, 'Template duplicated', 201)
@@ -141,7 +141,7 @@ app.post('/templates/:id/preview', requirePermission(PERMISSIONS.TEMPLATES_VIEW)
   const templateId = c.req.param('id')
   const body = await validateBody(c, PreviewSchema)
 
-  const template = templateService.get(orgId, templateId)
+  const template = await templateService.get(orgId, templateId)
   if (!template) return error(c, 'Template not found', 404)
 
   const rendered = templateService.renderPreview(template.html_content, body.data || {})
@@ -169,7 +169,7 @@ app.post('/templates/:id/test-send', requirePermission(PERMISSIONS.TEMPLATES_MAN
   const recipientEmail = to || user.email
   if (!recipientEmail) return error(c, 'Recipient email is required', 400)
 
-  const template = templateService.get(orgId, templateId)
+  const template = await templateService.get(orgId, templateId)
   if (!template) return error(c, 'Template not found', 404)
 
   // Render template with test data
@@ -224,10 +224,10 @@ const SectionSchema = z.object({
   html_content: z.string().min(1, 'HTML content is required'),
 })
 
-app.get('/templates/sections', requirePermission(PERMISSIONS.TEMPLATES_VIEW), (c) => {
+app.get('/templates/sections', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const category = c.req.query('category')
-  const sections = templateService.listSections(orgId, category || undefined)
+  const sections = await templateService.listSections(orgId, category || undefined)
   return success(c, { sections })
 })
 
@@ -235,13 +235,13 @@ app.post('/templates/sections', requirePermission(PERMISSIONS.TEMPLATES_MANAGE),
   const user = requireAuth(c)
   const orgId = getOrgId(c)
   const body = await validateBody(c, SectionSchema)
-  const section = templateService.createSection(orgId, user.id, body)
+  const section = await templateService.createSection(orgId, user.id, body)
   return success(c, section, 'Section created', 201)
 })
 
-app.get('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_VIEW), (c) => {
+app.get('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const section = templateService.getSection(orgId, c.req.param('id'))
+  const section = await templateService.getSection(orgId, c.req.param('id'))
   if (!section) return error(c, 'Section not found', 404)
   return success(c, section)
 })
@@ -249,23 +249,23 @@ app.get('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_VIEW)
 app.put('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const body = await validateBody(c, SectionSchema.partial())
-  const updated = templateService.updateSection(orgId, c.req.param('id'), body)
+  const updated = await templateService.updateSection(orgId, c.req.param('id'), body)
   if (!updated) return error(c, 'Section not found', 404)
   return success(c, undefined, 'Section updated')
 })
 
-app.delete('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), (c) => {
+app.delete('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async (c) => {
   const orgId = getOrgId(c)
-  const deleted = templateService.deleteSection(orgId, c.req.param('id'))
+  const deleted = await templateService.deleteSection(orgId, c.req.param('id'))
   if (!deleted) return error(c, 'Section not found', 404)
   return success(c, undefined, 'Section deleted')
 })
 
-app.post('/templates/sections/:id/use', requirePermission(PERMISSIONS.TEMPLATES_VIEW), (c) => {
+app.post('/templates/sections/:id/use', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const section = templateService.getSection(orgId, c.req.param('id'))
+  const section = await templateService.getSection(orgId, c.req.param('id'))
   if (!section) return error(c, 'Section not found', 404)
-  templateService.incrementSectionUsage(c.req.param('id'))
+  await templateService.incrementSectionUsage(c.req.param('id'))
   return success(c, { html_content: section.html_content })
 })
 
@@ -313,7 +313,7 @@ app.post('/templates/from-mjml', requirePermission(PERMISSIONS.TEMPLATES_MANAGE)
 
   try {
     const result = mjml2html(body.mjml, { validationLevel: 'soft' })
-    const template = templateService.create(orgId, user.id, {
+    const template = await templateService.create(orgId, user.id, {
       name: body.name,
       html_content: result.html,
       subject: body.subject,
