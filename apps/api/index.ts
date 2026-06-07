@@ -1,26 +1,18 @@
 /**
- * Application Entry Point
- * Applies Postgres migrations and seeds system roles (idempotent), then exports
- * the Hono application for the Bun runtime. The identity domain now lives in
- * Postgres, so the app requires a reachable DATABASE_URL to boot.
+ * API Entry Point
+ * Runs shared boot prerequisites (migrations/seeds/encryption/config), starts the
+ * background workers, then exports the Hono app for the Bun runtime. Queue SENDING
+ * runs in the separate worker.ts process — this process only enqueues + serves HTTP.
  *
- * Tests never import this file — they import src/* directly and inject a PGlite
- * db — and the NODE_ENV guard keeps the bun-sql driver out of the test runtime.
+ * Tests never import this file — they import src/* directly and inject a PGlite db —
+ * and the NODE_ENV guard keeps the bun-sql driver out of the test runtime.
  */
 import app, { startBackgroundWorkers, stopBackgroundWorkers } from './src/app'
-import { runMigrations } from './src/db/pg/migrate'
-import { seedSystemRoles } from './src/db/pg/seed'
-import { templateService } from './src/services/templateService'
-import { systemSettingsService } from './src/services/systemSettingsService'
-import { assertEncryptionKey } from './src/utils/crypto'
+import { boot } from './src/boot'
 import { logger } from './src/utils/logger'
 
 if (process.env.NODE_ENV !== 'test') {
-  assertEncryptionKey() // fail fast: never run with secrets unencryptable
-  await runMigrations()
-  await seedSystemRoles()
-  await templateService.seedStarterTemplates()
-  await systemSettingsService.init() // load config cache (sync reads everywhere)
+  await boot()
   await startBackgroundWorkers()
 
   const shutdown = (signal: string) => {
