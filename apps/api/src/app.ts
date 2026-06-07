@@ -54,7 +54,6 @@ import adminRoutes from './routes/admin'
 import whatsappRoutes from './routes/whatsapp'
 
 // Queue Engine
-import { queueEngine } from './services/queueEngine'
 
 // Phase 2 Services (auto-initialize on import)
 import { automationService } from './services/automationService'
@@ -262,9 +261,8 @@ export async function startBackgroundWorkers() {
   // Initialize tracking service
   const trackingConfigured = d1Service.initialize()
 
-  // Initialize queue engine: recover interrupted jobs and start worker
-  const recovered = queueEngine.recoverInterruptedJobs()
-  queueEngine.startWorker(WORKERS.QUEUE_POLL_INTERVAL)
+  // Queue sending runs in the separate BullMQ worker process (worker.ts); the API
+  // process only enqueues. BullMQ recovers stalled jobs natively — nothing to do here.
 
   // Start automation worker (processes due drip sequence actions)
   automationService.startWorker(WORKERS.AUTOMATION_POLL_INTERVAL)
@@ -275,7 +273,7 @@ export async function startBackgroundWorkers() {
   // Log startup info
   logger.startup(`\n🚀 ${API.NAME} v${API.VERSION}`)
   logger.startup(`   Tracking: ${trackingConfigured ? '✅' : '⚠️  (configure via Settings → Tracking or set TRACKING_WORKER_URL)'}`)
-  logger.startup(`   Queue: ✅ SQLite${recovered > 0 ? ` — recovered ${recovered} interrupted job(s)` : ''}`)
+  logger.startup(`   Queue: ✅ BullMQ (sending runs in the worker process)`)
   logger.startup(`   OAuth: Configure via Platform Settings → System Mailer`)
   logger.startup(`   API: http://localhost:${SERVER.PORT}`)
   logger.startup(`   Frontend: ${SERVER.FRONTEND_URL}`)
@@ -287,8 +285,7 @@ export async function startBackgroundWorkers() {
 // ============================================================================
 
 export function stopBackgroundWorkers() {
-  // Stop workers first (no new jobs picked up)
-  queueEngine.stopWorker()
+  // Stop workers first (no new jobs picked up). Queue sending lives in worker.ts.
   automationService.stopWorker()
   warmupService.stopWorker()
 

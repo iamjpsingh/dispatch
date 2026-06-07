@@ -18,13 +18,13 @@ const queue = new Hono()
  * GET /queue/jobs - List jobs for the authenticated user
  * Query params: status, limit, offset
  */
-queue.get('/queue/jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+queue.get('/queue/jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const user = requireAuth(c)
   const status = c.req.query('status') as JobStatus | undefined
   const limit = parseInt(c.req.query('limit') || '20')
   const offset = parseInt(c.req.query('offset') || '0')
 
-  const jobs = queueEngine.getJobs(user.id, status, limit, offset)
+  const jobs = await queueEngine.getJobs(user.id, status, limit, offset)
 
   // Strip large JSON fields from list view
   const jobSummaries = jobs.map((job) => ({
@@ -55,9 +55,9 @@ queue.get('/queue/jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
 /**
  * GET /queue/jobs/:id - Get a specific job
  */
-queue.get('/queue/jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+queue.get('/queue/jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const jobId = c.req.param('id')
-  const job = queueEngine.getJob(jobId)
+  const job = await queueEngine.getJob(jobId)
 
   if (!job) {
     return error(c, 'Job not found', 404)
@@ -75,9 +75,9 @@ queue.get('/queue/jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) 
 /**
  * POST /queue/jobs/:id/pause - Pause a running job
  */
-queue.post('/queue/jobs/:id/pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+queue.post('/queue/jobs/:id/pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const jobId = c.req.param('id')
-  const paused = queueEngine.pause(jobId)
+  const paused = await queueEngine.pause(jobId)
 
   if (!paused) {
     return error(c, 'Job is not running or does not exist', 400)
@@ -89,9 +89,9 @@ queue.post('/queue/jobs/:id/pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANA
 /**
  * POST /queue/jobs/:id/resume - Resume a paused job
  */
-queue.post('/queue/jobs/:id/resume', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+queue.post('/queue/jobs/:id/resume', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const jobId = c.req.param('id')
-  const resumed = queueEngine.resume(jobId)
+  const resumed = await queueEngine.resume(jobId)
 
   if (!resumed) {
     return error(c, 'Job is not paused or does not exist', 400)
@@ -103,9 +103,9 @@ queue.post('/queue/jobs/:id/resume', requirePermission(PERMISSIONS.CAMPAIGNS_MAN
 /**
  * DELETE /queue/jobs/:id - Cancel a job
  */
-queue.delete('/queue/jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+queue.delete('/queue/jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const jobId = c.req.param('id')
-  const cancelled = queueEngine.cancel(jobId)
+  const cancelled = await queueEngine.cancel(jobId)
 
   if (!cancelled) {
     return error(c, 'Job cannot be cancelled (already completed or does not exist)', 400)
@@ -121,9 +121,9 @@ queue.delete('/queue/jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE),
 /**
  * GET /queue/stats - Get queue statistics for the authenticated user
  */
-queue.get('/queue/stats', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+queue.get('/queue/stats', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const user = requireAuth(c)
-  const stats = queueEngine.getStats(user.id)
+  const stats = await queueEngine.getStats(user.id)
   return success(c, stats)
 })
 
@@ -135,12 +135,12 @@ queue.get('/queue/stats', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => 
  * GET /queue/dead-letters - List dead letters
  * Query params: job_id, limit, offset
  */
-queue.get('/queue/dead-letters', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+queue.get('/queue/dead-letters', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const jobId = c.req.query('job_id')
   const limit = parseInt(c.req.query('limit') || '50')
   const offset = parseInt(c.req.query('offset') || '0')
 
-  const deadLetters = queueEngine.getDeadLetters(jobId || undefined, limit, offset)
+  const deadLetters = await queueEngine.getDeadLetters(jobId || undefined, limit, offset)
   return success(c, deadLetters)
 })
 

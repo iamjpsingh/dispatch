@@ -1,11 +1,11 @@
 // src/services/queue/queueStore.ts - PG-backed job + dead-letter history mirror (async).
 // Replaces QueueDatabase's job CRUD. BullMQ owns the live queue; Postgres is the
 // durable record + the source for the stats/queue UI. Mirrors the sqlite encoding.
-import { and, eq, desc, sql, notInArray } from 'drizzle-orm'
+import { and, eq, desc, sql, notInArray, inArray } from 'drizzle-orm'
 import { getDb } from '../../db/pg/client'
 import { jobs, dead_letters, type JobRow, type DeadLetterRow } from '../../db/pg/schema'
 import { generateId } from '../../utils/id'
-import type { JobStatus, QueueStats } from '../queueDatabase'
+import type { JobStatus, QueueStats } from './types'
 
 type NewJobRow = typeof jobs.$inferInsert
 
@@ -80,12 +80,13 @@ export const queueStore = {
       .where(eq(jobs.id, jobId))
   },
 
-  /** Generic status transition (pause/resume/cancel logic lives in the facade). */
-  async setStatus(jobId: string, status: JobStatus): Promise<boolean> {
+  /** Conditional status transition (only when current status is in `from`). Returns whether a row changed. */
+  async transition(jobId: string, from: JobStatus[], to: JobStatus): Promise<boolean> {
+    const extra = to === 'cancelled' ? { completed_at: new Date().toISOString() } : {}
     const changed = await getDb()
       .update(jobs)
-      .set({ status, updated_at: new Date().toISOString() })
-      .where(eq(jobs.id, jobId))
+      .set({ status: to, updated_at: new Date().toISOString(), ...extra })
+      .where(and(eq(jobs.id, jobId), inArray(jobs.status, from)))
       .returning({ id: jobs.id })
     return changed.length > 0
   },

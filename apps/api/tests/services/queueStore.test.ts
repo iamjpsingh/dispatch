@@ -97,11 +97,18 @@ describe('P4.C — queueStore (Postgres)', () => {
     expect(job!.last_error).toBe('boom')
   })
 
-  it('setStatus transitions and reports whether a row changed', async () => {
+  it('transition changes status only from an allowed prior status', async () => {
     await queueStore.insertJob(makeJob({ id: 'j1', status: 'running' }))
-    expect(await queueStore.setStatus('j1', 'paused')).toBe(true)
+    expect(await queueStore.transition('j1', ['running'], 'paused')).toBe(true)
     expect((await queueStore.getJob('j1'))!.status).toBe('paused')
-    expect(await queueStore.setStatus('missing', 'cancelled')).toBe(false)
+    // wrong `from` → no change
+    expect(await queueStore.transition('j1', ['running'], 'cancelled')).toBe(false)
+    expect((await queueStore.getJob('j1'))!.status).toBe('paused')
+    // cancel from paused sets completed_at
+    expect(await queueStore.transition('j1', ['paused'], 'cancelled')).toBe(true)
+    const j = await queueStore.getJob('j1')
+    expect(j!.status).toBe('cancelled')
+    expect(j!.completed_at).toBeTruthy()
   })
 
   it('addToDeadLetter + getDeadLetters (job-scoped)', async () => {

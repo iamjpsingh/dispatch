@@ -249,8 +249,9 @@ app.post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
 
   // 6. Enqueue a real send job — mirrors handleSmtpSend in send.ts.
   const useBatch = contacts.length > campaign.batch_size
-  const jobId = queueEngine.enqueue(user.id, emailConfig, contacts, {
+  const jobId = await queueEngine.enqueue(user.id, emailConfig, contacts, {
     type: useBatch ? 'batch' : 'direct',
+    orgId,
     htmlContent,
     subject: campaign.subject,
     fromEmail: campaign.from_email,

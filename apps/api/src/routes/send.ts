@@ -10,7 +10,7 @@ import { notificationService } from '../services/notificationService'
 import { queueEngine } from '../services/queueEngine'
 import { ProviderDetection } from '../services/providerLimits'
 import { FileService } from '../services/fileService'
-import { requireAuth, type User } from '../middleware/auth'
+import { requireAuth, getOrgId, type User } from '../middleware/auth'
 import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
@@ -367,10 +367,10 @@ app.delete('/scheduled-jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
 // Batch Control (delegates to queue engine, legacy endpoints preserved)
 // ============================================================================
 
-app.get('/batch-status', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+app.get('/batch-status', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const user = requireAuth(c)
-  const activeIds = queueEngine.getActiveJobIds()
-  const runningJobs = queueEngine.getJobs(user.id, 'running', 5)
+  const activeIds = await queueEngine.getActiveJobIds()
+  const runningJobs = await queueEngine.getJobs(user.id, 'running', 5)
 
   // Map to legacy BatchStatus format for backward compatibility
   const currentJob = runningJobs[0] || null
@@ -395,27 +395,27 @@ app.get('/batch-status', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
 
 app.post('/batch-pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
-  const runningJobs = queueEngine.getJobs(user.id, 'running', 1)
+  const runningJobs = await queueEngine.getJobs(user.id, 'running', 1)
   if (runningJobs.length > 0) {
-    queueEngine.pause(runningJobs[0].id)
+    await queueEngine.pause(runningJobs[0].id)
   }
   return success(c, undefined, 'Job paused')
 })
 
 app.post('/batch-resume', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
-  const pausedJobs = queueEngine.getJobs(user.id, 'paused', 1)
+  const pausedJobs = await queueEngine.getJobs(user.id, 'paused', 1)
   if (pausedJobs.length > 0) {
-    queueEngine.resume(pausedJobs[0].id)
+    await queueEngine.resume(pausedJobs[0].id)
   }
   return success(c, undefined, 'Job resumed')
 })
 
 app.delete('/batch-cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
-  const runningJobs = queueEngine.getJobs(user.id, 'running', 1)
+  const runningJobs = await queueEngine.getJobs(user.id, 'running', 1)
   if (runningJobs.length > 0) {
-    queueEngine.cancel(runningJobs[0].id)
+    await queueEngine.cancel(runningJobs[0].id)
   }
   return success(c, undefined, 'Job cancelled')
 })
@@ -533,8 +533,9 @@ async function handleSmtpSend(c: Context, params: SmtpSendParams) {
   } = params
 
   // Enqueue to persistent job queue (replaces in-memory batchService)
-  const jobId = queueEngine.enqueue(user.id, emailConfig, contacts, {
+  const jobId = await queueEngine.enqueue(user.id, emailConfig, contacts, {
     type: useBatch ? 'batch' : 'direct',
+    orgId: getOrgId(c),
     htmlContent,
     subject: subject.trim(),
     fromEmail,

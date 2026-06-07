@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/auth'
 import { logService } from '../services/logService'
 import { queueEngine } from '../services/queueEngine'
-import type { QueueJob } from '../services/queueDatabase'
+import type { QueueJob } from '../services/queueEngine'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
 
@@ -38,7 +38,7 @@ const app = new Hono()
  * Get dashboard stats
  * GET /dashboard/stats
  */
-app.get('/dashboard/stats', (c) => {
+app.get('/dashboard/stats', async (c) => {
   const user = requireAuth(c)
 
   try {
@@ -47,10 +47,10 @@ app.get('/dashboard/stats', (c) => {
     const allLogs = logService.getLogs() ?? []
 
     // Queue stats from persistent engine
-    const queueStats = queueEngine.getStats(user.id)
-    const activeJobs = queueEngine.getJobs(user.id, 'running', 10)
-    const pendingJobs = queueEngine.getJobs(user.id, 'pending', 10)
-    const recentJobs = queueEngine.getJobs(user.id, undefined, 5)
+    const queueStats = await queueEngine.getStats(user.id)
+    const activeJobs = await queueEngine.getJobs(user.id, 'running', 10)
+    const pendingJobs = await queueEngine.getJobs(user.id, 'pending', 10)
+    const recentJobs = await queueEngine.getJobs(user.id, undefined, 5)
 
     return success(c, {
       stats: logService.getStats(),
@@ -95,14 +95,14 @@ app.get('/dashboard/stats', (c) => {
  * Get polling status (lightweight)
  * GET /dashboard/poll-status
  */
-app.get('/dashboard/poll-status', (c) => {
+app.get('/dashboard/poll-status', async (c) => {
   const user = requireAuth(c)
 
   try {
     const scheduler = getSchedulerService()
     const scheduledJobs = scheduler?.getScheduledJobs() ?? []
 
-    const queueStats = queueEngine.getStats(user.id)
+    const queueStats = await queueEngine.getStats(user.id)
     const hasActiveJobs = queueStats.running > 0
     const hasPendingJobs = queueStats.pending > 0
     const hasScheduledJobs = scheduledJobs.length > 0
@@ -161,7 +161,7 @@ app.get('/dashboard/poll-status', (c) => {
  * Get dashboard data (optimized)
  * GET /dashboard/data
  */
-app.get('/dashboard/data', (c) => {
+app.get('/dashboard/data', async (c) => {
   const user = requireAuth(c)
 
   try {
@@ -170,8 +170,8 @@ app.get('/dashboard/data', (c) => {
       .filter((j) => j.status === 'scheduled' || j.status === 'running')
       .slice(0, 5)
 
-    const activeJobs = queueEngine.getJobs(user.id, 'running', 5)
-    const pendingJobs = queueEngine.getJobs(user.id, 'pending', 5)
+    const activeJobs = await queueEngine.getJobs(user.id, 'running', 5)
+    const pendingJobs = await queueEngine.getJobs(user.id, 'pending', 5)
 
     return success(c, {
       queue: {

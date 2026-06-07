@@ -1,54 +1,56 @@
-// src/services/queueEngine.ts - SQLite-backed Persistent Job Queue (facade)
+// src/services/queueEngine.ts - Queue facade over BullMQ (live queue) + Postgres
+// (durable history mirror). The public surface is unchanged in shape but ASYNC
+// (sqlite was synchronous; PG/BullMQ are not). Enqueue writes the PG job row and
+// adds per-batch BullMQ jobs; reads come from PG; sending runs in the worker process.
 
 import { d1Service } from './d1Service'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
-import { QueueDatabase } from './queueDatabase'
-import { QueueWorker } from './queueWorker'
+import { queueStore } from './queue/queueStore'
+import { enqueueCampaign, getSendQueue } from './queue/sendQueue'
 import { suppressionStore } from './queue/suppressionStore'
 import type { EmailConfig, Contact } from '../types/index'
+import type { EnqueueOptions } from './queue/types'
 
-// Re-export types from queueDatabase for backward compatibility
-export type { JobType, JobStatus, QueueJob, EnqueueOptions, DeadLetter, QueueStats } from './queueDatabase'
+// Re-export the queue types for backward compatibility (callers import from here).
+export type { JobType, JobStatus, QueueJob, EnqueueOptions, DeadLetter, QueueStats } from './queue/types'
 export type { ErrorType } from './retryEngine'
 
-// ============================================================================
-// Queue Engine (facade over QueueDatabase + QueueWorker)
-// ============================================================================
-
 class QueueEngine {
-  private queueDb: QueueDatabase
-  private worker: QueueWorker
-
-  constructor() {
-    this.queueDb = new QueueDatabase()
-    this.worker = new QueueWorker(this.queueDb)
-  }
-
   // --------------------------------------------------------------------------
-  // Enqueue / Dequeue
+  // Enqueue
   // --------------------------------------------------------------------------
 
-  /**
-   * Add a new job to the queue
-   */
-  enqueue(
-    userId: string,
-    emailConfig: EmailConfig,
-    contacts: Contact[],
-    options: import('./queueDatabase').EnqueueOptions
-  ): string {
+  async enqueue(userId: string, emailConfig: EmailConfig, contacts: Contact[], options: EnqueueOptions): Promise<string> {
     const jobId = generateId('job')
     const campaignId = options.campaignId || d1Service.generateCampaignId()
+    const batchSize = options.batchSize ?? 20
 
-    this.queueDb.insertJob(
-      jobId,
-      campaignId,
-      userId,
-      JSON.stringify(emailConfig),
-      JSON.stringify(contacts),
-      contacts.length,
-      options
+    await enqueueCampaign(
+      {
+        id: jobId,
+        campaign_id: campaignId,
+        org_id: options.orgId ?? null,
+        user_id: userId,
+        type: options.type || 'batch',
+        status: 'pending',
+        priority: options.priority ?? 5,
+        config_id: options.configId ?? null,
+        config_json: JSON.stringify(emailConfig),
+        contacts_json: JSON.stringify(contacts),
+        html_content: options.htmlContent,
+        subject: options.subject,
+        from_email: options.fromEmail,
+        from_name: options.fromName,
+        config_name: options.configName ?? null,
+        notify_email: options.notifyEmail ?? null,
+        total_count: contacts.length,
+        batch_size: batchSize,
+        email_delay_sec: options.emailDelaySec ?? 45,
+        batch_delay_min: options.batchDelayMin ?? 60,
+        scheduled_at: options.scheduledAt ?? null,
+      },
+      batchSize
     )
 
     logger.info(`Job enqueued: ${jobId} (${contacts.length} contacts, priority ${options.priority ?? 5})`)
@@ -56,66 +58,49 @@ class QueueEngine {
   }
 
   // --------------------------------------------------------------------------
-  // Job Control (delegates to DB + signals worker)
+  // Job control (status flags the worker honors at batch start)
   // --------------------------------------------------------------------------
 
-  /**
-   * Pause a running job
-   */
-  pause(jobId: string): boolean {
-    const result = this.queueDb.pause(jobId)
-    if (result) {
-      this.worker.signalPause(jobId)
-      logger.info(`Job paused: ${jobId}`)
-    }
-    return result
+  async pause(jobId: string): Promise<boolean> {
+    const ok = await queueStore.transition(jobId, ['pending', 'running'], 'paused')
+    if (ok) logger.info(`Job paused: ${jobId}`)
+    return ok
   }
 
-  /**
-   * Resume a paused job
-   */
-  resume(jobId: string): boolean {
-    const result = this.queueDb.resume(jobId)
-    if (result) {
-      logger.info(`Job resumed: ${jobId}`)
-    }
-    return result
+  async resume(jobId: string): Promise<boolean> {
+    const ok = await queueStore.transition(jobId, ['paused'], 'pending')
+    if (ok) logger.info(`Job resumed: ${jobId}`)
+    return ok
   }
 
-  /**
-   * Cancel a job (pending, running, or paused)
-   */
-  cancel(jobId: string): boolean {
-    const result = this.queueDb.cancel(jobId)
-    if (result) {
-      this.worker.signalCancel(jobId)
-      logger.info(`Job cancelled: ${jobId}`)
-    }
-    return result
+  async cancel(jobId: string): Promise<boolean> {
+    const ok = await queueStore.transition(jobId, ['pending', 'running', 'paused'], 'cancelled')
+    if (ok) logger.info(`Job cancelled: ${jobId}`)
+    return ok
   }
 
   // --------------------------------------------------------------------------
-  // Query Methods (delegates to DB)
+  // Queries (read the Postgres mirror)
   // --------------------------------------------------------------------------
 
-  getJob(jobId: string) {
-    return this.queueDb.getJob(jobId)
+  async getJob(jobId: string) {
+    return queueStore.getJob(jobId)
   }
 
-  getJobs(userId: string, status?: import('./queueDatabase').JobStatus, limit = 20, offset = 0) {
-    return this.queueDb.getJobs(userId, status, limit, offset)
+  async getJobs(userId: string, status?: import('./queue/types').JobStatus, limit = 20, offset = 0) {
+    return queueStore.getJobs(userId, status, limit, offset)
   }
 
-  getStats(userId: string) {
-    return this.queueDb.getStats(userId)
+  async getStats(userId: string) {
+    return queueStore.getStats(userId)
   }
 
-  getDeadLetters(jobId?: string, limit = 50, offset = 0) {
-    return this.queueDb.getDeadLetters(jobId, limit, offset)
+  async getDeadLetters(jobId?: string, limit = 50, offset = 0) {
+    return queueStore.getDeadLetters(jobId, limit, offset)
   }
 
   // --------------------------------------------------------------------------
-  // Suppression List (delegates to DB)
+  // Suppression list (PG-backed, org/user-scoped)
   // --------------------------------------------------------------------------
 
   async isSuppressed(userId: string, email: string): Promise<boolean> {
@@ -135,53 +120,17 @@ class QueueEngine {
   }
 
   // --------------------------------------------------------------------------
-  // Worker Control (delegates to worker)
+  // Worker introspection (BullMQ-backed)
   // --------------------------------------------------------------------------
 
-  startWorker(intervalMs = 5000) {
-    this.worker.startWorker(intervalMs)
+  async getActiveJobIds(): Promise<string[]> {
+    const active = await getSendQueue().getActive()
+    return active.map((j) => j.id ?? '').filter(Boolean)
   }
 
-  stopWorker() {
-    this.worker.stopWorker()
-  }
-
-  setMaxConcurrent(max: number) {
-    this.worker.setMaxConcurrent(max)
-  }
-
-  getActiveJobCount(): number {
-    return this.worker.getActiveJobCount()
-  }
-
-  getActiveJobIds(): string[] {
-    return this.worker.getActiveJobIds()
-  }
-
-  // --------------------------------------------------------------------------
-  // Recovery & Cleanup (delegates to DB)
-  // --------------------------------------------------------------------------
-
-  recoverInterruptedJobs(): number {
-    return this.queueDb.recoverInterruptedJobs()
-  }
-
-  cleanup(olderThanDays = 30): number {
-    return this.queueDb.cleanup(olderThanDays)
-  }
-
-  // --------------------------------------------------------------------------
-  // Progress Tracking (delegates to DB)
-  // --------------------------------------------------------------------------
-
-  updateProgress(
-    jobId: string,
-    lastProcessedIndex: number,
-    sentCount: number,
-    failedCount: number,
-    lastError?: string
-  ) {
-    this.queueDb.updateProgress(jobId, lastProcessedIndex, sentCount, failedCount, lastError)
+  /** BullMQ recovers stalled jobs natively; nothing to recover at boot. */
+  async recoverInterruptedJobs(): Promise<number> {
+    return 0
   }
 }
 
