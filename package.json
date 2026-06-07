@@ -23,5 +23,6 @@
     "turbo": "^2.9.16",
     "typescript": "^5.3.3"
   },
-  "engines": { "bun": ">=1.1.0" }
+  "engines": { "bun": ">=1.1.0" },
+  "overrides": { "ioredis": "5.10.1" }
 }
