@@ -124,7 +124,7 @@ class ValidationService {
   /**
    * Check if email is suppressed for a user
    */
-  checkSuppressed(userId: string, email: string): boolean {
+  async checkSuppressed(userId: string, email: string): Promise<boolean> {
     return queueEngine.isSuppressed(userId, email);
   }
 
@@ -144,7 +144,7 @@ class ValidationService {
       mx = await this.checkMX(domain);
       disposable = this.checkDisposable(normalizedEmail);
       if (userId) {
-        suppressed = this.checkSuppressed(userId, normalizedEmail);
+        suppressed = await this.checkSuppressed(userId, normalizedEmail);
       }
     }
 

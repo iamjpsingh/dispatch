@@ -5,6 +5,7 @@ import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 import { QueueDatabase } from './queueDatabase'
 import { QueueWorker } from './queueWorker'
+import { suppressionStore } from './queue/suppressionStore'
 import type { EmailConfig, Contact } from '../types/index'
 
 // Re-export types from queueDatabase for backward compatibility
@@ -117,20 +118,20 @@ class QueueEngine {
   // Suppression List (delegates to DB)
   // --------------------------------------------------------------------------
 
-  isSuppressed(userId: string, email: string): boolean {
-    return this.queueDb.isSuppressed(userId, email)
+  async isSuppressed(userId: string, email: string): Promise<boolean> {
+    return suppressionStore.isSuppressed(userId, email)
   }
 
-  suppress(userId: string, email: string, reason: string, source?: string) {
-    this.queueDb.suppress(userId, email, reason, source)
+  async suppress(userId: string, email: string, reason: string, source?: string): Promise<void> {
+    await suppressionStore.suppress(userId, email, reason, source)
   }
 
-  unsuppress(userId: string, email: string): boolean {
-    return this.queueDb.unsuppress(userId, email)
+  async unsuppress(userId: string, email: string): Promise<boolean> {
+    return suppressionStore.unsuppress(userId, email)
   }
 
-  getSuppressionList(userId: string, limit = 50, offset = 0) {
-    return this.queueDb.getSuppressionList(userId, limit, offset)
+  async getSuppressionList(userId: string, limit = 50, offset = 0): Promise<unknown[]> {
+    return suppressionStore.getSuppressionList(userId, limit, offset)
   }
 
   // --------------------------------------------------------------------------

@@ -151,12 +151,12 @@ queue.get('/queue/dead-letters', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), 
 /**
  * GET /queue/suppression - Get suppression list
  */
-queue.get('/queue/suppression', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), (c) => {
+queue.get('/queue/suppression', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const user = requireAuth(c)
   const limit = parseInt(c.req.query('limit') || '50')
   const offset = parseInt(c.req.query('offset') || '0')
 
-  const list = queueEngine.getSuppressionList(user.id, limit, offset)
+  const list = await queueEngine.getSuppressionList(user.id, limit, offset)
   return success(c, list)
 })
 
@@ -172,18 +172,18 @@ queue.post('/queue/suppression', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE)
     return error(c, 'email and reason are required', 400)
   }
 
-  queueEngine.suppress(user.id, email, reason, 'manual')
+  await queueEngine.suppress(user.id, email, reason, 'manual')
   return success(c, undefined, `${email} added to suppression list`)
 })
 
 /**
  * DELETE /queue/suppression/:email - Remove email from suppression list
  */
-queue.delete('/queue/suppression/:email', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), (c) => {
+queue.delete('/queue/suppression/:email', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const email = decodeURIComponent(c.req.param('email'))
 
-  const removed = queueEngine.unsuppress(user.id, email)
+  const removed = await queueEngine.unsuppress(user.id, email)
   if (!removed) {
     return error(c, 'Email not found in suppression list', 404)
   }

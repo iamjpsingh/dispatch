@@ -66,7 +66,7 @@ class BouncePollingService {
           code: b.status,
           provider: 'sendgrid',
         }
-        processBounce('system', event)
+        await processBounce('system', event)
         processed++
       }
     }
@@ -84,7 +84,7 @@ class BouncePollingService {
           reason: 'Spam report (API poll)',
           provider: 'sendgrid',
         }
-        processBounce('system', event)
+        await processBounce('system', event)
         processed++
       }
     }
@@ -110,7 +110,7 @@ class BouncePollingService {
           reason: item['delivery-status']?.message || item.event,
           provider: 'mailgun',
         }
-        processBounce('system', event)
+        await processBounce('system', event)
         processed++
       }
     }
@@ -135,7 +135,7 @@ class BouncePollingService {
           reason: b.Description || b.Type,
           provider: 'postmark',
         }
-        processBounce('system', event)
+        await processBounce('system', event)
         processed++
       }
     }
@@ -161,7 +161,7 @@ class BouncePollingService {
           reason: r.reason || r.type,
           provider: 'sparkpost',
         }
-        processBounce('system', event)
+        await processBounce('system', event)
         processed++
       }
     }

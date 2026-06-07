@@ -179,7 +179,7 @@ app.post('/webhooks/bounce/ses', async (c) => {
     }
 
     const userId = 'system'
-    processBounce(userId, event)
+    await processBounce(userId, event)
 
     return c.json({ ok: true, processed: event.type })
   } catch (err) {
@@ -213,7 +213,7 @@ app.post('/webhooks/bounce/mailgun', async (c) => {
     }
 
     const userId = 'system'
-    processBounce(userId, event)
+    await processBounce(userId, event)
 
     return c.json({ ok: true, processed: event.type })
   } catch (err) {
@@ -246,7 +246,7 @@ app.post('/webhooks/bounce/sendgrid', async (c) => {
     const bounceEvents = parseSendGrid(events)
 
     for (const event of bounceEvents) {
-      processBounce('system', event)
+      await processBounce('system', event)
     }
 
     return c.json({ ok: true, processed: bounceEvents.length })
@@ -269,7 +269,7 @@ app.post('/webhooks/bounce/postmark', async (c) => {
       return c.json({ ok: true, message: 'Ignored' })
     }
 
-    processBounce('system', event)
+    await processBounce('system', event)
 
     return c.json({ ok: true, processed: event.type })
   } catch (err) {
@@ -300,7 +300,7 @@ app.post('/webhooks/bounce/sparkpost', async (c) => {
     const events = parseSparkPost(payload)
 
     for (const event of events) {
-      processBounce('system', event)
+      await processBounce('system', event)
     }
 
     return c.json({ ok: true, processed: events.length })

@@ -60,6 +60,9 @@ vi.mock('../../src/services/preferenceCenterService', () => ({
 vi.mock('../../src/services/graymailService', () => ({
   graymailService: { canSend: () => true, recordSend: vi.fn() },
 }))
+vi.mock('../../src/services/queue/suppressionStore', () => ({
+  suppressionStore: { isSuppressed: () => false, suppress: vi.fn() },
+}))
 
 // Control the transport: success vs failure per-test
 const mockSend = vi.fn()

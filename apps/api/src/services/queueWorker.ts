@@ -10,6 +10,7 @@ import { FileService } from './fileService'
 import { logger } from '../utils/logger'
 import { htmlToText } from '../utils/htmlToText'
 import { createTransport, configFromRecord } from './transports'
+import { suppressionStore } from './queue/suppressionStore'
 import { eventBus } from './eventBus'
 import type { EmailTransport } from './transports'
 import type { QueueDatabase, QueueJob } from './queueDatabase'
@@ -147,7 +148,7 @@ export class QueueWorker {
       const contact = contacts[i]
 
       // Check suppression list
-      if (this.queueDb.isSuppressed(job.user_id, contact.Email)) {
+      if (await suppressionStore.isSuppressed(job.user_id, contact.Email)) {
         logger.debug(`Skipping suppressed email: ${contact.Email}`)
         lastIndex = i + 1
         this.queueDb.updateProgress(job.id, lastIndex, sentCount, failedCount)
@@ -344,7 +345,7 @@ export class QueueWorker {
 
           // Suppress on hard bounce
           if (errorType === 'permanent') {
-            this.queueDb.suppress(job.user_id, contact.Email, 'bounce_hard', `job:${job.id}`)
+            await suppressionStore.suppress(job.user_id, contact.Email, 'bounce_hard', `job:${job.id}`)
           }
 
           // Log failure

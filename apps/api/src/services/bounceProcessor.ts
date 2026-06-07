@@ -257,12 +257,12 @@ export function parseSparkPost(payload: any): BounceEvent[] {
  * Process a bounce event: suppress email, emit events.
  * userId is needed to scope suppression to the correct user.
  */
-export function processBounce(userId: string, event: BounceEvent): void {
+export async function processBounce(userId: string, event: BounceEvent): Promise<void> {
   const { email, type, reason } = event
 
   switch (type) {
     case 'hard_bounce':
-      queueEngine.suppress(userId, email, 'hard_bounce', `${event.provider}:webhook`)
+      await queueEngine.suppress(userId, email,'hard_bounce', `${event.provider}:webhook`)
       eventBus.emit('email_bounced', { userId, email, bounceType: 'hard', reason })
       logger.info(`[Bounce] Hard bounce: ${email} — suppressed (${event.provider})`)
       break
@@ -274,13 +274,13 @@ export function processBounce(userId: string, event: BounceEvent): void {
       break
 
     case 'complaint':
-      queueEngine.suppress(userId, email, 'complaint', `${event.provider}:webhook`)
+      await queueEngine.suppress(userId, email,'complaint', `${event.provider}:webhook`)
       eventBus.emit('email_unsubscribed', { userId, email, reason: 'complaint' })
       logger.info(`[Bounce] Complaint: ${email} — suppressed (${event.provider})`)
       break
 
     case 'unsubscribe':
-      queueEngine.suppress(userId, email, 'unsubscribe', `${event.provider}:webhook`)
+      await queueEngine.suppress(userId, email,'unsubscribe', `${event.provider}:webhook`)
       eventBus.emit('email_unsubscribed', { userId, email, reason: 'unsubscribe' })
       logger.info(`[Bounce] Unsubscribe: ${email} — suppressed (${event.provider})`)
       break
