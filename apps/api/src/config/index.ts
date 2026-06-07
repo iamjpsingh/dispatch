@@ -21,6 +21,11 @@ export const SERVER = {
   BASE_URL: process.env.BASE_URL || 'http://localhost:5500',
 } as const
 
+// Redis / Valkey (BullMQ queue + worker)
+export const REDIS = {
+  URL: process.env.REDIS_URL || 'redis://localhost:6379',
+} as const
+
 // CORS Configuration
 export const CORS = {
   ALLOWED_ORIGINS: [
