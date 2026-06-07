@@ -1,7 +1,7 @@
 // src/services/queue/queueStore.ts - PG-backed job + dead-letter history mirror (async).
 // Replaces QueueDatabase's job CRUD. BullMQ owns the live queue; Postgres is the
 // durable record + the source for the stats/queue UI. Mirrors the sqlite encoding.
-import { and, eq, desc, sql } from 'drizzle-orm'
+import { and, eq, desc, sql, notInArray } from 'drizzle-orm'
 import { getDb } from '../../db/pg/client'
 import { jobs, dead_letters, type JobRow, type DeadLetterRow } from '../../db/pg/schema'
 import { generateId } from '../../utils/id'
@@ -25,10 +25,12 @@ export const queueStore = {
   },
 
   async markRunning(jobId: string): Promise<void> {
+    // Guarded: never resurrect a terminal job (a straggler batch must not flip
+    // a completed/cancelled job back to running).
     await getDb()
       .update(jobs)
       .set({ status: 'running', started_at: sql`coalesce(${jobs.started_at}, now())`, updated_at: new Date().toISOString() })
-      .where(eq(jobs.id, jobId))
+      .where(and(eq(jobs.id, jobId), notInArray(jobs.status, ['completed', 'failed', 'cancelled'])))
   },
 
   async updateProgress(
@@ -48,6 +50,21 @@ export const queueStore = {
         updated_at: new Date().toISOString(),
       })
       .where(eq(jobs.id, jobId))
+  },
+
+  /** Atomically add to the progress counters (for concurrent per-batch processing). Returns the new processed index. */
+  async advanceProgress(jobId: string, processedDelta: number, sentDelta: number, failedDelta: number): Promise<number> {
+    const [r] = await getDb()
+      .update(jobs)
+      .set({
+        last_processed_index: sql`${jobs.last_processed_index} + ${processedDelta}`,
+        sent_count: sql`${jobs.sent_count} + ${sentDelta}`,
+        failed_count: sql`${jobs.failed_count} + ${failedDelta}`,
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(jobs.id, jobId))
+      .returning({ idx: jobs.last_processed_index })
+    return r?.idx ?? 0
   },
 
   async completeJob(jobId: string): Promise<void> {

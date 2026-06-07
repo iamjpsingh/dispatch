@@ -77,6 +77,18 @@ describe('P4.C — queueStore (Postgres)', () => {
     expect(done!.completed_at).toBeTruthy()
   })
 
+  it('advanceProgress atomically increments and returns the new processed index', async () => {
+    await queueStore.insertJob(makeJob({ id: 'j1', total_count: 10 }))
+    const after1 = await queueStore.advanceProgress('j1', 3, 2, 1)
+    expect(after1).toBe(3)
+    const after2 = await queueStore.advanceProgress('j1', 4, 4, 0)
+    expect(after2).toBe(7)
+    const job = await queueStore.getJob('j1')
+    expect(job!.sent_count).toBe(6)
+    expect(job!.failed_count).toBe(1)
+    expect(job!.last_processed_index).toBe(7)
+  })
+
   it('failJob records status + error', async () => {
     await queueStore.insertJob(makeJob({ id: 'j1' }))
     await queueStore.failJob('j1', 'boom')
