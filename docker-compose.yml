@@ -77,7 +77,7 @@ services:
 
   worker:
     build: { context: ., dockerfile: Dockerfile, target: api }
-    command: ["bun", "run", "index.ts"]   # P4 switches this to the BullMQ worker entrypoint
+    command: ["bun", "run", "worker.ts"]   # BullMQ send-worker process (P4)
     env_file:
       - path: .env
         required: false
