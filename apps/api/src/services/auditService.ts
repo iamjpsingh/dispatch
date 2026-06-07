@@ -1,5 +1,10 @@
-import { logsDb } from '../db/connection'
+// src/services/auditService.ts - Audit & Activity Logging (Postgres/Drizzle, async)
+
+import { and, eq, gte, lte, lt, desc, count, type SQL } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { audit_logs, activity_logs } from '../db/pg/schema'
 import { generateId } from '../utils/id'
+import { logger } from '../utils/logger'
 
 export type AuditAction =
   // Auth
@@ -70,130 +75,150 @@ interface LogQuery {
 
 class AuditService {
   /**
-   * Record an audit log entry (security-sensitive actions)
+   * Record an audit log entry (security-sensitive actions).
+   *
+   * Called fire-and-forget (un-awaited) from many services — it MUST NOT throw
+   * or reject, or an un-awaited call would surface as an unhandled rejection.
+   * The body is wrapped in try/catch; failures are swallowed and logged.
    */
-  log(entry: AuditEntry): void {
-    const id = generateId('aud')
-    logsDb.prepare(`
-      INSERT INTO audit_logs (id, org_id, actor_id, actor_email, action, entity_type, entity_id, changes, ip_address, user_agent, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      entry.orgId || null,
-      entry.actorId,
-      entry.actorEmail || null,
-      entry.action,
-      entry.entityType,
-      entry.entityId || null,
-      entry.changes ? JSON.stringify(entry.changes) : null,
-      entry.ipAddress || null,
-      entry.userAgent || null,
-      JSON.stringify(entry.metadata || {})
-    )
+  async log(entry: AuditEntry): Promise<void> {
+    try {
+      await getDb().insert(audit_logs).values({
+        id: generateId('aud'),
+        org_id: entry.orgId || null,
+        actor_id: entry.actorId,
+        actor_email: entry.actorEmail || null,
+        action: entry.action,
+        entity_type: entry.entityType,
+        entity_id: entry.entityId || null,
+        changes: entry.changes ? JSON.stringify(entry.changes) : null,
+        ip_address: entry.ipAddress || null,
+        user_agent: entry.userAgent || null,
+        metadata: JSON.stringify(entry.metadata || {}),
+      })
+    } catch (err) {
+      logger.error('auditService.log failed', err)
+    }
   }
 
   /**
-   * Record an activity log entry (product actions)
+   * Record an activity log entry (product actions).
+   *
+   * Fire-and-forget like log() — never throws/rejects (swallow + logger.error).
    */
-  logActivity(entry: ActivityEntry): void {
-    const id = generateId('act')
-    logsDb.prepare(`
-      INSERT INTO activity_logs (id, org_id, actor_id, actor_email, action, entity_type, entity_id, description, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      entry.orgId || null,
-      entry.actorId,
-      entry.actorEmail || null,
-      entry.action,
-      entry.entityType,
-      entry.entityId || null,
-      entry.description,
-      JSON.stringify(entry.metadata || {})
-    )
+  async logActivity(entry: ActivityEntry): Promise<void> {
+    try {
+      await getDb().insert(activity_logs).values({
+        id: generateId('act'),
+        org_id: entry.orgId || null,
+        actor_id: entry.actorId,
+        actor_email: entry.actorEmail || null,
+        action: entry.action,
+        entity_type: entry.entityType,
+        entity_id: entry.entityId || null,
+        description: entry.description,
+        metadata: JSON.stringify(entry.metadata || {}),
+      })
+    } catch (err) {
+      logger.error('auditService.logActivity failed', err)
+    }
   }
 
   /**
    * Query audit logs with filters
    */
-  queryAuditLogs(query: LogQuery): { logs: any[]; total: number } {
-    const conditions: string[] = []
-    const params: any[] = []
+  async queryAuditLogs(query: LogQuery): Promise<{ logs: any[]; total: number }> {
+    const db = getDb()
     const page = query.page || 1
     const limit = Math.min(query.limit || 50, 200)
     const offset = (page - 1) * limit
 
-    if (query.orgId) { conditions.push('org_id = ?'); params.push(query.orgId) }
-    if (query.actorId) { conditions.push('actor_id = ?'); params.push(query.actorId) }
-    if (query.action) { conditions.push('action = ?'); params.push(query.action) }
-    if (query.entityType) { conditions.push('entity_type = ?'); params.push(query.entityType) }
-    if (query.entityId) { conditions.push('entity_id = ?'); params.push(query.entityId) }
-    if (query.from) { conditions.push('created_at >= ?'); params.push(query.from) }
-    if (query.to) { conditions.push('created_at <= ?'); params.push(query.to) }
+    const conditions: SQL[] = []
+    if (query.orgId) conditions.push(eq(audit_logs.org_id, query.orgId))
+    if (query.actorId) conditions.push(eq(audit_logs.actor_id, query.actorId))
+    if (query.action) conditions.push(eq(audit_logs.action, query.action))
+    if (query.entityType) conditions.push(eq(audit_logs.entity_type, query.entityType))
+    if (query.entityId) conditions.push(eq(audit_logs.entity_id, query.entityId))
+    if (query.from) conditions.push(gte(audit_logs.created_at, query.from))
+    if (query.to) conditions.push(lte(audit_logs.created_at, query.to))
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const where = conditions.length > 0 ? and(...conditions) : undefined
 
-    const total = (logsDb.prepare(`SELECT COUNT(*) as count FROM audit_logs ${where}`).get(...params) as any).count
+    const [tot] = await db.select({ value: count() }).from(audit_logs).where(where)
+    const logs = await db
+      .select()
+      .from(audit_logs)
+      .where(where)
+      .orderBy(desc(audit_logs.created_at))
+      .limit(limit)
+      .offset(offset)
 
-    const logs = logsDb.prepare(`
-      SELECT * FROM audit_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(...params, limit, offset)
-
-    return { logs, total }
+    return { logs, total: tot?.value ?? 0 }
   }
 
   /**
    * Query activity logs with filters
    */
-  queryActivityLogs(query: LogQuery): { logs: any[]; total: number } {
-    const conditions: string[] = []
-    const params: any[] = []
+  async queryActivityLogs(query: LogQuery): Promise<{ logs: any[]; total: number }> {
+    const db = getDb()
     const page = query.page || 1
     const limit = Math.min(query.limit || 50, 200)
     const offset = (page - 1) * limit
 
-    if (query.orgId) { conditions.push('org_id = ?'); params.push(query.orgId) }
-    if (query.actorId) { conditions.push('actor_id = ?'); params.push(query.actorId) }
-    if (query.action) { conditions.push('action = ?'); params.push(query.action) }
-    if (query.entityType) { conditions.push('entity_type = ?'); params.push(query.entityType) }
-    if (query.from) { conditions.push('created_at >= ?'); params.push(query.from) }
-    if (query.to) { conditions.push('created_at <= ?'); params.push(query.to) }
+    const conditions: SQL[] = []
+    if (query.orgId) conditions.push(eq(activity_logs.org_id, query.orgId))
+    if (query.actorId) conditions.push(eq(activity_logs.actor_id, query.actorId))
+    if (query.action) conditions.push(eq(activity_logs.action, query.action))
+    if (query.entityType) conditions.push(eq(activity_logs.entity_type, query.entityType))
+    if (query.from) conditions.push(gte(activity_logs.created_at, query.from))
+    if (query.to) conditions.push(lte(activity_logs.created_at, query.to))
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const where = conditions.length > 0 ? and(...conditions) : undefined
 
-    const total = (logsDb.prepare(`SELECT COUNT(*) as count FROM activity_logs ${where}`).get(...params) as any).count
+    const [tot] = await db.select({ value: count() }).from(activity_logs).where(where)
+    const logs = await db
+      .select()
+      .from(activity_logs)
+      .where(where)
+      .orderBy(desc(activity_logs.created_at))
+      .limit(limit)
+      .offset(offset)
 
-    const logs = logsDb.prepare(`
-      SELECT * FROM activity_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(...params, limit, offset)
-
-    return { logs, total }
+    return { logs, total: tot?.value ?? 0 }
   }
 
   /**
    * Get recent activity for an org (for dashboard)
    */
-  getRecentActivity(orgId: string, limit = 20): any[] {
-    return logsDb.prepare(`
-      SELECT * FROM activity_logs WHERE org_id = ? ORDER BY created_at DESC LIMIT ?
-    `).all(orgId, limit)
+  async getRecentActivity(orgId: string, limit = 20): Promise<any[]> {
+    return getDb()
+      .select()
+      .from(activity_logs)
+      .where(eq(activity_logs.org_id, orgId))
+      .orderBy(desc(activity_logs.created_at))
+      .limit(limit)
   }
 
   /**
    * Cleanup old logs (retention policy)
    */
-  cleanup(olderThanDays = 90): { auditDeleted: number; activityDeleted: number } {
-    const auditResult = logsDb.prepare(`
-      DELETE FROM audit_logs WHERE created_at < datetime('now', '-' || ? || ' days')
-    `).run(olderThanDays)
+  async cleanup(olderThanDays = 90): Promise<{ auditDeleted: number; activityDeleted: number }> {
+    const db = getDb()
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString()
 
-    const activityResult = logsDb.prepare(`
-      DELETE FROM activity_logs WHERE created_at < datetime('now', '-' || ? || ' days')
-    `).run(olderThanDays)
+    const auditResult = await db
+      .delete(audit_logs)
+      .where(lt(audit_logs.created_at, cutoff))
+      .returning({ id: audit_logs.id })
+
+    const activityResult = await db
+      .delete(activity_logs)
+      .where(lt(activity_logs.created_at, cutoff))
+      .returning({ id: activity_logs.id })
 
     return {
-      auditDeleted: auditResult.changes,
-      activityDeleted: activityResult.changes,
+      auditDeleted: auditResult.length,
+      activityDeleted: activityResult.length,
     }
   }
 }

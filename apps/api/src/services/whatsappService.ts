@@ -1,12 +1,16 @@
-// src/services/whatsappService.ts - WhatsApp Business API Integration
+// src/services/whatsappService.ts - WhatsApp Business API Integration (Postgres/Drizzle, async)
 // Supports Meta Cloud API (direct), Twilio WhatsApp, 360dialog
 
-import { db } from '../db/connection'
+import { and, eq, desc, count, sql } from 'drizzle-orm'
+import { getDb } from '../db/pg/client'
+import { whatsapp_configs, whatsapp_templates, whatsapp_messages } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 import { logger } from '../utils/logger'
 
 const META_API_VERSION = 'v21.0'
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`
+
+const now = () => new Date().toISOString()
 
 // ============================================================================
 // Types
@@ -145,51 +149,68 @@ class WhatsAppService {
   // Config CRUD
   // --------------------------------------------------------------------------
 
-  createConfig(orgId: string, userId: string, input: WhatsAppConfigInput): WhatsAppConfig {
+  async createConfig(orgId: string, userId: string, input: WhatsAppConfigInput): Promise<WhatsAppConfig> {
     const id = generateId('wac')
     const verifyToken = generateId('wavt')
 
-    db.prepare(`
-      INSERT INTO whatsapp_configs (id, org_id, user_id, name, provider, phone_number_id, business_account_id, access_token, phone_display, webhook_verify_token, daily_limit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, orgId, userId, input.name, input.provider || 'meta',
-      input.phone_number_id, input.business_account_id || null,
-      input.access_token, input.phone_display || null,
-      verifyToken, input.daily_limit || 1000
-    )
+    await getDb().insert(whatsapp_configs).values({
+      id,
+      org_id: orgId,
+      user_id: userId,
+      name: input.name,
+      provider: input.provider || 'meta',
+      phone_number_id: input.phone_number_id,
+      business_account_id: input.business_account_id || null,
+      access_token: input.access_token,
+      phone_display: input.phone_display || null,
+      webhook_verify_token: verifyToken,
+      daily_limit: input.daily_limit || 1000,
+    })
 
-    return this.getConfig(orgId, id)!
+    return (await this.getConfig(orgId, id))!
   }
 
-  getConfigs(orgId: string): WhatsAppConfig[] {
-    return db.prepare('SELECT * FROM whatsapp_configs WHERE org_id = ? ORDER BY created_at DESC').all(orgId) as WhatsAppConfig[]
+  async getConfigs(orgId: string): Promise<WhatsAppConfig[]> {
+    const rows = await getDb()
+      .select()
+      .from(whatsapp_configs)
+      .where(eq(whatsapp_configs.org_id, orgId))
+      .orderBy(desc(whatsapp_configs.created_at))
+    return rows as WhatsAppConfig[]
   }
 
-  getConfig(orgId: string, id: string): WhatsAppConfig | null {
-    return db.prepare('SELECT * FROM whatsapp_configs WHERE id = ? AND org_id = ?').get(id, orgId) as WhatsAppConfig | null
+  async getConfig(orgId: string, id: string): Promise<WhatsAppConfig | null> {
+    const [row] = await getDb()
+      .select()
+      .from(whatsapp_configs)
+      .where(and(eq(whatsapp_configs.id, id), eq(whatsapp_configs.org_id, orgId)))
+      .limit(1)
+    return (row as WhatsAppConfig) ?? null
   }
 
-  updateConfig(orgId: string, id: string, updates: Partial<WhatsAppConfigInput>): void {
-    const fields: string[] = []
-    const values: any[] = []
+  async updateConfig(orgId: string, id: string, updates: Partial<WhatsAppConfigInput>): Promise<void> {
+    const values: Partial<typeof whatsapp_configs.$inferInsert> = {}
 
-    if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
-    if (updates.phone_number_id !== undefined) { fields.push('phone_number_id = ?'); values.push(updates.phone_number_id) }
-    if (updates.business_account_id !== undefined) { fields.push('business_account_id = ?'); values.push(updates.business_account_id) }
-    if (updates.access_token !== undefined) { fields.push('access_token = ?'); values.push(updates.access_token) }
-    if (updates.phone_display !== undefined) { fields.push('phone_display = ?'); values.push(updates.phone_display) }
-    if (updates.daily_limit !== undefined) { fields.push('daily_limit = ?'); values.push(updates.daily_limit) }
+    if (updates.name !== undefined) values.name = updates.name
+    if (updates.phone_number_id !== undefined) values.phone_number_id = updates.phone_number_id
+    if (updates.business_account_id !== undefined) values.business_account_id = updates.business_account_id
+    if (updates.access_token !== undefined) values.access_token = updates.access_token
+    if (updates.phone_display !== undefined) values.phone_display = updates.phone_display
+    if (updates.daily_limit !== undefined) values.daily_limit = updates.daily_limit
 
-    if (fields.length === 0) return
-    fields.push("updated_at = datetime('now')")
-    values.push(id, orgId)
+    if (Object.keys(values).length === 0) return
+    values.updated_at = now()
 
-    db.prepare(`UPDATE whatsapp_configs SET ${fields.join(', ')} WHERE id = ? AND org_id = ?`).run(...values)
+    await getDb()
+      .update(whatsapp_configs)
+      .set(values)
+      .where(and(eq(whatsapp_configs.id, id), eq(whatsapp_configs.org_id, orgId)))
   }
 
-  deleteConfig(orgId: string, id: string): void {
-    db.prepare('DELETE FROM whatsapp_configs WHERE id = ? AND org_id = ?').run(id, orgId)
+  async deleteConfig(orgId: string, id: string): Promise<void> {
+    await getDb()
+      .delete(whatsapp_configs)
+      .where(and(eq(whatsapp_configs.id, id), eq(whatsapp_configs.org_id, orgId)))
   }
 
   // --------------------------------------------------------------------------
@@ -197,37 +218,54 @@ class WhatsAppService {
   // --------------------------------------------------------------------------
 
   async syncTemplates(orgId: string, configId: string): Promise<number> {
-    const config = this.getConfig(orgId, configId)
+    const config = await this.getConfig(orgId, configId)
     if (!config) throw new Error('Config not found')
     if (!config.business_account_id) throw new Error('Business Account ID required to sync templates')
 
     const data = await this.metaApi(config, `/${config.business_account_id}/message_templates?limit=100`)
     const templates = data.data || []
 
+    const db = getDb()
     let synced = 0
     for (const tpl of templates) {
-      const existing = db.prepare(
-        'SELECT id FROM whatsapp_templates WHERE config_id = ? AND meta_template_name = ? AND language = ?'
-      ).get(configId, tpl.name, tpl.language) as { id: string } | null
+      const [existing] = await db
+        .select({ id: whatsapp_templates.id })
+        .from(whatsapp_templates)
+        .where(and(
+          eq(whatsapp_templates.config_id, configId),
+          eq(whatsapp_templates.meta_template_name, tpl.name),
+          eq(whatsapp_templates.language, tpl.language),
+        ))
+        .limit(1)
 
       const bodyComponent = (tpl.components || []).find((c: any) => c.type === 'BODY')
       const bodyText = bodyComponent?.text || null
 
       if (existing) {
-        db.prepare(`
-          UPDATE whatsapp_templates
-          SET status = ?, components_json = ?, meta_template_id = ?, category = ?, body_text = ?, updated_at = datetime('now')
-          WHERE id = ?
-        `).run(tpl.status, JSON.stringify(tpl.components || []), tpl.id, tpl.category, bodyText, existing.id)
+        await db
+          .update(whatsapp_templates)
+          .set({
+            status: tpl.status,
+            components_json: JSON.stringify(tpl.components || []),
+            meta_template_id: tpl.id,
+            category: tpl.category,
+            body_text: bodyText,
+            updated_at: now(),
+          })
+          .where(eq(whatsapp_templates.id, existing.id))
       } else {
-        db.prepare(`
-          INSERT INTO whatsapp_templates (id, org_id, config_id, meta_template_name, meta_template_id, language, category, status, components_json, body_text)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          generateId('wat'), orgId, configId, tpl.name, tpl.id,
-          tpl.language, tpl.category, tpl.status,
-          JSON.stringify(tpl.components || []), bodyText
-        )
+        await db.insert(whatsapp_templates).values({
+          id: generateId('wat'),
+          org_id: orgId,
+          config_id: configId,
+          meta_template_name: tpl.name,
+          meta_template_id: tpl.id,
+          language: tpl.language,
+          category: tpl.category,
+          status: tpl.status,
+          components_json: JSON.stringify(tpl.components || []),
+          body_text: bodyText,
+        })
       }
       synced++
     }
@@ -235,15 +273,26 @@ class WhatsAppService {
     return synced
   }
 
-  getTemplates(orgId: string, configId?: string): WhatsAppTemplate[] {
+  async getTemplates(orgId: string, configId?: string): Promise<WhatsAppTemplate[]> {
+    const db = getDb()
     if (configId) {
-      return db.prepare('SELECT * FROM whatsapp_templates WHERE org_id = ? AND config_id = ? ORDER BY meta_template_name').all(orgId, configId) as WhatsAppTemplate[]
+      const rows = await db
+        .select()
+        .from(whatsapp_templates)
+        .where(and(eq(whatsapp_templates.org_id, orgId), eq(whatsapp_templates.config_id, configId)))
+        .orderBy(whatsapp_templates.meta_template_name)
+      return rows as WhatsAppTemplate[]
     }
-    return db.prepare('SELECT * FROM whatsapp_templates WHERE org_id = ? ORDER BY meta_template_name').all(orgId) as WhatsAppTemplate[]
+    const rows = await db
+      .select()
+      .from(whatsapp_templates)
+      .where(eq(whatsapp_templates.org_id, orgId))
+      .orderBy(whatsapp_templates.meta_template_name)
+    return rows as WhatsAppTemplate[]
   }
 
   async createTemplate(orgId: string, configId: string, input: WhatsAppTemplateInput): Promise<WhatsAppTemplate> {
-    const config = this.getConfig(orgId, configId)
+    const config = await this.getConfig(orgId, configId)
     if (!config) throw new Error('Config not found')
     if (!config.business_account_id) throw new Error('Business Account ID required')
 
@@ -257,23 +306,33 @@ class WhatsAppService {
     const bodyComponent = input.components.find(c => c.type === 'BODY')
     const id = generateId('wat')
 
-    db.prepare(`
-      INSERT INTO whatsapp_templates (id, org_id, config_id, meta_template_name, meta_template_id, language, category, status, components_json, body_text)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
-    `).run(
-      id, orgId, configId, input.name, result.id,
-      input.language || 'en', input.category || 'MARKETING',
-      JSON.stringify(input.components), bodyComponent?.text || null
-    )
+    const db = getDb()
+    await db.insert(whatsapp_templates).values({
+      id,
+      org_id: orgId,
+      config_id: configId,
+      meta_template_name: input.name,
+      meta_template_id: result.id,
+      language: input.language || 'en',
+      category: input.category || 'MARKETING',
+      status: 'PENDING',
+      components_json: JSON.stringify(input.components),
+      body_text: bodyComponent?.text || null,
+    })
 
-    return db.prepare('SELECT * FROM whatsapp_templates WHERE id = ?').get(id) as WhatsAppTemplate
+    const [row] = await db.select().from(whatsapp_templates).where(eq(whatsapp_templates.id, id)).limit(1)
+    return row as WhatsAppTemplate
   }
 
   async deleteTemplate(orgId: string, id: string): Promise<void> {
-    const tpl = db.prepare('SELECT * FROM whatsapp_templates WHERE id = ? AND org_id = ?').get(id, orgId) as WhatsAppTemplate | null
+    const [tpl] = await getDb()
+      .select()
+      .from(whatsapp_templates)
+      .where(and(eq(whatsapp_templates.id, id), eq(whatsapp_templates.org_id, orgId)))
+      .limit(1)
     if (!tpl) throw new Error('Template not found')
 
-    const config = this.getConfig(orgId, tpl.config_id)
+    const config = await this.getConfig(orgId, tpl.config_id)
     if (config?.business_account_id) {
       try {
         await this.metaApi(config, `/${config.business_account_id}/message_templates?name=${tpl.meta_template_name}`, 'DELETE')
@@ -281,32 +340,38 @@ class WhatsAppService {
         // Template may already be deleted on Meta's side
       }
     }
-    db.prepare('DELETE FROM whatsapp_templates WHERE id = ? AND org_id = ?').run(id, orgId)
+    await getDb()
+      .delete(whatsapp_templates)
+      .where(and(eq(whatsapp_templates.id, id), eq(whatsapp_templates.org_id, orgId)))
   }
 
   // --------------------------------------------------------------------------
   // Sending
   // --------------------------------------------------------------------------
 
-  private resetDailyCountIfNeeded(config: WhatsAppConfig): void {
+  private async resetDailyCountIfNeeded(config: WhatsAppConfig): Promise<void> {
     const today = new Date().toISOString().split('T')[0]
     if (config.last_reset_date !== today) {
-      db.prepare(`UPDATE whatsapp_configs SET sent_today = 0, last_reset_date = ?, updated_at = datetime('now') WHERE id = ?`).run(today, config.id)
+      await getDb()
+        .update(whatsapp_configs)
+        .set({ sent_today: 0, last_reset_date: today, updated_at: now() })
+        .where(eq(whatsapp_configs.id, config.id))
       config.sent_today = 0
       config.last_reset_date = today
     }
   }
 
   async sendTemplate(orgId: string, configId: string, input: SendTemplateInput): Promise<WhatsAppMessage> {
-    const config = this.getConfig(orgId, configId)
+    const config = await this.getConfig(orgId, configId)
     if (!config) throw new Error('Config not found')
     if (config.status !== 'active') throw new Error('Config is not active')
 
-    this.resetDailyCountIfNeeded(config)
+    await this.resetDailyCountIfNeeded(config)
     if (config.sent_today >= config.daily_limit) {
       throw new Error(`Daily limit reached (${config.daily_limit})`)
     }
 
+    const db = getDb()
     const msgId = generateId('wam')
     const cleanPhone = input.phone.replace(/\D/g, '')
     const content = {
@@ -321,31 +386,49 @@ class WhatsAppService {
       },
     }
 
-    db.prepare(`
-      INSERT INTO whatsapp_messages (id, org_id, config_id, campaign_id, contact_id, phone_number, message_type, content_json, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'template', ?, 'queued')
-    `).run(msgId, orgId, configId, input.campaign_id || null, input.contact_id || null, cleanPhone, JSON.stringify(content))
+    await db.insert(whatsapp_messages).values({
+      id: msgId,
+      org_id: orgId,
+      config_id: configId,
+      campaign_id: input.campaign_id || null,
+      contact_id: input.contact_id || null,
+      phone_number: cleanPhone,
+      message_type: 'template',
+      content_json: JSON.stringify(content),
+      status: 'queued',
+    })
 
     try {
       const result = await this.metaApi(config, `/${config.phone_number_id}/messages`, 'POST', content)
       const wamid = result.messages?.[0]?.id || null
 
-      db.prepare(`UPDATE whatsapp_messages SET status = 'sent', wamid = ?, sent_at = datetime('now') WHERE id = ?`).run(wamid, msgId)
-      db.prepare(`UPDATE whatsapp_configs SET sent_today = sent_today + 1, updated_at = datetime('now') WHERE id = ?`).run(configId)
+      await db
+        .update(whatsapp_messages)
+        .set({ status: 'sent', wamid, sent_at: now() })
+        .where(eq(whatsapp_messages.id, msgId))
+      await db
+        .update(whatsapp_configs)
+        .set({ sent_today: sql`${whatsapp_configs.sent_today} + 1`, updated_at: now() })
+        .where(eq(whatsapp_configs.id, configId))
 
-      return db.prepare('SELECT * FROM whatsapp_messages WHERE id = ?').get(msgId) as WhatsAppMessage
+      const [row] = await db.select().from(whatsapp_messages).where(eq(whatsapp_messages.id, msgId)).limit(1)
+      return row as WhatsAppMessage
     } catch (err: any) {
-      db.prepare(`UPDATE whatsapp_messages SET status = 'failed', error_message = ? WHERE id = ?`).run(err.message, msgId)
+      await db
+        .update(whatsapp_messages)
+        .set({ status: 'failed', error_message: err.message })
+        .where(eq(whatsapp_messages.id, msgId))
       throw err
     }
   }
 
   async sendText(orgId: string, configId: string, phone: string, text: string, contactId?: string): Promise<WhatsAppMessage> {
-    const config = this.getConfig(orgId, configId)
+    const config = await this.getConfig(orgId, configId)
     if (!config) throw new Error('Config not found')
     if (config.status !== 'active') throw new Error('Config is not active')
 
-    this.resetDailyCountIfNeeded(config)
+    await this.resetDailyCountIfNeeded(config)
+    const db = getDb()
     const msgId = generateId('wam')
     const cleanPhone = phone.replace(/\D/g, '')
     const content = {
@@ -356,21 +439,37 @@ class WhatsAppService {
       text: { body: text },
     }
 
-    db.prepare(`
-      INSERT INTO whatsapp_messages (id, org_id, config_id, contact_id, phone_number, message_type, content_json, status)
-      VALUES (?, ?, ?, ?, ?, 'text', ?, 'queued')
-    `).run(msgId, orgId, configId, contactId || null, cleanPhone, JSON.stringify(content))
+    await db.insert(whatsapp_messages).values({
+      id: msgId,
+      org_id: orgId,
+      config_id: configId,
+      contact_id: contactId || null,
+      phone_number: cleanPhone,
+      message_type: 'text',
+      content_json: JSON.stringify(content),
+      status: 'queued',
+    })
 
     try {
       const result = await this.metaApi(config, `/${config.phone_number_id}/messages`, 'POST', content)
       const wamid = result.messages?.[0]?.id || null
 
-      db.prepare(`UPDATE whatsapp_messages SET status = 'sent', wamid = ?, sent_at = datetime('now') WHERE id = ?`).run(wamid, msgId)
-      db.prepare(`UPDATE whatsapp_configs SET sent_today = sent_today + 1, updated_at = datetime('now') WHERE id = ?`).run(configId)
+      await db
+        .update(whatsapp_messages)
+        .set({ status: 'sent', wamid, sent_at: now() })
+        .where(eq(whatsapp_messages.id, msgId))
+      await db
+        .update(whatsapp_configs)
+        .set({ sent_today: sql`${whatsapp_configs.sent_today} + 1`, updated_at: now() })
+        .where(eq(whatsapp_configs.id, configId))
 
-      return db.prepare('SELECT * FROM whatsapp_messages WHERE id = ?').get(msgId) as WhatsAppMessage
+      const [row] = await db.select().from(whatsapp_messages).where(eq(whatsapp_messages.id, msgId)).limit(1)
+      return row as WhatsAppMessage
     } catch (err: any) {
-      db.prepare(`UPDATE whatsapp_messages SET status = 'failed', error_message = ? WHERE id = ?`).run(err.message, msgId)
+      await db
+        .update(whatsapp_messages)
+        .set({ status: 'failed', error_message: err.message })
+        .where(eq(whatsapp_messages.id, msgId))
       throw err
     }
   }
@@ -413,13 +512,18 @@ class WhatsAppService {
   // Webhook Processing
   // --------------------------------------------------------------------------
 
-  verifyToken(token: string): boolean {
-    const result = db.prepare('SELECT id FROM whatsapp_configs WHERE webhook_verify_token = ? LIMIT 1').get(token)
-    return !!result
+  async verifyToken(token: string): Promise<boolean> {
+    const [row] = await getDb()
+      .select({ id: whatsapp_configs.id })
+      .from(whatsapp_configs)
+      .where(eq(whatsapp_configs.webhook_verify_token, token))
+      .limit(1)
+    return !!row
   }
 
-  processWebhook(payload: any): void {
+  async processWebhook(payload: any): Promise<void> {
     try {
+      const db = getDb()
       const entries = payload.entry || []
       for (const entry of entries) {
         const changes = entry.changes || []
@@ -432,15 +536,21 @@ class WhatsAppService {
             if (!s.id) continue
 
             if (s.status === 'delivered') {
-              db.prepare(`UPDATE whatsapp_messages SET status = 'delivered', delivered_at = ? WHERE wamid = ?`)
-                .run(new Date(parseInt(s.timestamp) * 1000).toISOString(), s.id)
+              await db
+                .update(whatsapp_messages)
+                .set({ status: 'delivered', delivered_at: new Date(parseInt(s.timestamp) * 1000).toISOString() })
+                .where(eq(whatsapp_messages.wamid, s.id))
             } else if (s.status === 'read') {
-              db.prepare(`UPDATE whatsapp_messages SET status = 'read', read_at = ? WHERE wamid = ?`)
-                .run(new Date(parseInt(s.timestamp) * 1000).toISOString(), s.id)
+              await db
+                .update(whatsapp_messages)
+                .set({ status: 'read', read_at: new Date(parseInt(s.timestamp) * 1000).toISOString() })
+                .where(eq(whatsapp_messages.wamid, s.id))
             } else if (s.status === 'failed') {
               const errorMsg = s.errors?.[0]?.message || 'Delivery failed'
-              db.prepare(`UPDATE whatsapp_messages SET status = 'failed', error_message = ? WHERE wamid = ?`)
-                .run(errorMsg, s.id)
+              await db
+                .update(whatsapp_messages)
+                .set({ status: 'failed', error_message: errorMsg })
+                .where(eq(whatsapp_messages.wamid, s.id))
             }
           }
         }
@@ -454,54 +564,59 @@ class WhatsAppService {
   // Message Queries
   // --------------------------------------------------------------------------
 
-  getMessages(orgId: string, filters?: { configId?: string; status?: string; limit?: number; offset?: number }): { messages: WhatsAppMessage[]; total: number } {
-    let where = 'WHERE org_id = ?'
-    const params: any[] = [orgId]
+  async getMessages(orgId: string, filters?: { configId?: string; status?: string; limit?: number; offset?: number }): Promise<{ messages: WhatsAppMessage[]; total: number }> {
+    const db = getDb()
+    const conditions = [eq(whatsapp_messages.org_id, orgId)]
+    if (filters?.configId) conditions.push(eq(whatsapp_messages.config_id, filters.configId))
+    if (filters?.status) conditions.push(eq(whatsapp_messages.status, filters.status))
+    const where = and(...conditions)
 
-    if (filters?.configId) { where += ' AND config_id = ?'; params.push(filters.configId) }
-    if (filters?.status) { where += ' AND status = ?'; params.push(filters.status) }
-
-    const total = (db.prepare(`SELECT COUNT(*) as count FROM whatsapp_messages ${where}`).get(...params) as any).count
+    const [tot] = await db.select({ value: count() }).from(whatsapp_messages).where(where)
     const limit = filters?.limit || 50
     const offset = filters?.offset || 0
 
-    const messages = db.prepare(
-      `SELECT * FROM whatsapp_messages ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
-    ).all(...params, limit, offset) as WhatsAppMessage[]
+    const messages = await db
+      .select()
+      .from(whatsapp_messages)
+      .where(where)
+      .orderBy(desc(whatsapp_messages.created_at))
+      .limit(limit)
+      .offset(offset)
 
-    return { messages, total }
+    return { messages: messages as WhatsAppMessage[], total: tot?.value ?? 0 }
   }
 
   // --------------------------------------------------------------------------
   // Stats
   // --------------------------------------------------------------------------
 
-  getStats(orgId: string, configId?: string): WhatsAppStats {
-    let where = 'WHERE org_id = ?'
-    const params: any[] = [orgId]
-    if (configId) { where += ' AND config_id = ?'; params.push(configId) }
+  async getStats(orgId: string, configId?: string): Promise<WhatsAppStats> {
+    const conditions = [eq(whatsapp_messages.org_id, orgId)]
+    if (configId) conditions.push(eq(whatsapp_messages.config_id, configId))
+    const where = and(...conditions)
 
-    const row = db.prepare(`
-      SELECT
-        COUNT(*) as total_messages,
-        SUM(CASE WHEN status IN ('sent', 'delivered', 'read') THEN 1 ELSE 0 END) as sent,
-        SUM(CASE WHEN status IN ('delivered', 'read') THEN 1 ELSE 0 END) as delivered,
-        SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) as read_count,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-      FROM whatsapp_messages ${where}
-    `).get(...params) as any
+    const [row] = await getDb()
+      .select({
+        total_messages: sql<number>`count(*)::int`,
+        sent: sql<number>`sum(case when ${whatsapp_messages.status} in ('sent', 'delivered', 'read') then 1 else 0 end)::int`,
+        delivered: sql<number>`sum(case when ${whatsapp_messages.status} in ('delivered', 'read') then 1 else 0 end)::int`,
+        read_count: sql<number>`sum(case when ${whatsapp_messages.status} = 'read' then 1 else 0 end)::int`,
+        failed: sql<number>`sum(case when ${whatsapp_messages.status} = 'failed' then 1 else 0 end)::int`,
+      })
+      .from(whatsapp_messages)
+      .where(where)
 
-    const total = row.total_messages || 0
-    const sentCount = row.sent || 0
+    const total = row?.total_messages || 0
+    const sentCount = row?.sent || 0
 
     return {
       total_messages: total,
       sent: sentCount,
-      delivered: row.delivered || 0,
-      read: row.read_count || 0,
-      failed: row.failed || 0,
-      delivery_rate: sentCount > 0 ? Math.round(((row.delivered || 0) / sentCount) * 100) : 0,
-      read_rate: sentCount > 0 ? Math.round(((row.read_count || 0) / sentCount) * 100) : 0,
+      delivered: row?.delivered || 0,
+      read: row?.read_count || 0,
+      failed: row?.failed || 0,
+      delivery_rate: sentCount > 0 ? Math.round(((row?.delivered || 0) / sentCount) * 100) : 0,
+      read_rate: sentCount > 0 ? Math.round(((row?.read_count || 0) / sentCount) * 100) : 0,
     }
   }
 }

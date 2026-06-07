@@ -78,15 +78,15 @@ const CreateTemplateSchema = z.object({
 // Configs
 // ============================================================================
 
-app.get('/whatsapp/configs', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) => {
+app.get('/whatsapp/configs', requirePermission(PERMISSIONS.WHATSAPP_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const configs = whatsappService.getConfigs(orgId)
+  const configs = await whatsappService.getConfigs(orgId)
   return success(c, { configs: configs.map(cfg => ({ ...cfg, access_token: '***' })) })
 })
 
-app.get('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) => {
+app.get('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const config = whatsappService.getConfig(orgId, c.req.param('id'))
+  const config = await whatsappService.getConfig(orgId, c.req.param('id'))
   if (!config) throw new AppError(404, 'Config not found')
   return success(c, { ...config, access_token: '***' })
 })
@@ -96,20 +96,20 @@ app.post('/whatsapp/configs', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), as
   const orgId = getOrgId(c)
   const body = await validateBody(c, CreateConfigSchema)
 
-  const config = whatsappService.createConfig(orgId, user.id, body)
+  const config = await whatsappService.createConfig(orgId, user.id, body)
   return success(c, { ...config, access_token: '***' }, 'WhatsApp account connected', 201)
 })
 
 app.put('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), async (c) => {
   const orgId = getOrgId(c)
   const body = await validateBody(c, UpdateConfigSchema)
-  whatsappService.updateConfig(orgId, c.req.param('id'), body)
+  await whatsappService.updateConfig(orgId, c.req.param('id'), body)
   return success(c, null, 'Config updated')
 })
 
-app.delete('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), (c) => {
+app.delete('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), async (c) => {
   const orgId = getOrgId(c)
-  whatsappService.deleteConfig(orgId, c.req.param('id'))
+  await whatsappService.deleteConfig(orgId, c.req.param('id'))
   return success(c, null, 'Config deleted')
 })
 
@@ -117,10 +117,10 @@ app.delete('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAG
 // Templates
 // ============================================================================
 
-app.get('/whatsapp/templates', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) => {
+app.get('/whatsapp/templates', requirePermission(PERMISSIONS.WHATSAPP_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const configId = c.req.query('config_id')
-  const templates = whatsappService.getTemplates(orgId, configId || undefined)
+  const templates = await whatsappService.getTemplates(orgId, configId || undefined)
   return success(c, { templates })
 })
 
@@ -173,7 +173,7 @@ app.post('/whatsapp/send-bulk', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), 
 // Messages & Stats
 // ============================================================================
 
-app.get('/whatsapp/messages', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) => {
+app.get('/whatsapp/messages', requirePermission(PERMISSIONS.WHATSAPP_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const filters = {
     configId: c.req.query('config_id') || undefined,
@@ -181,14 +181,14 @@ app.get('/whatsapp/messages', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) 
     limit: parseInt(c.req.query('limit') || '50'),
     offset: parseInt(c.req.query('offset') || '0'),
   }
-  const result = whatsappService.getMessages(orgId, filters)
+  const result = await whatsappService.getMessages(orgId, filters)
   return success(c, result)
 })
 
-app.get('/whatsapp/stats', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) => {
+app.get('/whatsapp/stats', requirePermission(PERMISSIONS.WHATSAPP_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const configId = c.req.query('config_id') || undefined
-  const stats = whatsappService.getStats(orgId, configId)
+  const stats = await whatsappService.getStats(orgId, configId)
   return success(c, stats)
 })
 
@@ -196,12 +196,12 @@ app.get('/whatsapp/stats', requirePermission(PERMISSIONS.WHATSAPP_VIEW), (c) => 
 // Webhook (public — no auth)
 // ============================================================================
 
-app.get('/whatsapp/webhook', (c) => {
+app.get('/whatsapp/webhook', async (c) => {
   const mode = c.req.query('hub.mode')
   const token = c.req.query('hub.verify_token')
   const challenge = c.req.query('hub.challenge')
 
-  if (mode === 'subscribe' && token && whatsappService.verifyToken(token)) {
+  if (mode === 'subscribe' && token && (await whatsappService.verifyToken(token))) {
     return c.text(challenge || '', 200)
   }
   return c.text('Forbidden', 403)
@@ -209,7 +209,7 @@ app.get('/whatsapp/webhook', (c) => {
 
 app.post('/whatsapp/webhook', async (c) => {
   const body = await c.req.json()
-  whatsappService.processWebhook(body)
+  await whatsappService.processWebhook(body)
   return c.text('OK', 200)
 })
 

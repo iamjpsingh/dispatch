@@ -18,7 +18,9 @@ import { webhookRegistrationService } from '../services/webhookRegistrationServi
 import { cloudflareService } from '../services/cloudflareService'
 import { oauthService } from '../services/oauthService'
 import { sendingDomainService } from '../services/sendingDomainService'
-import { db } from '../db/connection'
+import { getDb } from '../db/pg/client'
+import { users, organizations, org_members, sessions } from '../db/pg/schema'
+import { eq, and } from 'drizzle-orm'
 import { SERVER } from '../config'
 import { success, error, paginated } from '../utils/response'
 import { validateBody } from '../utils/validate'
@@ -97,20 +99,28 @@ app.put('/admin/platform/users/:userId/status', requirePlatformAdmin(), async (c
   if (!['active', 'suspended', 'deactivated'].includes(body.status)) {
     return error(c, 'Invalid status. Use: active, suspended, deactivated', 400)
   }
-  const result = db.prepare("UPDATE users SET status = ?, updated_at = datetime('now') WHERE id = ? AND is_platform_admin = 0").run(body.status, userId)
-  if (result.changes === 0) return error(c, 'User not found', 404)
+  const updated = await getDb()
+    .update(users)
+    .set({ status: body.status, updated_at: new Date().toISOString() })
+    .where(and(eq(users.id, userId), eq(users.is_platform_admin, 0)))
+    .returning()
+  if (updated.length === 0) return error(c, 'User not found', 404)
   return success(c, undefined, `User ${body.status}`)
 })
 
-app.delete('/admin/platform/users/:userId', requirePlatformAdmin(), (c) => {
+app.delete('/admin/platform/users/:userId', requirePlatformAdmin(), async (c) => {
   const userId = c.req.param('userId')
+  const dbc = getDb()
   // Don't allow deleting platform admin
-  const user = db.prepare('SELECT is_platform_admin FROM users WHERE id = ?').get(userId) as any
+  const [user] = await dbc
+    .select({ is_platform_admin: users.is_platform_admin })
+    .from(users)
+    .where(eq(users.id, userId))
   if (!user) return error(c, 'User not found', 404)
   if (user.is_platform_admin) return error(c, 'Cannot delete platform admin', 403)
-  db.prepare('DELETE FROM org_members WHERE user_id = ?').run(userId)
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
-  db.prepare('DELETE FROM users WHERE id = ?').run(userId)
+  await dbc.delete(org_members).where(eq(org_members.user_id, userId))
+  await dbc.delete(sessions).where(eq(sessions.user_id, userId))
+  await dbc.delete(users).where(eq(users.id, userId))
   return success(c, undefined, 'User deleted')
 })
 
@@ -121,16 +131,21 @@ app.put('/admin/platform/orgs/:orgId/status', requirePlatformAdmin(), async (c) 
   if (!['active', 'suspended', 'archived'].includes(body.status)) {
     return error(c, 'Invalid status. Use: active, suspended, archived', 400)
   }
-  const result = db.prepare("UPDATE organizations SET status = ?, updated_at = datetime('now') WHERE id = ?").run(body.status, orgId)
-  if (result.changes === 0) return error(c, 'Organization not found', 404)
+  const updated = await getDb()
+    .update(organizations)
+    .set({ status: body.status, updated_at: new Date().toISOString() })
+    .where(eq(organizations.id, orgId))
+    .returning()
+  if (updated.length === 0) return error(c, 'Organization not found', 404)
   return success(c, undefined, `Organization ${body.status}`)
 })
 
-app.delete('/admin/platform/orgs/:orgId', requirePlatformAdmin(), (c) => {
+app.delete('/admin/platform/orgs/:orgId', requirePlatformAdmin(), async (c) => {
   const orgId = c.req.param('orgId')
-  db.prepare('DELETE FROM org_members WHERE org_id = ?').run(orgId)
-  const result = db.prepare('DELETE FROM organizations WHERE id = ?').run(orgId)
-  if (result.changes === 0) return error(c, 'Organization not found', 404)
+  const dbc = getDb()
+  await dbc.delete(org_members).where(eq(org_members.org_id, orgId))
+  const deleted = await dbc.delete(organizations).where(eq(organizations.id, orgId)).returning()
+  if (deleted.length === 0) return error(c, 'Organization not found', 404)
   return success(c, undefined, 'Organization deleted')
 })
 
@@ -634,9 +649,9 @@ app.delete('/admin/org/members/:userId', requirePermission(PERMISSIONS.USERS_REM
 // ============================================================================
 
 /** List teams */
-app.get('/admin/teams', requirePermission(PERMISSIONS.TEAMS_VIEW), (c) => {
+app.get('/admin/teams', requirePermission(PERMISSIONS.TEAMS_VIEW), async (c) => {
   const orgId = getOrgId(c)
-  const teams = teamService.list(orgId)
+  const teams = await teamService.list(orgId)
   return success(c, { teams })
 })
 
@@ -686,14 +701,14 @@ app.delete('/admin/teams/:teamId', requirePermission(PERMISSIONS.TEAMS_MANAGE), 
 })
 
 /** List team members */
-app.get('/admin/teams/:teamId/members', requirePermission(PERMISSIONS.TEAMS_VIEW), (c) => {
+app.get('/admin/teams/:teamId/members', requirePermission(PERMISSIONS.TEAMS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const teamId = c.req.param('teamId')
 
-  const team = teamService.get(orgId, teamId)
+  const team = await teamService.get(orgId, teamId)
   if (!team) return error(c, 'Team not found', 404)
 
-  const members = teamService.getMembers(teamId)
+  const members = await teamService.getMembers(teamId)
   return success(c, { members })
 })
 
@@ -704,7 +719,7 @@ app.post('/admin/teams/:teamId/members', requirePermission(PERMISSIONS.TEAMS_MAN
   const teamId = c.req.param('teamId')
   const { userId, role } = await validateBody(c, TeamMemberSchema)
 
-  const team = teamService.get(orgId, teamId)
+  const team = await teamService.get(orgId, teamId)
   if (!team) return error(c, 'Team not found', 404)
 
   // Verify user is an org member
@@ -819,7 +834,7 @@ app.delete('/admin/permissions/:userId/:permission', requirePermission(PERMISSIO
 // ============================================================================
 
 /** Query audit logs */
-app.get('/admin/audit-logs', requirePermission(PERMISSIONS.AUDIT_VIEW), (c) => {
+app.get('/admin/audit-logs', requirePermission(PERMISSIONS.AUDIT_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const query = {
     orgId,
@@ -831,12 +846,12 @@ app.get('/admin/audit-logs', requirePermission(PERMISSIONS.AUDIT_VIEW), (c) => {
     limit: Math.min(Number(c.req.query('limit')) || 50, 200),
   }
 
-  const { logs, total } = auditService.queryAuditLogs(query)
+  const { logs, total } = await auditService.queryAuditLogs(query)
   return paginated(c, logs, { page: query.page, limit: query.limit, total })
 })
 
 /** Query activity logs */
-app.get('/admin/activity-logs', requirePermission(PERMISSIONS.LOGS_VIEW), (c) => {
+app.get('/admin/activity-logs', requirePermission(PERMISSIONS.LOGS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const query = {
     orgId,
@@ -848,15 +863,15 @@ app.get('/admin/activity-logs', requirePermission(PERMISSIONS.LOGS_VIEW), (c) =>
     limit: Math.min(Number(c.req.query('limit')) || 50, 200),
   }
 
-  const { logs, total } = auditService.queryActivityLogs(query)
+  const { logs, total } = await auditService.queryActivityLogs(query)
   return paginated(c, logs, { page: query.page, limit: query.limit, total })
 })
 
 /** Recent activity for dashboard */
-app.get('/admin/activity/recent', requirePermission(PERMISSIONS.LOGS_VIEW), (c) => {
+app.get('/admin/activity/recent', requirePermission(PERMISSIONS.LOGS_VIEW), async (c) => {
   const orgId = getOrgId(c)
   const limit = Math.min(Number(c.req.query('limit')) || 20, 100)
-  const activity = auditService.getRecentActivity(orgId, limit)
+  const activity = await auditService.getRecentActivity(orgId, limit)
   return success(c, { activity })
 })
 
