@@ -16,7 +16,6 @@ import { SERVER, CORS, AUTH, API, DIRECTORIES, ENV, COOKIE, WORKERS } from './co
 import { logger } from './utils/logger'
 
 // Database initialization (must run before services)
-import { initDatabase } from './db'
 
 // Middleware
 import { authMiddleware } from './middleware/auth'
@@ -256,8 +255,9 @@ async function initialize() {
   const dirs = Object.values(DIRECTORIES)
   await Promise.all(dirs.map((dir) => !existsSync(dir) && mkdir(dir, { recursive: true })))
 
-  // Initialize database (run migrations)
-  initDatabase()
+  // Postgres migrations + seeds run at boot in index.ts (runMigrations / seedSystemRoles
+  // / seedStarterTemplates / systemSettingsService.init). The old SQLite initDatabase()
+  // is retired — all identity/content/deliverability domains live in Postgres now.
 
   // Initialize tracking service
   const trackingConfigured = d1Service.initialize()

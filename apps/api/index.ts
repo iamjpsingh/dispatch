@@ -11,11 +11,13 @@ import app from './src/app'
 import { runMigrations } from './src/db/pg/migrate'
 import { seedSystemRoles } from './src/db/pg/seed'
 import { templateService } from './src/services/templateService'
+import { systemSettingsService } from './src/services/systemSettingsService'
 
 if (process.env.NODE_ENV !== 'test') {
   await runMigrations()
   await seedSystemRoles()
   await templateService.seedStarterTemplates()
+  await systemSettingsService.init() // load config cache (sync reads everywhere)
 }
 
 export default app
