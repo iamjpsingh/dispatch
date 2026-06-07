@@ -178,9 +178,30 @@ export const invitations = pgTable(
   ]
 )
 
+// API keys (P4.E — migrated off data/apikeys.db). Mirrors the sqlite contract:
+// argon2id key_hash, snake_case, integer-flag `enabled`, scopes as JSON text.
+export const api_keys = pgTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey(),
+    org_id: text('org_id').references(() => organizations.id, { onDelete: 'cascade' }),
+    user_id: text('user_id').notNull(),
+    name: text('name').notNull(),
+    key_prefix: text('key_prefix').notNull(),
+    key_hash: text('key_hash').notNull(),
+    scopes: text('scopes').notNull().default('["read"]'),
+    last_used_at: ts('last_used_at'),
+    expires_at: ts('expires_at'),
+    enabled: integer('enabled').notNull().default(1),
+    created_at: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('idx_ak_org').on(t.org_id), index('idx_ak_user').on(t.user_id), index('idx_ak_prefix').on(t.key_prefix)]
+)
+
 export type UserRow = typeof users.$inferSelect
 export type OrganizationRow = typeof organizations.$inferSelect
 export type SessionRow = typeof sessions.$inferSelect
 export type OrgMemberRow = typeof org_members.$inferSelect
 export type RoleRow = typeof roles.$inferSelect
 export type InvitationRow = typeof invitations.$inferSelect
+export type ApiKeyRow = typeof api_keys.$inferSelect
