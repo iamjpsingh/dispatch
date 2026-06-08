@@ -66,6 +66,8 @@ function jsonRequest(method: string, path: string, body?: object) {
 
 const SAMPLE_LOG = {
   id: 'log-1',
+  email: 'alice@example.com',
+  timestamp: '2025-01-01T00:00:00Z',
   recipient_email: 'alice@example.com',
   recipient_name: 'Alice',
   subject: 'Hello',
