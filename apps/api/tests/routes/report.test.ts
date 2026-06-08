@@ -71,7 +71,7 @@ const SAMPLE_LOG = {
   recipient_email: 'alice@example.com',
   recipient_name: 'Alice',
   subject: 'Hello',
-  status: 'sent',
+  status: 'Sent' as const,
   send_type: 'bulk',
   provider_type: 'smtp',
   config_name: 'My Config',
