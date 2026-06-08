@@ -29,10 +29,7 @@ vi.mock('../../src/services/validationService', () => ({
 }))
 
 vi.mock('../../src/services/fileService', () => ({
-  FileService: {
-    saveUploadedFile: vi.fn(),
-    parseExcelFile: vi.fn(),
-  },
+  FileService: {},
 }))
 
 vi.mock('../../src/utils/logger', () => ({
