@@ -110,9 +110,9 @@ export const DATABASE = {
 } as const
 
 // Directory Paths
+// UPLOADS + LOGS removed in P5: uploads are parsed in memory (no disk) and send-logs
+// moved to the org-scoped email_logs Postgres table — the API container is stateless.
 export const DIRECTORIES = {
-  UPLOADS: './uploads',
-  LOGS: './logs',
   PUBLIC: './public',
   DATA: './data',
 } as const
