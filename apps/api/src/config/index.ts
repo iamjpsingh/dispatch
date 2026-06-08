@@ -26,6 +26,15 @@ export const REDIS = {
   URL: process.env.REDIS_URL || 'redis://localhost:6379',
 } as const
 
+// Object storage (S3 / MinIO dev → Cloudflare R2 prod). Env names match docker-compose.
+export const STORAGE = {
+  ENDPOINT: process.env.S3_ENDPOINT || 'http://localhost:9000',
+  ACCESS_KEY: process.env.S3_ACCESS_KEY || 'dispatch',
+  SECRET_KEY: process.env.S3_SECRET_KEY || 'dispatch-secret',
+  BUCKET: process.env.S3_BUCKET || 'dispatch',
+  REGION: process.env.S3_REGION || 'auto',
+} as const
+
 // CORS Configuration
 export const CORS = {
   ALLOWED_ORIGINS: [
