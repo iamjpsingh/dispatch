@@ -82,8 +82,8 @@ describe('Dashboard Routes', () => {
   describe('GET /dashboard/stats', () => {
     it('returns dashboard statistics', async () => {
       const app = createApp()
-      vi.mocked(logService.getLogs).mockReturnValue([])
-      vi.mocked(logService.getStats).mockReturnValue({ sent: 100, failed: 5, total: 105 })
+      vi.mocked(logService.getLogs).mockResolvedValue([])
+      vi.mocked(logService.getStats).mockResolvedValue({ sent: 100, failed: 5, total: 105, errors: 0 })
       vi.mocked(queueEngine.getStats).mockResolvedValue(SAMPLE_QUEUE_STATS)
       vi.mocked(queueEngine.getJobs).mockResolvedValue([])
 
@@ -92,15 +92,15 @@ describe('Dashboard Routes', () => {
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.success).toBe(true)
-      expect(body.data.stats).toEqual({ sent: 100, failed: 5, total: 105 })
+      expect(body.data.stats).toEqual({ sent: 100, failed: 5, total: 105, errors: 0 })
       expect(body.data.queue.stats).toEqual(SAMPLE_QUEUE_STATS)
       expect(body.data.timestamp).toBeTruthy()
     })
 
     it('includes active and pending jobs', async () => {
       const app = createApp()
-      vi.mocked(logService.getLogs).mockReturnValue([])
-      vi.mocked(logService.getStats).mockReturnValue({ sent: 0, failed: 0, total: 0 })
+      vi.mocked(logService.getLogs).mockResolvedValue([])
+      vi.mocked(logService.getStats).mockResolvedValue({ sent: 0, failed: 0, total: 0, errors: 0 })
       vi.mocked(queueEngine.getStats).mockResolvedValue(SAMPLE_QUEUE_STATS)
       vi.mocked(queueEngine.getJobs).mockImplementation((_userId: string, status?: string) => {
         if (status === 'running') return [SAMPLE_JOB] as any

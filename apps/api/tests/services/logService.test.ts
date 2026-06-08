@@ -46,6 +46,12 @@ describe('P5.3 — logService (Postgres, org-scoped)', () => {
     expect(logs[0].status).toBe('Sent')
   })
 
+  it('getStats returns zeros for an org with no logs', async () => {
+    await seedOrg('org-empty')
+    const stats = await logService.getStats('org-empty')
+    expect(stats).toEqual({ total: 0, sent: 0, failed: 0, errors: 0 })
+  })
+
   it('getStats counts by status for the org', async () => {
     await logService.addLog('org-a', makeLog({ status: 'Sent' }))
     await logService.addLog('org-a', makeLog({ status: 'Failed' }))

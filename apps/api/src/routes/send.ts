@@ -528,7 +528,7 @@ async function handleSmtpSend(c: Context, params: SmtpSendParams) {
     fromName,
   } = params
 
-  // Enqueue to persistent job queue (replaces in-memory batchService)
+  // Enqueue to the persistent BullMQ send queue
   const jobId = await queueEngine.enqueue(user.id, emailConfig, contacts, {
     type: useBatch ? 'batch' : 'direct',
     orgId: getOrgId(c),

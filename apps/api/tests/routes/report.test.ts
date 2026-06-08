@@ -79,7 +79,7 @@ const SAMPLE_LOG = {
   click_count: 0,
 }
 
-const SAMPLE_STATS = { sent: 100, failed: 5, total: 105 }
+const SAMPLE_STATS = { sent: 100, failed: 5, total: 105, errors: 0 }
 
 describe('Report Routes', () => {
   beforeEach(() => {
@@ -111,8 +111,8 @@ describe('Report Routes', () => {
     it('falls back to local logs when Worker API is not configured', async () => {
       const app = createApp()
       vi.mocked(d1Service.isConfigured).mockReturnValue(false)
-      vi.mocked(logService.getLogs).mockReturnValue([SAMPLE_LOG])
-      vi.mocked(logService.getStats).mockReturnValue(SAMPLE_STATS)
+      vi.mocked(logService.getLogs).mockResolvedValue([SAMPLE_LOG])
+      vi.mocked(logService.getStats).mockResolvedValue(SAMPLE_STATS)
 
       const res = await app.fetch(new Request('http://localhost/report/logs'))
 
@@ -127,8 +127,8 @@ describe('Report Routes', () => {
       const app = createApp()
       vi.mocked(d1Service.isConfigured).mockReturnValue(true)
       vi.mocked(d1Service.getLogs).mockRejectedValue(new Error('network error'))
-      vi.mocked(logService.getLogs).mockReturnValue([])
-      vi.mocked(logService.getStats).mockReturnValue({ sent: 0, failed: 0, total: 0 })
+      vi.mocked(logService.getLogs).mockResolvedValue([])
+      vi.mocked(logService.getStats).mockResolvedValue({ sent: 0, failed: 0, total: 0, errors: 0 })
 
       const res = await app.fetch(new Request('http://localhost/report/logs'))
 
@@ -180,7 +180,7 @@ describe('Report Routes', () => {
     it('falls back to local stats', async () => {
       const app = createApp()
       vi.mocked(d1Service.isConfigured).mockReturnValue(false)
-      vi.mocked(logService.getStats).mockReturnValue(SAMPLE_STATS)
+      vi.mocked(logService.getStats).mockResolvedValue(SAMPLE_STATS)
 
       const res = await app.fetch(new Request('http://localhost/report/stats'))
 
@@ -198,7 +198,7 @@ describe('Report Routes', () => {
     it('returns a CSV file with correct headers', async () => {
       const app = createApp()
       vi.mocked(d1Service.isConfigured).mockReturnValue(false)
-      vi.mocked(logService.getLogs).mockReturnValue([SAMPLE_LOG])
+      vi.mocked(logService.getLogs).mockResolvedValue([SAMPLE_LOG])
 
       const res = await app.fetch(new Request('http://localhost/report/export/csv'))
 
@@ -236,7 +236,7 @@ describe('Report Routes', () => {
     it('returns a JSON file download', async () => {
       const app = createApp()
       vi.mocked(d1Service.isConfigured).mockReturnValue(false)
-      vi.mocked(logService.getLogs).mockReturnValue([SAMPLE_LOG])
+      vi.mocked(logService.getLogs).mockResolvedValue([SAMPLE_LOG])
 
       const res = await app.fetch(new Request('http://localhost/report/export/json'))
 
