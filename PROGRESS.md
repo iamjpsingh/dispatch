@@ -2,8 +2,10 @@
 
 _Branch: `feat/saas-replatform` — pushed to `origin`._
 _Baseline: `bun typecheck` = 49 pre-existing errors (held flat all session), backend suite
-**712 passed / 24 skipped** (4 gated Valkey nets run with `RUN_QUEUE_IT=1`), app boots on real
-Postgres + Valkey. **No `bun:sqlite` anywhere — sqlite fully retired.**_
+**706 passed / 28 skipped** (gated nets: `RUN_QUEUE_IT=1` for Valkey, `RUN_STORAGE_IT=1` for
+MinIO), app boots on real Postgres + Valkey + MinIO. **No `bun:sqlite` anywhere — sqlite fully
+retired. API container is stateless — no local-disk user state (uploads parsed in memory,
+send-logs in Postgres).**_
 
 > ⚠️ This file was previously stale (it predated the re-platform decision and said "keep
 > SQLite / don't use BullMQ"). That guidance is **superseded** — the locked plan is the full
@@ -65,6 +67,32 @@ Gated Valkey nets: `RUN_QUEUE_IT=1 bunx vitest run` (sendQueue, worker-e2e, sche
 
 ---
 
+### P5 — Object storage (R2/S3) + full statelessness (COMPLETE)
+Plan: `docs/superpowers/plans/2026-06-08-p5-object-storage.md`. Built subagent-driven in green,
+reviewed increments (spec + quality review each; P5.3 also adversarial R9; final whole-impl review):
+- **P5.1 storageService** — `@aws-sdk/client-s3` + `s3-request-presigner`, lazy S3 client (`forcePathStyle`
+  for MinIO/R2), `STORAGE` config, `put`/`get`/`getSignedDownloadUrl`/`delete`/`ensureBucket`. Gated MinIO
+  net `RUN_STORAGE_IT=1`. `boot()` calls `ensureBucket()` (tolerant) so the bucket exists on a fresh stack.
+- **P5.2 in-memory parsing** — `fileService.parseExcelBuffer`/`readHtmlTemplateBuffer` (`XLSX.read(buf)`);
+  the `./uploads` disk round-trip + `saveUploadedFile` are gone; all 4 upload call sites pass buffers.
+- **P5.3 logService → Postgres** — org-scoped `email_logs` table (migration 0009), async service
+  (`addLog(orgId,…)`/`getLogs`/`getStats`/`getLogsAsCSV`/`deleteLog`/`clearLogs`), every read/write scoped
+  by a server-derived `org_id` (R9 — fixes a pre-existing cross-tenant log leak). The **dead pre-BullMQ
+  sender** (`batchService`, `emailService` send-methods, `notificationService.getCampaignStats`) was
+  deleted (user-approved). Adversarial R9 review: **no cross-tenant leaks**.
+- **P5.4 import persistence** — `import_history.file_key` (migration 0010); contact import stores the
+  original to object storage (best-effort) + records the key; owner-scoped `GET /contacts/imports/:id/file`
+  returns a 15-min signed URL (404s on org mismatch before signing).
+- **Statelessness:** orphaned `DIRECTORIES.UPLOADS`/`LOGS` removed; boot no longer `mkdir`s user-state dirs.
+
+Gated MinIO net: `RUN_STORAGE_IT=1 bunx vitest run tests/services/storageService.test.ts` (needs MinIO up).
+**Known follow-up (flagged, not a blocker):** scheduled sends route through `schedulerProcessor` with a
+null `jobs.org_id`, so the `if (job.org_id)` guard skips their `email_logs` write — scheduled-send results
+are not logged. Correct fix = thread `org_id` onto `scheduled_jobs` at schedule-time (schema change + a
+small scheduler increment). `contacts_json`→R2 and report/analytics exports→S3 remain deferred (spec §out-of-scope).
+
+---
+
 ## 🧹 Housekeeping
 - Commits from `85ea5d5` onward are **unsigned** (GPG agent timed out mid-session). Re-sign with
   `git rebase --exec 'git commit --amend --no-edit -S' <base>..HEAD` once the agent is unlocked.
@@ -72,7 +100,8 @@ Gated Valkey nets: `RUN_QUEUE_IT=1 bunx vitest run` (sendQueue, worker-e2e, sche
   secrets (Cloudflare D1 over HTTP, not local PG), Valkey-backed rate-limiting (opportunistic in P4).
 
 ## 🧭 Resume pointers
-- Phase specs: `docs/superpowers/specs/`.
-- Auto-loaded memory: `MEMORY.md` → `dispatch-p3-status.md` (P2/P3 done, P4 designed) +
-  `dispatch-session-status.md`.
-- Run the queue integration nets (P4) with Valkey up; default `bun test` runs without it.
+- **Next phase: P6** (RPC + API surface + frontend types). P1–P5 complete.
+- Phase specs: `docs/superpowers/specs/`; plans: `docs/superpowers/plans/`.
+- Auto-loaded memory: `MEMORY.md` → `dispatch-p5-status.md` (P5 done) + `dispatch-session-status.md`.
+- Run the gated nets with the deps up: `RUN_QUEUE_IT=1` (Valkey), `RUN_STORAGE_IT=1` (MinIO);
+  default `bun test` runs without them.
