@@ -329,10 +329,7 @@ app.post('/parse-excel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async 
       return error(c, 'Excel file is required', 400)
     }
 
-    const arrayBuffer = await excelFile.arrayBuffer()
-    const filename = `temp_${Date.now()}_${excelFile.name}`
-    const filePath = await FileService.saveUploadedFile(new Uint8Array(arrayBuffer), filename)
-    const contacts = await FileService.parseExcelFile(filePath)
+    const contacts = await FileService.parseExcelBuffer(new Uint8Array(await excelFile.arrayBuffer()))
 
     return success(c, {
       contacts: contacts.slice(0, 5),

@@ -1,20 +1,12 @@
 import * as XLSX from 'xlsx'
-import { writeFile, readFile, mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
 import { logger } from '../utils/logger'
 import { isValidEmail } from '../utils/validation'
 import type { Contact } from '../types/index'
 
 export class FileService {
-  static async parseExcelFile(filePath: string): Promise<Contact[]> {
+  static async parseExcelBuffer(buffer: Uint8Array): Promise<Contact[]> {
     try {
-      logger.debug(`Parsing Excel file: ${filePath}`)
-
-      if (!existsSync(filePath)) {
-        throw new Error('File does not exist')
-      }
-
-      const workbook = XLSX.readFile(filePath)
+      const workbook = XLSX.read(buffer, { type: 'array' })
       const sheetName = workbook.SheetNames[0]
 
       if (!sheetName) {
@@ -101,37 +93,8 @@ export class FileService {
     }
   }
 
-  static async saveUploadedFile(file: Uint8Array, filename: string): Promise<string> {
-    try {
-      // Ensure uploads directory exists
-      const uploadDir = './uploads'
-      if (!existsSync(uploadDir)) {
-        await mkdir(uploadDir, { recursive: true })
-      }
-
-      const uploadPath = `${uploadDir}/${filename}`
-      await writeFile(uploadPath, file)
-      logger.debug(`File saved: ${uploadPath}`)
-      return uploadPath
-    } catch (error) {
-      logger.error('File save error:', error)
-      throw new Error(`Failed to save uploaded file: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    }
-  }
-
-  static async readHTMLTemplate(filePath: string): Promise<string> {
-    try {
-      if (!existsSync(filePath)) {
-        throw new Error('HTML template file does not exist')
-      }
-
-      const content = await readFile(filePath, 'utf-8')
-      logger.debug(`HTML template loaded: ${filePath} (${content.length} characters)`)
-      return content
-    } catch (error) {
-      logger.error('HTML template read error:', error)
-      throw new Error(`Failed to read HTML template: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    }
+  static readHtmlTemplateBuffer(buffer: Uint8Array): string {
+    return new TextDecoder('utf-8').decode(buffer)
   }
 
   static replacePlaceholders(template: string, contact: Contact): string {

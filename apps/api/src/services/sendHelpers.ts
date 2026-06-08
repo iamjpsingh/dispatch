@@ -176,10 +176,7 @@ export async function processExcelFile(
 ): Promise<{ contacts: any[] } | { error: string }> {
   try {
     logger.debug('Processing Excel file...')
-    const arrayBuffer = await file.arrayBuffer()
-    const filename = `${Date.now()}_${file.name}`
-    const filePath = await FileService.saveUploadedFile(new Uint8Array(arrayBuffer), filename)
-    const allContacts = await FileService.parseExcelFile(filePath)
+    const allContacts = await FileService.parseExcelBuffer(new Uint8Array(await file.arrayBuffer()))
     logger.debug(`Parsed ${allContacts.length} contacts from Excel file`)
 
     // Apply email range selection
@@ -235,10 +232,7 @@ export async function processHtmlTemplate(
   if (templateFile && templateFile.size > 0) {
     try {
       logger.debug('Processing HTML template file...')
-      const arrayBuffer = await templateFile.arrayBuffer()
-      const filename = `${Date.now()}_${templateFile.name}`
-      const filePath = await FileService.saveUploadedFile(new Uint8Array(arrayBuffer), filename)
-      const content = await FileService.readHTMLTemplate(filePath)
+      const content = FileService.readHtmlTemplateBuffer(new Uint8Array(await templateFile.arrayBuffer()))
       logger.debug('Using HTML template as primary content')
       return { content }
     } catch (err) {

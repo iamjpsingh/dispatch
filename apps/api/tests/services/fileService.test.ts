@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import * as XLSX from 'xlsx'
 
 // Mock dependencies before importing
 vi.mock('../../src/utils/logger', () => ({
@@ -103,5 +104,49 @@ describe('FileService.replacePlaceholders', () => {
     const template = '{{FirstName}} {{LastName}}'
     const contact = { Email: 'test@test.com', FirstName: 'Jane', LastName: 'Doe' }
     expect(FileService.replacePlaceholders(template, contact)).toBe('Jane Doe')
+  })
+})
+
+// ============================================================================
+// parseExcelBuffer / readHtmlTemplateBuffer
+// ============================================================================
+
+describe('FileService.parseExcelBuffer', () => {
+  it('parses a CSV buffer into Contact[] with no filesystem access', async () => {
+    const csv = 'Email,FirstName,Company\nalice@test.com,Alice,Acme\nbob@test.com,Bob,Corp\n'
+    const buf = new TextEncoder().encode(csv)
+    const contacts = await FileService.parseExcelBuffer(buf)
+    expect(contacts).toHaveLength(2)
+    expect(contacts[0].Email).toBe('alice@test.com')
+    expect(contacts[0].FirstName).toBe('Alice')
+    expect(contacts[1].Company).toBe('Corp')
+  })
+
+  it('parses an XLSX buffer into Contact[]', async () => {
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Email', 'FirstName'],
+      ['carol@test.com', 'Carol'],
+    ])
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+    const buf = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))
+    const contacts = await FileService.parseExcelBuffer(buf)
+    expect(contacts).toHaveLength(1)
+    expect(contacts[0].Email).toBe('carol@test.com')
+    expect(contacts[0].FirstName).toBe('Carol')
+  })
+
+  it('skips rows with invalid emails', async () => {
+    const csv = 'Email,FirstName\nnot-an-email,Bad\ngood@test.com,Good\n'
+    const contacts = await FileService.parseExcelBuffer(new TextEncoder().encode(csv))
+    expect(contacts).toHaveLength(1)
+    expect(contacts[0].Email).toBe('good@test.com')
+  })
+})
+
+describe('FileService.readHtmlTemplateBuffer', () => {
+  it('decodes a UTF-8 buffer to a string', () => {
+    const html = '<p>Hello {{FirstName}}</p>'
+    expect(FileService.readHtmlTemplateBuffer(new TextEncoder().encode(html))).toBe(html)
   })
 })

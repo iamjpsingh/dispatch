@@ -288,17 +288,15 @@ app.post('/contacts/:listId/import', requirePermission(PERMISSIONS.CONTACTS_IMPO
     return error(c, 'Invalid field mapping JSON', 400)
   }
 
-  // Parse file
-  const arrayBuffer = await file.arrayBuffer()
-  const filename = `import_${Date.now()}_${file.name}`
-  const filePath = await FileService.saveUploadedFile(new Uint8Array(arrayBuffer), filename)
+  // Parse file in memory (no disk write)
+  const fileBytes = new Uint8Array(await file.arrayBuffer())
 
   let rows: Record<string, string>[]
   const ext = file.name.split('.').pop()?.toLowerCase()
   const format = ext === 'csv' ? 'csv' : 'excel'
 
   try {
-    const contacts = await FileService.parseExcelFile(filePath)
+    const contacts = await FileService.parseExcelBuffer(fileBytes)
     // Convert Contact[] to Record<string, string>[]
     rows = contacts.map((c) => {
       const row: Record<string, string> = {}
