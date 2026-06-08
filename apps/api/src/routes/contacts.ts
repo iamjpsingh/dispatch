@@ -10,8 +10,10 @@ import { validationService } from '../services/validationService'
 import { scoringEngine } from '../services/scoringEngine'
 import { preferenceCenterService, type PreferenceType } from '../services/preferenceCenterService'
 import { FileService } from '../services/fileService'
+import { storageService } from '../services/storageService'
 import { success, error } from '../utils/response'
 import { validateBody } from '../utils/validate'
+import { logger } from '../utils/logger'
 
 // ============================================================================
 // Schemas
@@ -320,14 +322,36 @@ app.post('/contacts/:listId/import', requirePermission(PERMISSIONS.CONTACTS_IMPO
     source: `import_${format}`,
   })
 
+  // Persist the original upload to object storage (best-effort).
+  let fileKey: string | null = null
+  try {
+    fileKey = `imports/${orgId}/${Date.now()}_${file.name}`
+    await storageService.put(fileKey, fileBytes, file.type || 'application/octet-stream')
+  } catch (err) {
+    logger.error('Failed to persist import file:', err)
+    fileKey = null
+  }
+
   // Record history
-  await contactService.recordImport(orgId, user.id, listId, file.name, format, result, fieldMapping)
+  await contactService.recordImport(orgId, user.id, listId, file.name, format, result, fieldMapping, fileKey)
 
   return success(
     c,
     result,
     `Imported ${result.imported} contacts (${result.duplicates} duplicates, ${result.invalid} invalid)`
   )
+})
+
+/** Signed-URL download of a stored import file (owner-scoped). */
+app.get('/contacts/imports/:id/file', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
+  const orgId = getOrgId(c)
+  const id = c.req.param('id')
+
+  const row = await contactService.getImport(orgId, id)
+  if (!row || !row.file_key) return error(c, 'Import file not found', 404)
+
+  const url = await storageService.getSignedDownloadUrl(row.file_key)
+  return success(c, { url })
 })
 
 // ============================================================================
