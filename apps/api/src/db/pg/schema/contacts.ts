@@ -69,6 +69,7 @@ export const import_history = pgTable(
     duplicates: integer('duplicates').notNull().default(0),
     invalid: integer('invalid').notNull().default(0),
     field_mapping: text('field_mapping'),
+    file_key: text('file_key'),
     created_at: ts('created_at').notNull().defaultNow(),
   },
   (t) => [index('idx_ih_org').on(t.org_id), index('idx_ih_user').on(t.user_id)]
