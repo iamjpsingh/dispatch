@@ -1,7 +1,6 @@
 // src/services/notificationService.ts - Job completion notification service
 import nodemailer from 'nodemailer'
 import { d1UserDatabase, type D1SMTPConfig } from './d1UserDatabase'
-import { logService } from './logService'
 import type { EmailLog, NotificationConfig } from '../types/index'
 
 import { logger } from '../utils/logger'
@@ -248,29 +247,6 @@ class NotificationService {
       },
       mockDetails.configUsed
     )
-  }
-
-  /**
-   * Get campaign statistics from logs
-   */
-  getCampaignStats(jobId: string): JobStats {
-    const logs = logService.getLogs()
-    const campaignLogs = logs.filter((log) => log.id.includes(jobId))
-
-    const sent = campaignLogs.filter((log) => log.status === 'Sent').length
-    const failed = campaignLogs.filter((log) => log.status === 'Failed').length
-    const errors = campaignLogs.filter((log) => log.status === 'Error').length
-    const total = campaignLogs.length
-
-    const successRate = total > 0 ? (sent / total) * 100 : 0
-
-    return {
-      sent,
-      failed,
-      total,
-      errors,
-      successRate: parseFloat(successRate.toFixed(1)),
-    }
   }
 }
 

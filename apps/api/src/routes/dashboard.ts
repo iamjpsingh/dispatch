@@ -3,7 +3,7 @@
  * Stats, polling status, and real-time data
  */
 import { Hono } from 'hono'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, getOrgId } from '../middleware/auth'
 import { logService } from '../services/logService'
 import { queueEngine } from '../services/queueEngine'
 import type { QueueJob } from '../services/queueEngine'
@@ -40,20 +40,22 @@ const app = new Hono()
  */
 app.get('/dashboard/stats', async (c) => {
   const user = requireAuth(c)
+  const orgId = getOrgId(c)
 
   try {
     const scheduler = getSchedulerService()
     const scheduledJobs = (await scheduler?.getScheduledJobs()) ?? []
-    const allLogs = logService.getLogs() ?? []
+    const allLogs = (await logService.getLogs(orgId)) ?? []
 
     // Queue stats from persistent engine
     const queueStats = await queueEngine.getStats(user.id)
     const activeJobs = await queueEngine.getJobs(user.id, 'running', 10)
     const pendingJobs = await queueEngine.getJobs(user.id, 'pending', 10)
     const recentJobs = await queueEngine.getJobs(user.id, undefined, 5)
+    const logStats = await logService.getStats(orgId)
 
     return success(c, {
-      stats: logService.getStats(),
+      stats: logStats,
       queue: {
         stats: queueStats,
         activeJobs: activeJobs.map(formatJobSummary),

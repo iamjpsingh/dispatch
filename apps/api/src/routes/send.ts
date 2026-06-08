@@ -4,7 +4,6 @@
  */
 import { Hono } from 'hono'
 import type { Context } from 'hono'
-import { batchService } from '../services/batchService'
 import { schedulerService } from '../services/schedulerService'
 import { notificationService } from '../services/notificationService'
 import { queueEngine } from '../services/queueEngine'

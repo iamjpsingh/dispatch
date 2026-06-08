@@ -153,16 +153,18 @@ async function sendOne(
         },
       })
 
-      logService.addLog({
-        id: `q_${job.id}_${Date.now()}`,
-        email: contact.Email,
-        status: 'Sent',
-        timestamp: new Date().toISOString(),
-        messageId: info.messageId,
-        firstName: contact.FirstName,
-        company: contact.Company,
-        subject,
-      })
+      if (job.org_id) {
+        await logService.addLog(job.org_id, {
+          id: `q_${job.id}_${Date.now()}`,
+          email: contact.Email,
+          status: 'Sent',
+          timestamp: new Date().toISOString(),
+          messageId: info.messageId,
+          firstName: contact.FirstName,
+          company: contact.Company,
+          subject,
+        })
+      }
       return { success: true, sendTimeMs: Date.now() - sendStart }
     } catch (error) {
       attempts++
@@ -176,16 +178,18 @@ async function sendOne(
         if (errorType === 'permanent') {
           await suppressionStore.suppress(job.user_id, contact.Email, 'bounce_hard', `job:${job.id}`)
         }
-        logService.addLog({
-          id: `q_${job.id}_${Date.now()}`,
-          email: contact.Email,
-          status: 'Failed',
-          message: `${retryEngine.describeError(errorType)} (${errorMessage})`,
-          timestamp: new Date().toISOString(),
-          firstName: contact.FirstName,
-          company: contact.Company,
-          subject: job.subject || '',
-        })
+        if (job.org_id) {
+          await logService.addLog(job.org_id, {
+            id: `q_${job.id}_${Date.now()}`,
+            email: contact.Email,
+            status: 'Failed',
+            message: `${retryEngine.describeError(errorType)} (${errorMessage})`,
+            timestamp: new Date().toISOString(),
+            firstName: contact.FirstName,
+            company: contact.Company,
+            subject: job.subject || '',
+          })
+        }
         return { success: false, sendTimeMs: 0, error: lastError }
       }
 

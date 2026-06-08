@@ -20,13 +20,6 @@ vi.mock('../../src/services/d1UserDatabase', () => ({
   },
 }))
 
-vi.mock('../../src/services/logService', () => ({
-  logService: {
-    getLogs: vi.fn().mockReturnValue([]),
-    addLog: vi.fn(),
-  },
-}))
-
 vi.mock('../../src/utils/logger', () => ({
   logger: {
     debug: vi.fn(),
@@ -45,7 +38,6 @@ vi.mock('../../src/templates/notificationTemplates', () => ({
 }))
 
 import { createNotificationSubject, createNotificationHTML } from '../../src/templates/notificationTemplates'
-import { logService } from '../../src/services/logService'
 
 describe('Notification Templates', () => {
   it('creates subject with success rate', () => {
@@ -99,12 +91,6 @@ describe('NotificationService', () => {
         getUserDefaultSMTPConfig: vi.fn().mockResolvedValue(null),
       },
     }))
-    vi.doMock('../../src/services/logService', () => ({
-      logService: {
-        getLogs: vi.fn().mockReturnValue([]),
-        addLog: vi.fn(),
-      },
-    }))
     vi.doMock('../../src/utils/logger', () => ({
       logger: {
         debug: vi.fn(),
@@ -149,32 +135,6 @@ describe('NotificationService', () => {
         secure: false,
       })
     )
-  })
-
-  it('getCampaignStats returns correct stats from logs', async () => {
-    const { logService: ls } = await import('../../src/services/logService')
-    vi.mocked(ls.getLogs).mockReturnValue([
-      { id: 'job_1_0', email: 'a@b.com', status: 'Sent', timestamp: '' },
-      { id: 'job_1_1', email: 'b@b.com', status: 'Sent', timestamp: '' },
-      { id: 'job_1_2', email: 'c@b.com', status: 'Failed', timestamp: '' },
-      { id: 'job_2_0', email: 'd@b.com', status: 'Sent', timestamp: '' },
-    ])
-
-    const stats = notificationService.getCampaignStats('job_1')
-    expect(stats.sent).toBe(2)
-    expect(stats.failed).toBe(1)
-    expect(stats.total).toBe(3)
-    expect(stats.successRate).toBeCloseTo(66.7, 0)
-  })
-
-  it('getCampaignStats returns zeros for unknown job', async () => {
-    const { logService: ls } = await import('../../src/services/logService')
-    vi.mocked(ls.getLogs).mockReturnValue([])
-
-    const stats = notificationService.getCampaignStats('nonexistent')
-    expect(stats.total).toBe(0)
-    expect(stats.sent).toBe(0)
-    expect(stats.successRate).toBe(0)
   })
 
   it('sendJobCompletionNotification returns false with no config', async () => {

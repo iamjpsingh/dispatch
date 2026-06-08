@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { d1Service } from '../services/d1Service'
 import { logService } from '../services/logService'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, getOrgId } from '../middleware/auth'
 import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
@@ -79,9 +79,10 @@ app.get('/report/logs', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) =
   }
 
   // Fallback to local logs
+  const orgId = getOrgId(c)
   return success(c, {
-    logs: logService.getLogs(),
-    stats: logService.getStats(),
+    logs: await logService.getLogs(orgId),
+    stats: await logService.getStats(orgId),
   })
 })
 
@@ -103,7 +104,7 @@ app.get('/report/stats', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) 
     }
   }
 
-  return success(c, logService.getStats())
+  return success(c, await logService.getStats(getOrgId(c)))
 })
 
 /**
@@ -124,9 +125,10 @@ app.get('/report', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
     }
   }
 
+  const orgId = getOrgId(c)
   return success(c, {
-    logs: logService.getLogs(),
-    stats: logService.getStats(),
+    logs: await logService.getLogs(orgId),
+    stats: await logService.getStats(orgId),
   })
 })
 
@@ -197,7 +199,7 @@ app.delete('/report/logs/:id', requirePermission(PERMISSIONS.REPORTS_VIEW), asyn
   }
 
   // Local fallback
-  logService.deleteLog(logId)
+  await logService.deleteLog(getOrgId(c), logId)
   return success(c, undefined, 'Log deleted')
 })
 
@@ -225,7 +227,8 @@ app.post('/report/logs/delete-bulk', requirePermission(PERMISSIONS.REPORTS_VIEW)
   }
 
   // Local fallback
-  ids.forEach((id) => logService.deleteLog(id))
+  const orgId = getOrgId(c)
+  for (const id of ids) await logService.deleteLog(orgId, id)
   return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
 })
 
@@ -270,7 +273,7 @@ async function fetchLogsForExport(userId: string, c: Context): Promise<EmailLogR
     }
   }
 
-  return logService.getLogs()
+  return await logService.getLogs(getOrgId(c))
 }
 
 /**

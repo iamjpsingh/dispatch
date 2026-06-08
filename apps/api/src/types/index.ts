@@ -76,30 +76,6 @@ export interface BatchConfig {
   enabled: boolean
 }
 
-export interface BatchJob {
-  id: string
-  totalContacts: number
-  currentBatch: number
-  totalBatches: number
-  emailsSent: number
-  emailsFailed: number
-  status: BatchStatus
-  startTime: string
-  config: BatchConfig
-  emailJob: EmailJob
-  nextBatchTime?: string
-  notificationSettings?: NotificationSettings
-  userId?: string
-  configName?: string
-}
-
-export interface BatchStatusInfo {
-  isRunning: boolean
-  currentJob: BatchJob | null
-  totalJobs: number
-  completedJobs: number
-}
-
 export type BatchStatus = 'Running' | 'Paused' | 'Completed' | 'Failed'
 
 // ============================================================================

@@ -36,6 +36,7 @@ function createApp() {
   const app = new Hono()
   app.use('*', async (c, next) => {
     c.user = TEST_USER as any
+    c.set('orgId', 'org-1')
     await next()
   })
   app.route('/', dashboardRoutes)

@@ -277,7 +277,7 @@ describe('Report Routes', () => {
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.success).toBe(true)
-      expect(logService.deleteLog).toHaveBeenCalledWith('log-1')
+      expect(logService.deleteLog).toHaveBeenCalledWith('org-1', 'log-1')
     })
 
     it('returns 500 when Worker API delete fails', async () => {
