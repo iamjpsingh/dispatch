@@ -14,7 +14,7 @@ async function seed(orgId: string, userId: string) {
   await getDb().insert(users).values({ id: userId, email: `${userId}@t.com`, name: userId, password_hash: 'x' }).onConflictDoNothing()
 }
 
-const result = { total: 2, imported: 2, duplicates: 0, invalid: 0 }
+const result = { total: 2, imported: 2, duplicates: 0, invalid: 0, errors: [] }
 
 // Fetch the inserted import row id for an org via a direct select (no reliance on the
 // drizzle query API or a listImports helper).
