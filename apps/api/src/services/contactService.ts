@@ -2,7 +2,7 @@
 
 import { and, eq, or, asc, desc, ilike, inArray, count, sql } from 'drizzle-orm'
 import { getDb } from '../db/pg/client'
-import { contact_lists, contacts, import_history } from '../db/pg/schema'
+import { contact_lists, contacts, import_history, type ImportHistoryRow } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 
 // ============================================================================
@@ -360,7 +360,7 @@ class ContactService {
     return result
   }
 
-  async recordImport(orgId: string, userId: string, listId: string, filename: string, format: string, result: ImportResult, fieldMapping: Record<string, string>): Promise<void> {
+  async recordImport(orgId: string, userId: string, listId: string, filename: string, format: string, result: ImportResult, fieldMapping: Record<string, string>, fileKey: string | null = null): Promise<void> {
     await getDb().insert(import_history).values({
       id: generateId('imp'),
       org_id: orgId,
@@ -373,7 +373,17 @@ class ContactService {
       duplicates: result.duplicates,
       invalid: result.invalid,
       field_mapping: JSON.stringify(fieldMapping),
+      file_key: fileKey,
     })
+  }
+
+  async getImport(orgId: string, id: string): Promise<ImportHistoryRow | null> {
+    const [row] = await getDb()
+      .select()
+      .from(import_history)
+      .where(and(eq(import_history.id, id), eq(import_history.org_id, orgId)))
+      .limit(1)
+    return row ?? null
   }
 
   async getImportHistory(orgId: string, limit = 20): Promise<ImportHistory[]> {
