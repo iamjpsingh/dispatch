@@ -2,7 +2,7 @@
 
 _Branch: `feat/saas-replatform` — pushed to `origin`._
 _Baseline: `bun typecheck` = 49 pre-existing errors (held flat all session), backend suite
-**706 passed / 28 skipped** (gated nets: `RUN_QUEUE_IT=1` for Valkey, `RUN_STORAGE_IT=1` for
+**710 passed / 28 skipped** (gated nets: `RUN_QUEUE_IT=1` for Valkey, `RUN_STORAGE_IT=1` for
 MinIO), app boots on real Postgres + Valkey + MinIO. **No `bun:sqlite` anywhere — sqlite fully
 retired. API container is stateless — no local-disk user state (uploads parsed in memory,
 send-logs in Postgres).**_
@@ -86,10 +86,19 @@ reviewed increments (spec + quality review each; P5.3 also adversarial R9; final
 - **Statelessness:** orphaned `DIRECTORIES.UPLOADS`/`LOGS` removed; boot no longer `mkdir`s user-state dirs.
 
 Gated MinIO net: `RUN_STORAGE_IT=1 bunx vitest run tests/services/storageService.test.ts` (needs MinIO up).
-**Known follow-up (flagged, not a blocker):** scheduled sends route through `schedulerProcessor` with a
-null `jobs.org_id`, so the `if (job.org_id)` guard skips their `email_logs` write — scheduled-send results
-are not logged. Correct fix = thread `org_id` onto `scheduled_jobs` at schedule-time (schema change + a
-small scheduler increment). `contacts_json`→R2 and report/analytics exports→S3 remain deferred (spec §out-of-scope).
+- **P5.5 scheduled-send logging (the flagged follow-up — DONE)** — `scheduled_jobs.org_id` (nullable,
+  migration 0011) persisted at schedule-time (`scheduleJob(userId, orgId, …)` ← `getOrgId(c)`);
+  `schedulerProcessor` threads `row.org_id ?? null` into `queueEngine.enqueue`, so fired scheduled sends
+  now write org-scoped `email_logs`. Nullable for legacy rows; `EnqueueOptions.orgId` widened to
+  `string | null`. Adversarially reviewed: chain verified end-to-end, SHIP. Note: the service-layer
+  assertion lives in the gated `RUN_QUEUE_IT` net (needs Valkey).
+`contacts_json`→R2 and report/analytics exports→S3 remain deferred (spec §out-of-scope).
+
+**⚠️ Flagged release-blocker (pre-existing, found by P5.5 adversarial review — NOT fixed):**
+`GET /api/scheduled-jobs` returns ALL tenants' active scheduled jobs (`schedulerStore.getActive()` has no
+user/org filter — `send.ts:347-350`) and `DELETE /api/scheduled-jobs/:id` cancels any tenant's job
+(`cancel()` filters id+status only — `send.ts:352-360`): cross-tenant read + IDOR on job control.
+Predates P5; must be fixed no later than the P8 security gate.
 
 ---
 
