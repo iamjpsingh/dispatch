@@ -459,6 +459,7 @@ async function handleScheduledSend(c: Context, params: ScheduledSendParams) {
 
   const jobId = await schedulerService.scheduleJob(
     user.id,
+    getOrgId(c),
     emailJob,
     batchConfig,
     scheduledDate,

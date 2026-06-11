@@ -23,7 +23,7 @@ export interface QueueStats {
 
 export interface EnqueueOptions {
   campaignId?: string
-  orgId?: string
+  orgId?: string | null
   type?: JobType
   priority?: number
   batchSize?: number

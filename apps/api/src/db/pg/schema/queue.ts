@@ -95,6 +95,7 @@ export const scheduled_jobs = pgTable(
   {
     id: text('id').primaryKey(),
     user_id: text('user_id').notNull(),
+    org_id: text('org_id'), // threaded for org-scoped logging of scheduled sends; nullable (legacy rows)
     email_job: text('email_job').notNull(),
     batch_config: text('batch_config'),
     scheduled_time: ts('scheduled_time').notNull(),

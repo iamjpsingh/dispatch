@@ -66,4 +66,15 @@ describe('P4.D — schedulerStore (Postgres)', () => {
     await schedulerStore.markCompleted('s2')
     expect(await schedulerStore.cancel('s2')).toBe(false)
   })
+
+  // P5.5 — org_id threaded for org-scoped logging of scheduled sends.
+  it('create persists org_id, get round-trips it', async () => {
+    await schedulerStore.create(row({ id: 's1', org_id: 'org-x' }))
+    expect((await schedulerStore.get('s1'))!.org_id).toBe('org-x')
+  })
+
+  it('org_id defaults to null when omitted (legacy rows)', async () => {
+    await schedulerStore.create(row({ id: 's1' }))
+    expect((await schedulerStore.get('s1'))!.org_id).toBeNull()
+  })
 })

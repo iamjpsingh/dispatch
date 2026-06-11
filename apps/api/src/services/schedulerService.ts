@@ -10,6 +10,7 @@ import type { EmailJob, BatchConfig } from '../types/index'
 class SchedulerService {
   async scheduleJob(
     userId: string,
+    orgId: string | null,
     emailJob: EmailJob,
     batchConfig: BatchConfig | null,
     scheduledTime: Date,
@@ -22,6 +23,7 @@ class SchedulerService {
     await schedulerStore.create({
       id: jobId,
       user_id: userId,
+      org_id: orgId,
       email_job: JSON.stringify(emailJob),
       batch_config: batchConfig ? JSON.stringify(batchConfig) : null,
       scheduled_time: scheduledTime.toISOString(),

@@ -19,6 +19,7 @@ export async function processScheduledRun(scheduledJobId: string): Promise<void>
     const useBatch = !!batchConfig
 
     await queueEngine.enqueue(row.user_id, emailJob.config, emailJob.contacts, {
+      orgId: row.org_id ?? null,
       type: useBatch ? 'batch' : 'direct',
       htmlContent: emailJob.htmlContent,
       subject: emailJob.subject,

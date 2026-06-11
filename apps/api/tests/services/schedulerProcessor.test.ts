@@ -90,4 +90,19 @@ describe('P4.D — processScheduledRun', () => {
     await processScheduledRun('s4')
     expect((await schedulerStore.get('s4'))!.status).toBe('failed')
   })
+
+  // P5.5 — org_id threads into enqueue options so scheduled sends get org-scoped logging.
+  it('threads the row org_id into enqueue options', async () => {
+    await schedulerStore.create(row({ id: 's5', org_id: 'org-x' }))
+    await processScheduledRun('s5')
+    const opts = (enqueue.mock.calls[0] as [string, unknown, unknown[], Record<string, unknown>])[3]
+    expect(opts.orgId).toBe('org-x')
+  })
+
+  it('passes orgId null when the row has no org_id (legacy rows)', async () => {
+    await schedulerStore.create(row({ id: 's6' }))
+    await processScheduledRun('s6')
+    const opts = (enqueue.mock.calls[0] as [string, unknown, unknown[], Record<string, unknown>])[3]
+    expect(opts.orgId).toBeNull()
+  })
 })

@@ -39,9 +39,11 @@ describe.skipIf(!RUN)('P4.D — schedulerService (BullMQ + PG)', () => {
 
   it('scheduleJob writes a PG row and a delayed BullMQ job; cancel removes both', async () => {
     const future = new Date(Date.now() + 60 * 60 * 1000)
-    const id = await schedulerService.scheduleJob('u1', emailJob, null, future, 'My SMTP')
+    const id = await schedulerService.scheduleJob('u1', 'org-x', emailJob, null, future, 'My SMTP')
 
-    expect((await schedulerStore.get(id))!.status).toBe('scheduled')
+    const stored = await schedulerStore.get(id)
+    expect(stored!.status).toBe('scheduled')
+    expect(stored!.org_id).toBe('org-x') // P5.5 — org_id persisted end-to-end through scheduleJob
     const delayed = await getSchedulerQueue().getDelayed()
     expect(delayed.map((j) => j.id)).toContain(id)
 
