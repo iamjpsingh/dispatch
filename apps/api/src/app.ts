@@ -63,6 +63,11 @@ import { warmupService } from './services/warmupService'
 // Application Setup
 // ============================================================================
 
+// During the P6 strangler both /api/* (legacy) and /api/v1/* (typed RPC) are served.
+// Path-prefix middleware (public paths, rate limits) is written for /api/*; normalize
+// the version segment so /api/v1/x is matched as /api/x.
+const normalizeApiPath = (path: string) => path.replace(/^\/api\/v1\//, '/api/')
+
 const app = new Hono()
 
 // ============================================================================
@@ -97,20 +102,25 @@ app.use('/api/auth/login', authRateLimit)
 app.use('/api/auth/register', authRateLimit)
 app.use('/api/send', sendRateLimit)
 app.use('/api/parse-excel', uploadRateLimit)
+app.use('/api/v1/auth/login', authRateLimit)
+app.use('/api/v1/auth/register', authRateLimit)
+app.use('/api/v1/send', sendRateLimit)
+app.use('/api/v1/parse-excel', uploadRateLimit)
 
 // Authentication — only protect /api routes; SPA routes are handled by the frontend
 app.use('*', async (c, next) => {
   const path = c.req.path
+  const matchPath = normalizeApiPath(path)
 
   // Skip auth for non-API routes (SPA pages, static assets)
-  if (!path.startsWith('/api') && path !== '/health') {
+  if (!matchPath.startsWith('/api') && matchPath !== '/health') {
     return next()
   }
 
-  const isPublic = AUTH.PUBLIC_PATHS.some((p) => path.startsWith(p)) || path === '/'
+  const isPublic = AUTH.PUBLIC_PATHS.some((p) => matchPath.startsWith(p)) || matchPath === '/'
 
   // Public form submission endpoints (POST /api/forms/:id/submit)
-  if (path.match(/^\/api\/forms\/[^/]+\/submit$/) && c.req.method === 'POST') {
+  if (matchPath.match(/^\/api\/forms\/[^/]+\/submit$/) && c.req.method === 'POST') {
     return next()
   }
 
@@ -159,8 +169,12 @@ const routes = [
   whatsappRoutes,
 ]
 
-// Mount all API routes under /api prefix to avoid conflicts with frontend SPA routes
-routes.forEach((route) => app.route('/api', route))
+// Mount all API routes under /api prefix to avoid conflicts with frontend SPA routes.
+// During the P6 strangler also dual-mount under /api/v1 (typed RPC clients call v1).
+routes.forEach((route) => {
+  app.route('/api', route)
+  app.route('/api/v1', route)
+})
 
 // ============================================================================
 // Health & User Endpoints
