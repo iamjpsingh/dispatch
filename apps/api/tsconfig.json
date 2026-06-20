@@ -2,7 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["bun-types"],
-    "paths": { "@dispatch/shared": ["../../packages/shared/src/index.ts"] }
+    "paths": {
+      "@dispatch/shared": ["../../packages/shared/src/index.ts"],
+      "@dispatch/shared/auth": ["../../packages/shared/src/auth.ts"]
+    }
   },
   "include": ["src/**/*", "index.ts"],
   "exclude": ["node_modules", "dist"]

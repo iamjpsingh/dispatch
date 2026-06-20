@@ -1,2 +1,2 @@
 // @dispatch/shared — cross-app zod schemas & inferred types (P6: RPC surface).
-export {}
+export * as auth from './auth'
