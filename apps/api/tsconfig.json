@@ -5,7 +5,8 @@
     "paths": {
       "@dispatch/shared": ["../../packages/shared/src/index.ts"],
       "@dispatch/shared/auth": ["../../packages/shared/src/auth.ts"],
-      "@dispatch/shared/config": ["../../packages/shared/src/config.ts"]
+      "@dispatch/shared/config": ["../../packages/shared/src/config.ts"],
+      "@dispatch/shared/templates": ["../../packages/shared/src/templates.ts"]
     }
   },
   "include": ["src/**/*", "index.ts"],

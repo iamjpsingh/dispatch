@@ -174,7 +174,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('name')
+      expect(body.error.message).toContain('name')
     })
 
     it('returns 400 when html_content is missing', async () => {
@@ -189,7 +189,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('html_content')
+      expect(body.error.message).toContain('html_content')
     })
 
     it('returns 400 when name is empty whitespace', async () => {
@@ -380,7 +380,7 @@ describe('Template Routes', () => {
         name: 'Welcome Email (Copy)',
       })
 
-      const res = await app.fetch(new Request('http://localhost/templates/tpl-1/duplicate', { method: 'POST' }))
+      const res = await app.fetch(jsonRequest('POST', '/templates/tpl-1/duplicate', {}))
 
       expect(res.status).toBe(201)
       const body = await res.json()
@@ -484,7 +484,7 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('html')
+      expect(body.error.message).toContain('html')
     })
 
     it('renders with empty data when data is not provided', async () => {
