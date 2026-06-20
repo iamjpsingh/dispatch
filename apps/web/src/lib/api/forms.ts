@@ -1,7 +1,11 @@
 /**
  * Forms API — Universal Form Connector
  */
-import { api } from './client'
+import { hc } from 'hono/client'
+import type { FormsRoutes } from '@dispatch/api/src/routes/forms'
+import { rpcBase, rpcFetch } from '../rpc/client'
+
+const client = hc<FormsRoutes>(rpcBase(), { fetch: rpcFetch })
 
 // ============================================================================
 // Types
@@ -69,48 +73,56 @@ export interface EmbedCode {
 
 export const formsApi = {
   list: async (): Promise<FormEndpoint[]> => {
-    const res = await api.get<{ forms: FormEndpoint[] }>('/forms')
-    if (!res.success) throw new Error(res.message || 'Failed to load forms')
-    return res.data?.forms || []
+    const res = await client.forms.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load forms')
+    return (body.data as { forms: FormEndpoint[] } | undefined)?.forms || []
   },
 
   get: async (id: string): Promise<FormEndpoint> => {
-    const res = await api.get<FormEndpoint>(`/forms/${id}`)
-    if (!res.success) throw new Error(res.message || 'Form not found')
-    return res.data!
+    const res = await client.forms[':id'].$get({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Form not found')
+    return body.data as FormEndpoint
   },
 
   create: async (input: FormInput): Promise<FormEndpoint> => {
-    const res = await api.post<FormEndpoint>('/forms', input)
-    if (!res.success) throw new Error(res.message || 'Failed to create form')
-    return res.data!
+    const res = await client.forms.$post({ json: input })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to create form')
+    return body.data as FormEndpoint
   },
 
   update: async (id: string, updates: Partial<FormInput>) => {
-    const res = await api.put(`/forms/${id}`, updates)
-    if (!res.success) throw new Error(res.message || 'Failed to update form')
+    const res = await client.forms[':id'].$put({ param: { id }, json: updates })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update form')
   },
 
   delete: async (id: string) => {
-    const res = await api.delete(`/forms/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete form')
+    const res = await client.forms[':id'].$delete({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete form')
   },
 
   toggle: async (id: string): Promise<string> => {
-    const res = await api.post<{ status: string }>(`/forms/${id}/toggle`)
-    if (!res.success) throw new Error(res.message || 'Failed to toggle form')
-    return res.data?.status || 'paused'
+    const res = await client.forms[':id'].toggle.$post({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to toggle form')
+    return (body.data as { status: string } | undefined)?.status || 'paused'
   },
 
   getEmbed: async (id: string): Promise<EmbedCode> => {
-    const res = await api.get<EmbedCode>(`/forms/${id}/embed`)
-    if (!res.success) throw new Error(res.message || 'Failed to get embed code')
-    return res.data!
+    const res = await client.forms[':id'].embed.$get({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to get embed code')
+    return body.data as EmbedCode
   },
 
   getSubmissions: async (id: string, limit = 50, offset = 0): Promise<{ submissions: FormSubmission[]; total: number }> => {
-    const res = await api.get<{ submissions: FormSubmission[]; total: number }>(`/forms/${id}/submissions?limit=${limit}&offset=${offset}`)
-    if (!res.success) throw new Error(res.message || 'Failed to load submissions')
-    return res.data || { submissions: [], total: 0 }
+    const res = await client.forms[':id'].submissions.$get({ param: { id }, query: { limit: String(limit), offset: String(offset) } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load submissions')
+    return (body.data as { submissions: FormSubmission[]; total: number } | undefined) || { submissions: [], total: 0 }
   },
 }
