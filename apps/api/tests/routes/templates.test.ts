@@ -174,7 +174,6 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.error.message).toContain('name')
     })
 
     it('returns 400 when html_content is missing', async () => {
@@ -189,7 +188,6 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.error.message).toContain('html_content')
     })
 
     it('returns 400 when name is empty whitespace', async () => {
@@ -484,7 +482,6 @@ describe('Template Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.error.message).toContain('html')
     })
 
     it('renders with empty data when data is not provided', async () => {

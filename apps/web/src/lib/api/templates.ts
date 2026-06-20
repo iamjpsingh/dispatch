@@ -65,8 +65,8 @@ export const templatesApi = {
     const res = await client.templates.$get({ query })
     const body = await res.json()
     return {
-      templates: ((body as any).data as Template[]) || [],
-      pagination: (body as any).meta?.pagination || { page: 1, limit: 50, total: 0, totalPages: 0 },
+      templates: (body.data as Template[]) || [],
+      pagination: body.meta?.pagination || { page: 1, limit: 50, total: 0, totalPages: 0 },
     }
   },
 
