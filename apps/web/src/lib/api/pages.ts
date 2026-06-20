@@ -1,7 +1,11 @@
 /**
  * Landing Pages API
  */
-import { api } from './client'
+import { hc } from 'hono/client'
+import type { PagesRoutes } from '@dispatch/api/src/routes/pages'
+import { rpcBase, rpcFetch } from '../rpc/client'
+
+const client = hc<PagesRoutes>(rpcBase(), { fetch: rpcFetch })
 
 // ============================================================================
 // Types
@@ -51,48 +55,56 @@ export interface PageTemplate {
 
 export const pagesApi = {
   list: async (): Promise<LandingPage[]> => {
-    const res = await api.get<{ pages: LandingPage[] }>('/pages')
-    if (!res.success) throw new Error(res.message || 'Failed to load pages')
-    return res.data?.pages || []
+    const res = await client.pages.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load pages')
+    return (body.data as { pages: LandingPage[] } | undefined)?.pages || []
   },
 
   get: async (id: string): Promise<LandingPage> => {
-    const res = await api.get<LandingPage>(`/pages/${id}`)
-    if (!res.success) throw new Error(res.message || 'Page not found')
-    return res.data!
+    const res = await client.pages[':id'].$get({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Page not found')
+    return body.data as LandingPage
   },
 
   create: async (input: LandingPageInput): Promise<LandingPage> => {
-    const res = await api.post<LandingPage>('/pages', input)
-    if (!res.success) throw new Error(res.message || 'Failed to create page')
-    return res.data!
+    const res = await client.pages.$post({ json: input })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to create page')
+    return body.data as LandingPage
   },
 
   update: async (id: string, updates: Partial<LandingPageInput>) => {
-    const res = await api.put(`/pages/${id}`, updates)
-    if (!res.success) throw new Error(res.message || 'Failed to update page')
+    const res = await client.pages[':id'].$put({ param: { id }, json: updates })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update page')
   },
 
   delete: async (id: string) => {
-    const res = await api.delete(`/pages/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete page')
+    const res = await client.pages[':id'].$delete({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete page')
   },
 
   publish: async (id: string): Promise<string> => {
-    const res = await api.post<{ url: string }>(`/pages/${id}/publish`)
-    if (!res.success) throw new Error(res.message || 'Failed to publish page')
-    return res.data?.url || ''
+    const res = await client.pages[':id'].publish.$post({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to publish page')
+    return (body.data as { url: string } | undefined)?.url || ''
   },
 
   unpublish: async (id: string) => {
-    const res = await api.post(`/pages/${id}/unpublish`)
-    if (!res.success) throw new Error(res.message || 'Failed to unpublish page')
+    const res = await client.pages[':id'].unpublish.$post({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to unpublish page')
   },
 
   getTemplates: async (): Promise<PageTemplate[]> => {
-    const res = await api.get<{ templates: PageTemplate[] }>('/pages/templates')
-    if (!res.success) throw new Error(res.message || 'Failed to load templates')
-    return res.data?.templates || []
+    const res = await client.pages.templates.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load templates')
+    return (body.data as { templates: PageTemplate[] } | undefined)?.templates || []
   },
 
   getPreviewUrl: (id: string): string => {
