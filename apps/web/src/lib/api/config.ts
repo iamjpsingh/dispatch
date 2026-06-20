@@ -1,6 +1,8 @@
 /**
  * Config & OAuth APIs
  */
+import { hc } from 'hono/client'
+import type { ConfigRoutes } from '@dispatch/api/src/routes/config'
 import {
   api,
   type SMTPConfig,
@@ -10,59 +12,73 @@ import {
   type Pagination,
   type DashboardStats,
 } from './client'
+import { rpcBase, rpcFetch } from '../rpc/client'
+
+const client = hc<ConfigRoutes>(rpcBase(), { fetch: rpcFetch })
 
 // Configs
 export const configApi = {
   list: async (): Promise<SMTPConfig[]> => {
-    const res = await api.get<{ configs: SMTPConfig[] }>('/config/list')
-    if (!res.success) throw new Error(res.message || 'Failed to load configs')
-    return res.data?.configs || []
+    const res = await client.config.list.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load configs')
+    return (body.data as { configs: SMTPConfig[] } | undefined)?.configs || []
   },
 
   create: async (config: Partial<SMTPConfig> & { pass?: string }) => {
-    const res = await api.post<{ configId: string }>('/config/smtp', {
-      name: config.name,
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      user: config.user,
-      pass: config.pass,
-      fromEmail: config.from_email,
-      fromName: config.from_name,
-      isDefault: config.is_default,
+    const res = await client.config.smtp.$post({
+      json: {
+        name: config.name,
+        host: config.host ?? '',
+        port: config.port,
+        secure: config.secure,
+        user: config.user ?? '',
+        pass: config.pass ?? '',
+        fromEmail: config.from_email,
+        fromName: config.from_name,
+        isDefault: config.is_default,
+      },
     })
-    if (!res.success) throw new Error(res.message || 'Failed to create config')
-    return res.data?.configId
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to create config')
+    return (body.data as { configId: string } | undefined)?.configId
   },
 
   update: async (id: string, config: Partial<SMTPConfig> & { pass?: string }) => {
-    const res = await api.put(`/config/smtp/${id}`, {
-      name: config.name,
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      user: config.user,
-      pass: config.pass,
-      fromEmail: config.from_email,
-      fromName: config.from_name,
-      isDefault: config.is_default,
+    const res = await client.config.smtp[':configId'].$put({
+      param: { configId: id },
+      json: {
+        name: config.name,
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        user: config.user,
+        pass: config.pass,
+        fromEmail: config.from_email,
+        fromName: config.from_name,
+        isDefault: config.is_default,
+      },
     })
-    if (!res.success) throw new Error(res.message || 'Failed to update config')
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update config')
   },
 
   delete: async (id: string) => {
-    const res = await api.delete(`/config/smtp/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete config')
+    const res = await client.config.smtp[':configId'].$delete({ param: { configId: id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete config')
   },
 
   test: async (id: string) => {
-    const res = await api.post<{ valid: boolean }>(`/config/test/${id}`)
-    return { success: !!(res.success && res.data?.valid), message: res.message || '' }
+    const res = await client.config.test[':configId'].$post({ param: { configId: id } })
+    const body = await res.json()
+    return { success: !!(body.success && (body.data as { valid: boolean } | undefined)?.valid), message: body.message ?? '' }
   },
 
   testConnection: async (config: { host: string; port: number; secure: boolean; user: string; pass: string }) => {
-    const res = await api.post<{ valid: boolean }>('/config/smtp/test', config)
-    return { success: !!(res.success && res.data?.valid), message: res.message || '' }
+    const res = await client.config.smtp.test.$post({ json: config })
+    const body = await res.json()
+    return { success: !!(body.success && (body.data as { valid: boolean } | undefined)?.valid), message: body.message ?? '' }
   },
 }
 

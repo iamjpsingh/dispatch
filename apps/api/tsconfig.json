@@ -4,7 +4,8 @@
     "types": ["bun-types"],
     "paths": {
       "@dispatch/shared": ["../../packages/shared/src/index.ts"],
-      "@dispatch/shared/auth": ["../../packages/shared/src/auth.ts"]
+      "@dispatch/shared/auth": ["../../packages/shared/src/auth.ts"],
+      "@dispatch/shared/config": ["../../packages/shared/src/config.ts"]
     }
   },
   "include": ["src/**/*", "index.ts"],
