@@ -17,6 +17,9 @@ export const organizations = pgTable(
     settings: text('settings').notNull().default('{}'),
     created_at: ts('created_at').notNull().defaultNow(),
     updated_at: ts('updated_at').notNull().defaultNow(),
+    sender_company_name: text('sender_company_name'),
+    postal_address: text('postal_address'),
+    postal_address_set_at: ts('postal_address_set_at'),
   },
   (t) => [index('idx_org_slug').on(t.slug), index('idx_org_status').on(t.status)]
 )

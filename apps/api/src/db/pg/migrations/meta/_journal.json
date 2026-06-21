@@ -85,6 +85,13 @@
       "when": 1781022456832,
       "tag": "0011_clever_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782042172227,
+      "tag": "0012_new_serpent_society",
+      "breakpoints": true
     }
   ]
 }

@@ -77,13 +77,15 @@ export const suppression_list = pgTable(
     // user_id remains the operative key until P4 wires org-scoped enforcement.
     org_id: text('org_id').references(() => organizations.id, { onDelete: 'cascade' }),
     user_id: text('user_id').notNull(),
-    email: text('email').notNull(),
+    email: text('email'),
+    email_hash: text('email_hash'),
     reason: text('reason').notNull(),
     source: text('source'),
     created_at: ts('created_at').notNull().defaultNow(),
   },
   (t) => [
     unique('uq_suppress_user_email').on(t.user_id, t.email),
+    unique('uq_suppress_user_hash').on(t.user_id, t.email_hash),
     index('idx_suppress_user').on(t.user_id),
     index('idx_suppress_email').on(t.email),
     index('idx_suppress_org_email').on(t.org_id, t.email),
