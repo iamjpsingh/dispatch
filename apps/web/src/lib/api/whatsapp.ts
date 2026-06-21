@@ -1,7 +1,18 @@
 /**
  * WhatsApp Business API
  */
-import { api } from './client'
+import { hc, type InferRequestType } from 'hono/client'
+import type { WhatsappRoutes } from '@dispatch/api/src/routes/whatsapp'
+import { rpcBase, rpcFetch } from '../rpc/client'
+
+const client = hc<WhatsappRoutes>(rpcBase(), { fetch: rpcFetch })
+
+// The web createTemplate input types `category` as a bare string and
+// `components` as any[], while the server CreateTemplateSchema constrains
+// `category` to a MARKETING/UTILITY/AUTHENTICATION enum. The loose ApiClient
+// never type-checked this; RPC does. Bridge the payload to the server-inferred
+// json shape at the boundary and reconcile the category type post-P6.
+type CreateTemplateJson = InferRequestType<typeof client.whatsapp.templates.$post>['json']
 
 // ============================================================================
 // Types
@@ -88,105 +99,121 @@ export interface WhatsAppStats {
 export const whatsappApi = {
   // Configs
   getConfigs: async (): Promise<WhatsAppConfig[]> => {
-    const res = await api.get<{ configs: WhatsAppConfig[] }>('/whatsapp/configs')
-    if (!res.success) throw new Error(res.message || 'Failed to load configs')
-    return res.data?.configs || []
+    const res = await client.whatsapp.configs.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load configs')
+    return (body.data as { configs: WhatsAppConfig[] } | undefined)?.configs || []
   },
 
   getConfig: async (id: string): Promise<WhatsAppConfig> => {
-    const res = await api.get<WhatsAppConfig>(`/whatsapp/configs/${id}`)
-    if (!res.success) throw new Error(res.message || 'Config not found')
-    return res.data!
+    const res = await client.whatsapp.configs[':id'].$get({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Config not found')
+    return body.data as WhatsAppConfig
   },
 
   createConfig: async (input: WhatsAppConfigInput): Promise<WhatsAppConfig> => {
-    const res = await api.post<WhatsAppConfig>('/whatsapp/configs', input)
-    if (!res.success) throw new Error(res.message || 'Failed to create config')
-    return res.data!
+    const res = await client.whatsapp.configs.$post({ json: input })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to create config')
+    return body.data as WhatsAppConfig
   },
 
   updateConfig: async (id: string, updates: Partial<WhatsAppConfigInput>) => {
-    const res = await api.put(`/whatsapp/configs/${id}`, updates)
-    if (!res.success) throw new Error(res.message || 'Failed to update config')
+    const res = await client.whatsapp.configs[':id'].$put({ param: { id }, json: updates })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update config')
   },
 
   deleteConfig: async (id: string) => {
-    const res = await api.delete(`/whatsapp/configs/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete config')
+    const res = await client.whatsapp.configs[':id'].$delete({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete config')
   },
 
   // Templates
   getTemplates: async (configId?: string): Promise<WhatsAppTemplate[]> => {
-    const qs = configId ? `?config_id=${configId}` : ''
-    const res = await api.get<{ templates: WhatsAppTemplate[] }>(`/whatsapp/templates${qs}`)
-    if (!res.success) throw new Error(res.message || 'Failed to load templates')
-    return res.data?.templates || []
+    const res = await client.whatsapp.templates.$get({ query: configId ? { config_id: configId } : {} })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load templates')
+    return (body.data as { templates: WhatsAppTemplate[] } | undefined)?.templates || []
   },
 
   syncTemplates: async (configId: string): Promise<number> => {
-    const res = await api.post<{ synced: number }>('/whatsapp/templates/sync', { config_id: configId })
-    if (!res.success) throw new Error(res.message || 'Failed to sync templates')
-    return res.data?.synced || 0
+    const res = await client.whatsapp.templates.sync.$post({ json: { config_id: configId } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to sync templates')
+    return (body.data as { synced: number } | undefined)?.synced || 0
   },
 
   createTemplate: async (input: { config_id: string; name: string; language: string; category: string; components: any[] }): Promise<WhatsAppTemplate> => {
-    const res = await api.post<WhatsAppTemplate>('/whatsapp/templates', input)
-    if (!res.success) throw new Error(res.message || 'Failed to create template')
-    return res.data!
+    const res = await client.whatsapp.templates.$post({ json: input as CreateTemplateJson })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to create template')
+    return body.data as WhatsAppTemplate
   },
 
   deleteTemplate: async (id: string) => {
-    const res = await api.delete(`/whatsapp/templates/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete template')
+    const res = await client.whatsapp.templates[':id'].$delete({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete template')
   },
 
   // Sending
   sendTemplate: async (configId: string, phone: string, templateName: string, language = 'en', components?: any[]) => {
-    const res = await api.post('/whatsapp/send', {
-      config_id: configId,
-      phone,
-      template_name: templateName,
-      language,
-      components,
+    const res = await client.whatsapp.send.$post({
+      json: {
+        config_id: configId,
+        phone,
+        template_name: templateName,
+        language,
+        components,
+      },
     })
-    if (!res.success) throw new Error(res.message || 'Failed to send message')
-    return res.data
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to send message')
+    return body.data
   },
 
   sendText: async (configId: string, phone: string, text: string) => {
-    const res = await api.post('/whatsapp/send-text', { config_id: configId, phone, text })
-    if (!res.success) throw new Error(res.message || 'Failed to send message')
-    return res.data
+    const res = await client.whatsapp['send-text'].$post({ json: { config_id: configId, phone, text } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to send message')
+    return body.data
   },
 
   sendBulk: async (configId: string, templateName: string, recipients: { phone: string; params?: string[] }[], language = 'en') => {
-    const res = await api.post<{ sent: number; failed: number }>('/whatsapp/send-bulk', {
-      config_id: configId,
-      template_name: templateName,
-      recipients,
-      language,
+    const res = await client.whatsapp['send-bulk'].$post({
+      json: {
+        config_id: configId,
+        template_name: templateName,
+        recipients,
+        language,
+      },
     })
-    if (!res.success) throw new Error(res.message || 'Bulk send failed')
-    return res.data!
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Bulk send failed')
+    return body.data as { sent: number; failed: number }
   },
 
   // Messages
   getMessages: async (filters?: { configId?: string; status?: string; limit?: number; offset?: number }): Promise<{ messages: WhatsAppMessage[]; total: number }> => {
-    const qs = new URLSearchParams()
-    if (filters?.configId) qs.set('config_id', filters.configId)
-    if (filters?.status) qs.set('status', filters.status)
-    if (filters?.limit) qs.set('limit', String(filters.limit))
-    if (filters?.offset) qs.set('offset', String(filters.offset))
-    const res = await api.get<{ messages: WhatsAppMessage[]; total: number }>(`/whatsapp/messages?${qs}`)
-    if (!res.success) throw new Error(res.message || 'Failed to load messages')
-    return res.data || { messages: [], total: 0 }
+    const query: Record<string, string> = {}
+    if (filters?.configId) query.config_id = filters.configId
+    if (filters?.status) query.status = filters.status
+    if (filters?.limit) query.limit = String(filters.limit)
+    if (filters?.offset) query.offset = String(filters.offset)
+    const res = await client.whatsapp.messages.$get({ query })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load messages')
+    return (body.data as { messages: WhatsAppMessage[]; total: number } | undefined) || { messages: [], total: 0 }
   },
 
   // Stats
   getStats: async (configId?: string): Promise<WhatsAppStats> => {
-    const qs = configId ? `?config_id=${configId}` : ''
-    const res = await api.get<WhatsAppStats>(`/whatsapp/stats${qs}`)
-    if (!res.success) throw new Error(res.message || 'Failed to load stats')
-    return res.data!
+    const res = await client.whatsapp.stats.$get({ query: configId ? { config_id: configId } : {} })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load stats')
+    return body.data as WhatsAppStats
   },
 }
