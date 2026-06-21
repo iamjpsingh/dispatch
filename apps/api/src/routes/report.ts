@@ -48,189 +48,179 @@ interface EmailLogRecord {
   click_count?: number
 }
 
-const app = new Hono()
+const reportRoutes = new Hono()
+  // ==========================================================================
+  // Logs & Stats
+  // ==========================================================================
+  /**
+   * Get email logs with filtering
+   * GET /report/logs
+   */
+  .get('/report/logs', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
+    const user = requireAuth(c)
+    const filters = extractFilters(c)
 
-// ============================================================================
-// Logs & Stats
-// ============================================================================
-
-/**
- * Get email logs with filtering
- * GET /report/logs
- */
-app.get('/report/logs', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
-  const user = requireAuth(c)
-  const filters = extractFilters(c)
-
-  // Try Worker API first
-  if (d1Service.isConfigured()) {
-    try {
-      const result = await d1Service.getLogs(user.id, filters)
-      if (result) {
-        return success(c, {
-          logs: result.logs,
-          stats: result.stats,
-          pagination: result.pagination,
-        })
+    // Try Worker API first
+    if (d1Service.isConfigured()) {
+      try {
+        const result = await d1Service.getLogs(user.id, filters)
+        if (result) {
+          return success(c, {
+            logs: result.logs,
+            stats: result.stats,
+            pagination: result.pagination,
+          })
+        }
+      } catch (err) {
+        logger.error('Worker API error:', err)
       }
-    } catch (err) {
-      logger.error('Worker API error:', err)
     }
-  }
 
-  // Fallback to local logs
-  const orgId = getOrgId(c)
-  return success(c, {
-    logs: await logService.getLogs(orgId),
-    stats: await logService.getStats(orgId),
+    // Fallback to local logs
+    const orgId = getOrgId(c)
+    return success(c, {
+      logs: await logService.getLogs(orgId),
+      stats: await logService.getStats(orgId),
+    })
   })
-})
+  /**
+   * Get stats
+   * GET /report/stats
+   */
+  .get('/report/stats', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
+    const user = requireAuth(c)
 
-/**
- * Get stats
- * GET /report/stats
- */
-app.get('/report/stats', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
-  const user = requireAuth(c)
-
-  if (d1Service.isConfigured()) {
-    try {
-      const stats = await d1Service.getStats(user.id)
-      if (stats) {
-        return success(c, stats)
+    if (d1Service.isConfigured()) {
+      try {
+        const stats = await d1Service.getStats(user.id)
+        if (stats) {
+          return success(c, stats)
+        }
+      } catch (err) {
+        logger.error('Worker API error:', err)
       }
-    } catch (err) {
-      logger.error('Worker API error:', err)
     }
-  }
 
-  return success(c, await logService.getStats(getOrgId(c)))
-})
+    return success(c, await logService.getStats(getOrgId(c)))
+  })
+  /**
+   * Legacy report endpoint
+   * GET /report
+   */
+  .get('/report', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
+    const user = requireAuth(c)
 
-/**
- * Legacy report endpoint
- * GET /report
- */
-app.get('/report', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
-  const user = requireAuth(c)
-
-  if (d1Service.isConfigured()) {
-    try {
-      const result = await d1Service.getLogs(user.id, { limit: 100 })
-      if (result) {
-        return success(c, { logs: result.logs, stats: result.stats })
+    if (d1Service.isConfigured()) {
+      try {
+        const result = await d1Service.getLogs(user.id, { limit: 100 })
+        if (result) {
+          return success(c, { logs: result.logs, stats: result.stats })
+        }
+      } catch (err) {
+        logger.error('Worker API error:', err)
       }
-    } catch (err) {
-      logger.error('Worker API error:', err)
     }
-  }
 
-  const orgId = getOrgId(c)
-  return success(c, {
-    logs: await logService.getLogs(orgId),
-    stats: await logService.getStats(orgId),
+    const orgId = getOrgId(c)
+    return success(c, {
+      logs: await logService.getLogs(orgId),
+      stats: await logService.getStats(orgId),
+    })
   })
-})
+  // ==========================================================================
+  // Export
+  // ==========================================================================
+  /**
+   * Export logs as CSV
+   * GET /report/export/csv
+   */
+  .get('/report/export/csv', requirePermission(PERMISSIONS.REPORTS_EXPORT), async (c) => {
+    const user = requireAuth(c)
+    const logs = await fetchLogsForExport(user.id, c)
 
-// ============================================================================
-// Export
-// ============================================================================
+    const csv = generateCSV(logs)
+    const filename = `email-logs-${new Date().toISOString().split('T')[0]}.csv`
 
-/**
- * Export logs as CSV
- * GET /report/export/csv
- */
-app.get('/report/export/csv', requirePermission(PERMISSIONS.REPORTS_EXPORT), async (c) => {
-  const user = requireAuth(c)
-  const logs = await fetchLogsForExport(user.id, c)
-
-  const csv = generateCSV(logs)
-  const filename = `email-logs-${new Date().toISOString().split('T')[0]}.csv`
-
-  return new Response(csv, {
-    headers: {
-      'Content-Type': 'text/csv; charset=UTF-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
+    return new Response(csv, {
+      headers: {
+        'Content-Type': 'text/csv; charset=UTF-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      },
+    })
   })
-})
+  /**
+   * Export logs as JSON
+   * GET /report/export/json
+   */
+  .get('/report/export/json', requirePermission(PERMISSIONS.REPORTS_EXPORT), async (c) => {
+    const user = requireAuth(c)
+    const logs = await fetchLogsForExport(user.id, c)
 
-/**
- * Export logs as JSON
- * GET /report/export/json
- */
-app.get('/report/export/json', requirePermission(PERMISSIONS.REPORTS_EXPORT), async (c) => {
-  const user = requireAuth(c)
-  const logs = await fetchLogsForExport(user.id, c)
+    const filename = `email-logs-${new Date().toISOString().split('T')[0]}.json`
 
-  const filename = `email-logs-${new Date().toISOString().split('T')[0]}.json`
-
-  return new Response(JSON.stringify(logs, null, 2), {
-    headers: {
-      'Content-Type': 'application/json; charset=UTF-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
+    return new Response(JSON.stringify(logs, null, 2), {
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      },
+    })
   })
-})
+  // ==========================================================================
+  // Delete Logs
+  // ==========================================================================
+  /**
+   * Delete single log
+   * DELETE /report/logs/:id
+   */
+  .delete('/report/logs/:id', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
+    const user = requireAuth(c)
+    const logId = c.req.param('id')
 
-// ============================================================================
-// Delete Logs
-// ============================================================================
+    logger.debug(`Delete request: logId=${logId}, userId=${user.id}`)
 
-/**
- * Delete single log
- * DELETE /report/logs/:id
- */
-app.delete('/report/logs/:id', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
-  const user = requireAuth(c)
-  const logId = c.req.param('id')
-
-  logger.debug(`Delete request: logId=${logId}, userId=${user.id}`)
-
-  if (d1Service.isConfigured()) {
-    try {
-      const result = await d1Service.deleteLog(user.id, logId)
-      logger.debug(`Delete result: ${result}`)
-      return success(c, undefined, 'Log deleted')
-    } catch (err) {
-      logger.error('Delete log error:', err)
-      return error(c, 'Failed to delete log', 500)
+    if (d1Service.isConfigured()) {
+      try {
+        const result = await d1Service.deleteLog(user.id, logId)
+        logger.debug(`Delete result: ${result}`)
+        return success(c, undefined, 'Log deleted')
+      } catch (err) {
+        logger.error('Delete log error:', err)
+        return error(c, 'Failed to delete log', 500)
+      }
     }
-  }
 
-  // Local fallback
-  await logService.deleteLog(getOrgId(c), logId)
-  return success(c, undefined, 'Log deleted')
-})
+    // Local fallback
+    await logService.deleteLog(getOrgId(c), logId)
+    return success(c, undefined, 'Log deleted')
+  })
+  /**
+   * Delete multiple logs (bulk)
+   * POST /report/logs/delete-bulk
+   */
+  .post('/report/logs/delete-bulk', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
+    const user = requireAuth(c)
+    const body = await c.req.json()
+    const { ids } = body as { ids: string[] }
 
-/**
- * Delete multiple logs (bulk)
- * POST /report/logs/delete-bulk
- */
-app.post('/report/logs/delete-bulk', requirePermission(PERMISSIONS.REPORTS_VIEW), async (c) => {
-  const user = requireAuth(c)
-  const body = await c.req.json()
-  const { ids } = body as { ids: string[] }
-
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return error(c, 'No log IDs provided', 400)
-  }
-
-  if (d1Service.isConfigured()) {
-    try {
-      await d1Service.deleteLogs(user.id, ids)
-      return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
-    } catch (err) {
-      logger.error('Bulk delete error:', err)
-      return error(c, 'Failed to delete logs', 500)
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return error(c, 'No log IDs provided', 400)
     }
-  }
 
-  // Local fallback
-  const orgId = getOrgId(c)
-  for (const id of ids) await logService.deleteLog(orgId, id)
-  return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
-})
+    if (d1Service.isConfigured()) {
+      try {
+        await d1Service.deleteLogs(user.id, ids)
+        return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
+      } catch (err) {
+        logger.error('Bulk delete error:', err)
+        return error(c, 'Failed to delete logs', 500)
+      }
+    }
+
+    // Local fallback
+    const orgId = getOrgId(c)
+    for (const id of ids) await logService.deleteLog(orgId, id)
+    return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
+  })
 
 // ============================================================================
 // Helper Functions
@@ -315,4 +305,5 @@ function generateCSV(logs: EmailLogRecord[]): string {
   return [headers.join(','), ...rows.map((row) => row.map(escapeCSV).join(','))].join('\n')
 }
 
-export default app
+export default reportRoutes
+export type ReportRoutes = typeof reportRoutes
