@@ -1,7 +1,12 @@
 /**
  * Contacts API
  */
-import { api, type Pagination } from './client'
+import { hc } from 'hono/client'
+import type { ContactsRoutes } from '@dispatch/api/src/routes/contacts'
+import { type Pagination } from './client'
+import { rpcBase, rpcFetch } from '../rpc/client'
+
+const client = hc<ContactsRoutes>(rpcBase(), { fetch: rpcFetch })
 
 // ============================================================================
 // Contact Types
@@ -106,25 +111,29 @@ export interface TimelineEvent {
 export const contactsApi = {
   // Lists
   getLists: async (): Promise<ContactList[]> => {
-    const res = await api.get<{ lists: ContactList[] }>('/contacts/lists')
-    if (!res.success) throw new Error(res.message || 'Failed to load lists')
-    return res.data?.lists || []
+    const res = await client.contacts.lists.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load lists')
+    return (body.data as { lists: ContactList[] } | undefined)?.lists || []
   },
 
   createList: async (name: string, description?: string): Promise<ContactList> => {
-    const res = await api.post<ContactList>('/contacts/lists', { name, description })
-    if (!res.success) throw new Error(res.message || 'Failed to create list')
-    return res.data!
+    const res = await client.contacts.lists.$post({ json: { name, description } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to create list')
+    return body.data as ContactList
   },
 
   updateList: async (id: string, name: string, description?: string) => {
-    const res = await api.put(`/contacts/lists/${id}`, { name, description })
-    if (!res.success) throw new Error(res.message || 'Failed to update list')
+    const res = await client.contacts.lists[':id'].$put({ param: { id }, json: { name, description } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update list')
   },
 
   deleteList: async (id: string) => {
-    const res = await api.delete(`/contacts/lists/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete list')
+    const res = await client.contacts.lists[':id'].$delete({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete list')
   },
 
   // Contacts
@@ -140,55 +149,62 @@ export const contactsApi = {
       sort_order?: 'asc' | 'desc'
     }
   ): Promise<{ contacts: Contact[]; pagination: Pagination }> => {
-    const qs = new URLSearchParams()
+    const query: Record<string, string> = {}
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') {
-          qs.set(key, String(value))
+          query[key] = String(value)
         }
       })
     }
-    const res = await api.get<Contact[]>(`/contacts/${listId}?${qs}`)
+    const res = await client.contacts[':listId'].$get({ param: { listId }, query })
+    const body = await res.json()
     return {
-      contacts: (res as any).data || [],
-      pagination: (res as any).meta?.pagination || { page: 1, limit: 50, total: 0, totalPages: 0 },
+      contacts: (body.data as Contact[] | undefined) || [],
+      pagination: (body.meta?.pagination as Pagination | undefined) || { page: 1, limit: 50, total: 0, totalPages: 0 },
     }
   },
 
   addContact: async (listId: string, contact: ContactInput): Promise<Contact> => {
-    const res = await api.post<Contact>(`/contacts/${listId}`, contact)
-    if (!res.success) throw new Error(res.message || 'Failed to add contact')
-    return res.data!
+    const res = await client.contacts[':listId'].$post({ param: { listId }, json: contact })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to add contact')
+    return body.data as Contact
   },
 
   updateContact: async (id: string, updates: Partial<ContactInput>) => {
-    const res = await api.put(`/contacts/item/${id}`, updates)
-    if (!res.success) throw new Error(res.message || 'Failed to update contact')
+    const res = await client.contacts.item[':id'].$put({ param: { id }, json: updates })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update contact')
   },
 
   // Bulk
   bulkDelete: async (ids: string[]): Promise<number> => {
-    const res = await api.post<{ deleted: number }>('/contacts/bulk/delete', { ids })
-    if (!res.success) throw new Error(res.message || 'Failed to delete contacts')
-    return res.data?.deleted || 0
+    const res = await client.contacts.bulk.delete.$post({ json: { ids } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete contacts')
+    return (body.data as { deleted: number } | undefined)?.deleted || 0
   },
 
   bulkTag: async (ids: string[], tags: string[]): Promise<number> => {
-    const res = await api.post<{ updated: number }>('/contacts/bulk/tag', { ids, tags })
-    if (!res.success) throw new Error(res.message || 'Failed to tag contacts')
-    return res.data?.updated || 0
+    const res = await client.contacts.bulk.tag.$post({ json: { ids, tags } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to tag contacts')
+    return (body.data as { updated: number } | undefined)?.updated || 0
   },
 
   bulkMove: async (ids: string[], targetListId: string): Promise<number> => {
-    const res = await api.post<{ moved: number }>('/contacts/bulk/move', { ids, target_list_id: targetListId })
-    if (!res.success) throw new Error(res.message || 'Failed to move contacts')
-    return res.data?.moved || 0
+    const res = await client.contacts.bulk.move.$post({ json: { ids, target_list_id: targetListId } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to move contacts')
+    return (body.data as { moved: number } | undefined)?.moved || 0
   },
 
   // Search
   search: async (q: string): Promise<Contact[]> => {
-    const res = await api.get<{ contacts: Contact[] }>(`/contacts/search?q=${encodeURIComponent(q)}`)
-    return res.data?.contacts || []
+    const res = await client.contacts.search.$get({ query: { q } })
+    const body = await res.json()
+    return (body.data as { contacts: Contact[] } | undefined)?.contacts || []
   },
 
   // Import
@@ -202,62 +218,74 @@ export const contactsApi = {
     formData.append('file', file)
     if (fieldMapping) formData.append('fieldMapping', JSON.stringify(fieldMapping))
     formData.append('skipDuplicates', String(skipDuplicates))
-    const res = await api.upload<ImportResult>(`/contacts/${listId}/import`, formData)
-    if (!res.success) throw new Error(res.message || 'Failed to import contacts')
-    return res.data!
+    const res = await rpcFetch(`${rpcBase()}/contacts/${listId}/import`, { method: 'POST', body: formData })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to import contacts')
+    return body.data as ImportResult
   },
 
   getImportHistory: async (): Promise<ImportHistory[]> => {
-    const res = await api.get<{ history: ImportHistory[] }>('/contacts/import-history')
-    return res.data?.history || []
+    const res = await client.contacts['import-history'].$get()
+    const body = await res.json()
+    return (body.data as { history: ImportHistory[] } | undefined)?.history || []
   },
 
   // Validation
   validateEmails: async (emails: string[]): Promise<BulkValidationResult> => {
-    const res = await api.post<BulkValidationResult>('/contacts/validate', { emails })
-    if (!res.success) throw new Error(res.message || 'Validation failed')
-    return res.data!
+    const res = await client.contacts.validate.$post({ json: { emails } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Validation failed')
+    return body.data as BulkValidationResult
   },
 
   validateSingle: async (email: string): Promise<ValidationResult> => {
-    const res = await api.post<ValidationResult>('/contacts/validate-single', { email })
-    if (!res.success) throw new Error(res.message || 'Validation failed')
-    return res.data!
+    const res = await client.contacts['validate-single'].$post({ json: { email } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Validation failed')
+    return body.data as ValidationResult
   },
 
   // Duplicates
   findDuplicates: async (): Promise<DuplicateGroup[]> => {
-    const res = await api.get<{ duplicates: DuplicateGroup[]; total: number }>('/contacts/duplicates')
-    return res.data?.duplicates || []
+    const res = await client.contacts.duplicates.$get()
+    const body = await res.json()
+    return (body.data as { duplicates: DuplicateGroup[]; total: number } | undefined)?.duplicates || []
   },
 
   mergeContacts: async (primaryId: string, mergeIds: string[]) => {
-    const res = await api.post('/contacts/merge', { primary_id: primaryId, merge_ids: mergeIds })
-    if (!res.success) throw new Error(res.message || 'Merge failed')
+    const res = await client.contacts.merge.$post({ json: { primary_id: primaryId, merge_ids: mergeIds } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Merge failed')
   },
 
   // Timeline
   getTimeline: async (contactId: string, limit = 50): Promise<TimelineEvent[]> => {
-    const res = await api.get<{ timeline: TimelineEvent[] }>(`/contacts/timeline/${contactId}?limit=${limit}`)
-    return res.data?.timeline || []
+    const res = await client.contacts.timeline[':contactId'].$get({ param: { contactId }, query: { limit: String(limit) } })
+    const body = await res.json()
+    return (body.data as { timeline: TimelineEvent[] } | undefined)?.timeline || []
   },
 
   // Preferences
   getPreferences: async (contactId: string): Promise<ContactPreference> => {
-    const res = await api.get<ContactPreference>(`/contacts/preferences/${contactId}`)
-    return res.data || { preference: 'subscribed', details: null, canReceiveMarketing: true }
+    const res = await client.contacts.preferences[':contactId'].$get({ param: { contactId } })
+    const body = await res.json()
+    return (body.data as ContactPreference | undefined) || { preference: 'subscribed', details: null, canReceiveMarketing: true }
   },
 
   setPreferences: async (contactId: string, preference: string, reason?: string, pauseDays?: number) => {
-    const res = await api.put(`/contacts/preferences/${contactId}`, { preference, reason, pause_days: pauseDays })
-    if (!res.success) throw new Error(res.message || 'Failed')
+    const res = await client.contacts.preferences[':contactId'].$put({ param: { contactId }, json: { preference: preference as ContactPreferenceValue, reason, pause_days: pauseDays } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed')
   },
 
   getPreferenceStats: async (): Promise<Record<string, number>> => {
-    const res = await api.get<{ stats: Record<string, number> }>('/contacts/preferences')
-    return res.data?.stats || {}
+    const res = await client.contacts.preferences.$get()
+    const body = await res.json()
+    return (body.data as { stats: Record<string, number> } | undefined)?.stats || {}
   },
 }
+
+type ContactPreferenceValue = 'subscribed' | 'campaign_only' | 'digest_weekly' | 'digest_monthly' | 'paused' | 'unsubscribed'
 
 export interface ContactPreference {
   preference: string

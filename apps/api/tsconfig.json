@@ -6,6 +6,7 @@
       "@dispatch/shared": ["../../packages/shared/src/index.ts"],
       "@dispatch/shared/auth": ["../../packages/shared/src/auth.ts"],
       "@dispatch/shared/config": ["../../packages/shared/src/config.ts"],
+      "@dispatch/shared/contacts": ["../../packages/shared/src/contacts.ts"],
       "@dispatch/shared/forms": ["../../packages/shared/src/forms.ts"],
       "@dispatch/shared/pages": ["../../packages/shared/src/pages.ts"],
       "@dispatch/shared/templates": ["../../packages/shared/src/templates.ts"]

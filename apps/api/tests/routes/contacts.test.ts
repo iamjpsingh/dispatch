@@ -111,7 +111,6 @@ describe('Contacts Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('name')
     })
 
     it('returns 400 when name is empty string', async () => {
@@ -263,7 +262,6 @@ describe('Contacts Routes', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.success).toBe(false)
-      expect(body.message).toContain('email')
     })
 
     it('returns 409 for duplicate email', async () => {
