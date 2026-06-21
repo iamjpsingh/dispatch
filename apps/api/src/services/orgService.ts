@@ -13,6 +13,10 @@ export interface Organization {
   settings: string
   created_at: string
   updated_at: string
+  // Task 1 / P7a sender-identity columns (CAN-SPAM)
+  sender_company_name: string | null
+  postal_address: string | null
+  postal_address_set_at: string | null
 }
 
 export interface OrgMember {
@@ -128,6 +132,9 @@ class OrgService {
         settings: organizations.settings,
         created_at: organizations.created_at,
         updated_at: organizations.updated_at,
+        sender_company_name: organizations.sender_company_name,
+        postal_address: organizations.postal_address,
+        postal_address_set_at: organizations.postal_address_set_at,
         role: org_members.role,
       })
       .from(organizations)

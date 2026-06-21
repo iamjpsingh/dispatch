@@ -18,6 +18,8 @@ import { retryEngine } from '../retryEngine'
 import { logService } from '../logService'
 import { htmlToText } from '../../utils/htmlToText'
 import { logger } from '../../utils/logger'
+import { orgService } from '../orgService'
+import { buildComplianceFooter } from '../../utils/canspam'
 import type { JobRow } from '../../db/pg/schema'
 import type { Contact } from '../../types/index'
 
@@ -36,6 +38,21 @@ export async function processSendBatch(jobId: string, batchIndex: number): Promi
   if (TERMINAL.has(job.status)) return
 
   await queueStore.markRunning(jobId)
+
+  // CAN-SPAM compliance: load org once per job, build footer once. Defense-in-depth:
+  // if postal_address is missing (job was queued before the launch gate was deployed),
+  // fail the job immediately rather than send a non-compliant batch.
+  const org = job.org_id ? await orgService.get(job.org_id) : null
+  if (!org?.postal_address) {
+    const reason = 'CAN-SPAM: org postal address not set; aborting send to avoid non-compliant batch'
+    logger.error(`[${job.id}] ${reason}`)
+    await queueStore.failJob(jobId, reason)
+    return
+  }
+  const footer = buildComplianceFooter(
+    org,
+    job.from_email ? `mailto:${job.from_email}?subject=unsubscribe` : ''
+  )
 
   const contacts: Contact[] = JSON.parse(job.contacts_json)
   const size = job.batch_size ?? 20
@@ -59,7 +76,7 @@ export async function processSendBatch(jobId: string, batchIndex: number): Promi
       continue
     }
 
-    const result = await sendOne(job, contact, campaignId, transport)
+    const result = await sendOne(job, contact, campaignId, transport, footer)
 
     if (result.success) {
       sent++
@@ -109,7 +126,8 @@ async function sendOne(
   job: JobRow,
   contact: Contact,
   campaignId: string,
-  transport: EmailTransport
+  transport: EmailTransport,
+  footer: string
 ): Promise<{ success: boolean; sendTimeMs: number; error?: string }> {
   const maxAttempts = 4 // 1 initial + 3 retries for temporary errors
   let attempts = 0
@@ -138,13 +156,14 @@ async function sendOne(
         if (tracking) html = d1Service.injectTracking(html, tracking.trackingId)
       }
 
+      const finalHtml = footer ? `${html}${footer}` : html
       const unsubUrl = job.from_email ? `mailto:${job.from_email}?subject=unsubscribe` : ''
       const info = await transport.send({
         from: { name: job.from_name || '', email: job.from_email || '' },
         to: contact.Email,
         subject,
-        html,
-        text: htmlToText(html),
+        html: finalHtml,
+        text: htmlToText(finalHtml),
         headers: {
           'List-Unsubscribe': `<${unsubUrl}>`,
           'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',

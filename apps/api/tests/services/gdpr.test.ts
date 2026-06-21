@@ -3,6 +3,7 @@ import { freshDbMigrated, type TestDb } from '../helpers/pg'
 import { __setTestDb } from '../../src/db/pg/client'
 import { organizations } from '../../src/db/pg/schema'
 import { orgService } from '../../src/services/orgService'
+import { assertSenderIdentity } from '../../src/utils/canspam'
 
 const ORG = 'org_test'
 
@@ -22,4 +23,9 @@ describe('orgService sender identity', () => {
     expect(id.postal_address).toBe('1 A St, NY')
     expect(id.postal_address_set_at).toBeTruthy()
   })
+})
+
+it('hard-gate throws without a postal address, passes with one', () => {
+  expect(() => assertSenderIdentity({ postal_address: null })).toThrow()
+  expect(() => assertSenderIdentity({ postal_address: '1 A St' })).not.toThrow()
 })

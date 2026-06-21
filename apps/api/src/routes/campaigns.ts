@@ -27,6 +27,8 @@ import {
   RotationConfigSchema,
 } from '@dispatch/shared/campaigns'
 import { logger } from '../utils/logger'
+import { orgService } from '../services/orgService'
+import { assertSenderIdentity } from '../utils/canspam'
 
 const campaignsRoutes = new Hono()
   // ==========================================================================
@@ -159,6 +161,11 @@ const campaignsRoutes = new Hono()
     if (!['draft', 'scheduled', 'testing'].includes(campaign.status)) {
       return error(c, 'Campaign cannot be launched in its current status', 400)
     }
+
+    // CAN-SPAM hard-gate: org must have a physical postal address before any marketing send.
+    const org = await orgService.get(orgId)
+    if (!org) return error(c, 'Organization not found', 404)
+    try { assertSenderIdentity(org) } catch (e) { return error(c, (e as Error).message, 400) }
 
     // 3. Resolve the HTML body: prefer the linked template, else fall back to draft_data.
     let htmlContent = ''
