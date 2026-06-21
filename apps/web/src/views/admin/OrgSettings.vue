@@ -6,6 +6,8 @@ import { useToast } from '../../composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import Skeleton from '../../components/ui/Skeleton.vue'
 import { Building2, Loader2, Check, X } from 'lucide-vue-next'
 
@@ -23,6 +25,10 @@ const slugSuggestions = ref<string[]>([])
 const savingSlug = ref(false)
 let slugTimeout: ReturnType<typeof setTimeout>
 
+// Sender Identity
+const senderIdentityForm = ref({ sender_company_name: '', postal_address: '' })
+const savingSenderIdentity = ref(false)
+
 function formatDate(d: string): string {
   if (!d) return '-'
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -33,9 +39,24 @@ async function loadOrg() {
     org.value = await adminApi.getOrg()
     orgForm.value.name = org.value.name
     slugInput.value = org.value.slug
+    const identity = await adminApi.getSenderIdentity()
+    senderIdentityForm.value.sender_company_name = identity.sender_company_name ?? ''
+    senderIdentityForm.value.postal_address = identity.postal_address ?? ''
   } catch (e: any) {
     toast.error(e.message || 'Failed to load organization')
   } finally { loading.value = false }
+}
+
+async function saveSenderIdentity() {
+  savingSenderIdentity.value = true
+  try {
+    await adminApi.updateSenderIdentity({
+      sender_company_name: senderIdentityForm.value.sender_company_name || undefined,
+      postal_address: senderIdentityForm.value.postal_address || undefined,
+    })
+    toast.success('Sender identity updated')
+  } catch (e: any) { toast.error(e.message) }
+  finally { savingSenderIdentity.value = false }
 }
 
 async function saveOrg() {
@@ -163,6 +184,43 @@ onMounted(loadOrg)
           Update Slug
         </Button>
       </div>
+
+      <!-- Sender Identity / Compliance -->
+      <Card>
+        <CardHeader>
+          <CardTitle>Sender Identity / Compliance</CardTitle>
+          <CardDescription>
+            A valid physical postal address is required before you can send campaigns (CAN-SPAM).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form @submit.prevent="saveSenderIdentity" class="space-y-4">
+            <div>
+              <Label for="sender_company_name">Company Name</Label>
+              <Input
+                id="sender_company_name"
+                v-model="senderIdentityForm.sender_company_name"
+                type="text"
+                placeholder="Acme Inc."
+                class="mt-1"
+              />
+            </div>
+            <div>
+              <Label for="postal_address">Physical Postal Address</Label>
+              <Textarea
+                id="postal_address"
+                v-model="senderIdentityForm.postal_address"
+                placeholder="123 Main St, Suite 100&#10;New York, NY 10001"
+                class="mt-1"
+                :rows="3"
+              />
+            </div>
+            <Button type="submit" :disabled="savingSenderIdentity" :loading="savingSenderIdentity">
+              Save Sender Identity
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   </div>
 </template>

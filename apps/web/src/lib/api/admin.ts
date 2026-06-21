@@ -418,6 +418,19 @@ export const adminApi = {
     return body.data as { registered: boolean; status: any }
   },
 
+  // --- Sender Identity ---
+  getSenderIdentity: async (): Promise<{ sender_company_name: string | null; postal_address: string | null; postal_address_set_at: string | null }> => {
+    const res = await client.admin.org['sender-identity'].$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load sender identity')
+    return body.data as { sender_company_name: string | null; postal_address: string | null; postal_address_set_at: string | null }
+  },
+  updateSenderIdentity: async (input: { sender_company_name?: string; postal_address?: string }) => {
+    const res = await client.admin.org['sender-identity'].$put({ json: input })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to update sender identity')
+  },
+
   // --- Org Slug ---
   checkSlug: async (slug: string): Promise<{ available: boolean; suggestions: string[] }> => {
     const res = await client.admin.org['check-slug'].$get({ query: { slug } })

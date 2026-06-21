@@ -296,6 +296,29 @@ class OrgService {
     return res.length > 0
   }
 
+  async getSenderIdentity(orgId: string) {
+    const [org] = await getDb()
+      .select({
+        sender_company_name: organizations.sender_company_name,
+        postal_address: organizations.postal_address,
+        postal_address_set_at: organizations.postal_address_set_at,
+      })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .limit(1)
+    return org ?? { sender_company_name: null, postal_address: null, postal_address_set_at: null }
+  }
+
+  async setSenderIdentity(orgId: string, input: { sender_company_name?: string; postal_address?: string }): Promise<void> {
+    const values: Record<string, string> = { updated_at: new Date().toISOString() }
+    if (input.sender_company_name !== undefined) values.sender_company_name = input.sender_company_name
+    if (input.postal_address !== undefined) {
+      values.postal_address = input.postal_address
+      values.postal_address_set_at = new Date().toISOString()
+    }
+    await getDb().update(organizations).set(values).where(eq(organizations.id, orgId))
+  }
+
   private generateSlug(name: string): string {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 48)
   }

@@ -36,6 +36,11 @@ const UpdateOrgSchema = z.object({
   settings: z.record(z.string(), z.unknown()).optional(),
 })
 
+const SenderIdentitySchema = z.object({
+  sender_company_name: z.string().max(200).optional(),
+  postal_address: z.string().max(1000).optional(),
+})
+
 const AddMemberSchema = z.object({
   email: z.string().email('Valid email is required'),
   role: z.string().max(50).optional(),
@@ -426,6 +431,18 @@ const adminRoutes = new Hono()
     } catch (e: any) {
       return error(c, e.message, 400)
     }
+  })
+  // ==========================================================================
+  // Sender Identity / Compliance (org-scoped)
+  // ==========================================================================
+  .get('/admin/org/sender-identity', requirePermission(PERMISSIONS.ORG_VIEW), async (c) => {
+    const orgId = getOrgId(c)
+    return success(c, await orgService.getSenderIdentity(orgId))
+  })
+  .put('/admin/org/sender-identity', requirePermission(PERMISSIONS.ORG_MANAGE), zValidator('json', SenderIdentitySchema), async (c) => {
+    const orgId = getOrgId(c)
+    await orgService.setSenderIdentity(orgId, c.req.valid('json'))
+    return success(c, undefined, 'Sender identity updated')
   })
   // ==========================================================================
   // Sending Domains & Emails (org-scoped)
