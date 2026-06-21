@@ -12,19 +12,6 @@ import { TRACKING } from '../config'
 import { logger } from '../utils/logger'
 import { success, error } from '../utils/response'
 
-const app = new Hono()
-
-/**
- * Get tracking status
- * GET /track/status
- */
-app.get('/track/status', (c) => {
-  return success(c, {
-    enabled: d1Service.isConfigured(),
-    workerUrl: d1Service.getWorkerUrl(),
-  })
-})
-
 /**
  * Inbound tracking event sink (server-to-server, called by the CF worker).
  * POST /tracking/event  -> resolves to /api/tracking/event under the /api mount.
@@ -66,52 +53,67 @@ function secretsMatch(provided: string, expected: string): boolean {
   return diff === 0
 }
 
-app.post('/tracking/event', async (c) => {
-  // --- Auth: shared secret, fail closed -----------------------------------
-  const provided = c.req.header('X-Tracking-Secret') || ''
-  const expected = TRACKING.TRACKING_SYNC_SECRET || ''
-  if (!secretsMatch(provided, expected)) {
-    return error(c, 'Unauthorized', 401)
-  }
+const trackingRoutes = new Hono()
+  /**
+   * Get tracking status
+   * GET /track/status
+   */
+  .get('/track/status', (c) => {
+    return success(c, {
+      enabled: d1Service.isConfigured(),
+      workerUrl: d1Service.getWorkerUrl(),
+    })
+  })
+  // POST /tracking/event — secret-gated (auth before body parse; manual parse
+  // keeps the fail-closed secret check ahead of validation, so an unauthorized
+  // caller can't probe payload validity).
+  .post('/tracking/event', async (c) => {
+    // --- Auth: shared secret, fail closed -----------------------------------
+    const provided = c.req.header('X-Tracking-Secret') || ''
+    const expected = TRACKING.TRACKING_SYNC_SECRET || ''
+    if (!secretsMatch(provided, expected)) {
+      return error(c, 'Unauthorized', 401)
+    }
 
-  // --- Parse + validate body ----------------------------------------------
-  let raw: unknown
-  try {
-    raw = await c.req.json()
-  } catch {
-    return error(c, 'Invalid JSON body', 400)
-  }
+    // --- Parse + validate body ----------------------------------------------
+    let raw: unknown
+    try {
+      raw = await c.req.json()
+    } catch {
+      return error(c, 'Invalid JSON body', 400)
+    }
 
-  const parsed = eventSchema.safeParse(raw)
-  if (!parsed.success) {
-    return error(c, 'Invalid tracking event payload', 400)
-  }
+    const parsed = eventSchema.safeParse(raw)
+    if (!parsed.success) {
+      return error(c, 'Invalid tracking event payload', 400)
+    }
 
-  const { type, email, campaignId, messageId, url } = parsed.data
-  const mappedType = TYPE_MAP[type]
+    const { type, email, campaignId, messageId, url } = parsed.data
+    const mappedType = TYPE_MAP[type]
 
-  // --- Resolve contact (best-effort, cross-org) ---------------------------
-  const contact = await contactService.getContactByEmail(email)
-  if (!contact) {
-    // Nothing to advance — acknowledge so the worker doesn't retry.
-    return c.json({ ok: true, matched: false })
-  }
+    // --- Resolve contact (best-effort, cross-org) ---------------------------
+    const contact = await contactService.getContactByEmail(email)
+    if (!contact) {
+      // Nothing to advance — acknowledge so the worker doesn't retry.
+      return c.json({ ok: true, matched: false })
+    }
 
-  // contactId is the 5th arg (top-level on the event) so scoringEngine and the
-  // automation subscriber both see it. campaignId is the 4th arg (top-level).
-  try {
-    await eventBus.emit(
-      mappedType,
-      contact.user_id,
-      { email, url: url ?? undefined, campaignId: campaignId ?? undefined, messageId: messageId ?? undefined },
-      campaignId || undefined,
-      contact.id
-    )
-  } catch (err) {
-    logger.error('Tracking event emit failed:', err)
-  }
+    // contactId is the 5th arg (top-level on the event) so scoringEngine and the
+    // automation subscriber both see it. campaignId is the 4th arg (top-level).
+    try {
+      await eventBus.emit(
+        mappedType,
+        contact.user_id,
+        { email, url: url ?? undefined, campaignId: campaignId ?? undefined, messageId: messageId ?? undefined },
+        campaignId || undefined,
+        contact.id
+      )
+    } catch (err) {
+      logger.error('Tracking event emit failed:', err)
+    }
 
-  return c.json({ ok: true })
-})
+    return c.json({ ok: true })
+  })
 
-export default app
+export default trackingRoutes
+export type TrackingRoutes = typeof trackingRoutes

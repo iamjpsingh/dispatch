@@ -6,28 +6,28 @@ import { Hono } from 'hono'
 import { API, SERVER } from '../config'
 import { ROUTE_GROUPS } from '../config/routes'
 
-const app = new Hono()
-
 /**
  * GET /
  * API information and available endpoints
  */
-app.get('/', (c) => {
-  return c.json({
-    success: true,
-    name: API.NAME,
-    version: API.VERSION,
-    documentation: {
-      message: 'API is running. Use the Vue frontend for the UI.',
-      frontend: SERVER.FRONTEND_URL,
-    },
-    endpoints: Object.fromEntries(
-      Object.entries(ROUTE_GROUPS).map(([key, group]) => [
-        key.toLowerCase(),
-        `${group.prefix}/*`,
-      ])
-    ),
+const indexRoutes = new Hono()
+  .get('/', (c) => {
+    return c.json({
+      success: true,
+      name: API.NAME,
+      version: API.VERSION,
+      documentation: {
+        message: 'API is running. Use the Vue frontend for the UI.',
+        frontend: SERVER.FRONTEND_URL,
+      },
+      endpoints: Object.fromEntries(
+        Object.entries(ROUTE_GROUPS).map(([key, group]) => [
+          key.toLowerCase(),
+          `${group.prefix}/*`,
+        ])
+      ),
+    })
   })
-})
 
-export default app
+export default indexRoutes
+export type IndexRoutes = typeof indexRoutes
