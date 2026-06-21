@@ -81,8 +81,6 @@ interface SmtpSendParams {
   fromName: string
 }
 
-const app = new Hono()
-
 // ============================================================================
 // Main Send Endpoint
 // ============================================================================
@@ -91,7 +89,8 @@ const app = new Hono()
  * Send emails
  * POST /send
  */
-app.post('/send', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+const sendRoutes = new Hono()
+  .post('/send', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   try {
     const user = requireAuth(c)
     logger.debug(`Send request from user: ${user.email}`)
@@ -254,7 +253,7 @@ app.post('/send', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => 
  * Pre-scan email content for spam indicators
  * POST /send/spam-check
  */
-app.post('/send/spam-check', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  .post('/send/spam-check', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const body = await c.req.json()
   const result = scanForSpam(body.subject || '', body.html || '')
   return success(c, result)
@@ -268,7 +267,7 @@ app.post('/send/spam-check', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), as
  * Test notification
  * POST /test-notification
  */
-app.post('/test-notification', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  .post('/test-notification', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   try {
     const user = requireAuth(c)
     const body = await c.req.json()
@@ -290,7 +289,7 @@ app.post('/test-notification', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), 
  * Get provider info
  * POST /provider-info
  */
-app.post('/provider-info', async (c) => {
+  .post('/provider-info', async (c) => {
   try {
     const formData = await c.req.formData()
     const smtpHost = (formData.get('smtpHost') as string) || ''
@@ -319,7 +318,7 @@ app.post('/provider-info', async (c) => {
  * Parse Excel file
  * POST /parse-excel
  */
-app.post('/parse-excel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  .post('/parse-excel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   try {
     const formData = await c.req.formData()
     const excelFile = formData.get('excelFile') as File
@@ -344,12 +343,11 @@ app.post('/parse-excel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async 
 // Scheduled Jobs
 // ============================================================================
 
-app.get('/scheduled-jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
+  .get('/scheduled-jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const jobs = await schedulerService.getScheduledJobs()
   return success(c, jobs)
-})
-
-app.delete('/scheduled-jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  })
+  .delete('/scheduled-jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const jobId = c.req.param('id')
   const cancelled = await schedulerService.cancelScheduledJob(jobId)
 
@@ -357,13 +355,11 @@ app.delete('/scheduled-jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE
     return success(c, undefined, 'Scheduled job cancelled')
   }
   return error(c, 'Job not found or cannot be cancelled', 404)
-})
-
-// ============================================================================
-// Batch Control (delegates to queue engine, legacy endpoints preserved)
-// ============================================================================
-
-app.get('/batch-status', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
+  })
+  // ==========================================================================
+  // Batch Control (delegates to queue engine, legacy endpoints preserved)
+  // ==========================================================================
+  .get('/batch-status', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
   const user = requireAuth(c)
   const activeIds = await queueEngine.getActiveJobIds()
   const runningJobs = await queueEngine.getJobs(user.id, 'running', 5)
@@ -387,34 +383,31 @@ app.get('/batch-status', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c
     totalJobs: runningJobs.length + activeIds.length,
     completedJobs: 0,
   })
-})
-
-app.post('/batch-pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  })
+  .post('/batch-pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const runningJobs = await queueEngine.getJobs(user.id, 'running', 1)
   if (runningJobs.length > 0) {
     await queueEngine.pause(runningJobs[0].id)
   }
   return success(c, undefined, 'Job paused')
-})
-
-app.post('/batch-resume', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  })
+  .post('/batch-resume', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const pausedJobs = await queueEngine.getJobs(user.id, 'paused', 1)
   if (pausedJobs.length > 0) {
     await queueEngine.resume(pausedJobs[0].id)
   }
   return success(c, undefined, 'Job resumed')
-})
-
-app.delete('/batch-cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
+  })
+  .delete('/batch-cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const runningJobs = await queueEngine.getJobs(user.id, 'running', 1)
   if (runningJobs.length > 0) {
     await queueEngine.cancel(runningJobs[0].id)
   }
   return success(c, undefined, 'Job cancelled')
-})
+  })
 
 // ============================================================================
 // Send Handlers
@@ -573,4 +566,5 @@ async function handleSmtpSend(c: Context, params: SmtpSendParams) {
   )
 }
 
-export default app
+export default sendRoutes
+export type SendRoutes = typeof sendRoutes
