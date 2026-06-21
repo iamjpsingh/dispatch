@@ -3,8 +3,10 @@
  */
 import { hc } from 'hono/client'
 import type { ConfigRoutes } from '@dispatch/api/src/routes/config'
+import type { OauthRoutes } from '@dispatch/api/src/routes/oauth'
+import type { ReportRoutes } from '@dispatch/api/src/routes/report'
+import type { DashboardRoutes } from '@dispatch/api/src/routes/dashboard'
 import {
-  api,
   type SMTPConfig,
   type ProviderStatus,
   type EmailLog,
@@ -15,6 +17,9 @@ import {
 import { rpcBase, rpcFetch } from '../rpc/client'
 
 const client = hc<ConfigRoutes>(rpcBase(), { fetch: rpcFetch })
+const oauthClient = hc<OauthRoutes>(rpcBase(), { fetch: rpcFetch })
+const reportClient = hc<ReportRoutes>(rpcBase(), { fetch: rpcFetch })
+const dashboardClient = hc<DashboardRoutes>(rpcBase(), { fetch: rpcFetch })
 
 // Configs
 export const configApi = {
@@ -85,25 +90,31 @@ export const configApi = {
 // OAuth
 export const oauthApi = {
   getStatus: async (): Promise<Record<string, ProviderStatus>> => {
-    const res = await api.get<{ providers: Record<string, ProviderStatus> }>('/oauth/status')
-    if (!res.success) throw new Error(res.message || 'Failed to load OAuth status')
-    return res.data?.providers || {}
+    const res = await oauthClient.oauth.status.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load OAuth status')
+    return (body.data as { providers: Record<string, ProviderStatus> } | undefined)?.providers || {}
   },
 
   connect: async (provider: 'google' | 'microsoft'): Promise<string> => {
-    const res = await api.get<{ authUrl: string }>(`/oauth/${provider}/connect`)
-    if (!res.success || !res.data?.authUrl) throw new Error(res.message || 'Failed to get auth URL')
-    return res.data.authUrl
+    // /oauth/google/connect and /oauth/microsoft/connect are distinct literal routes;
+    // use the fetch fallback to keep the dynamic provider segment.
+    const res = await rpcFetch(`${rpcBase()}/oauth/${provider}/connect`)
+    const body = (await res.json()) as { success: boolean; message?: string; data?: { authUrl: string } }
+    if (!body.success || !body.data?.authUrl) throw new Error(body.message || 'Failed to get auth URL')
+    return body.data.authUrl
   },
 
   disconnect: async (configId: string) => {
-    const res = await api.delete(`/oauth/${configId}/disconnect`)
-    if (!res.success) throw new Error(res.message || 'Failed to disconnect')
+    const res = await oauthClient.oauth[':configId'].disconnect.$delete({ param: { configId } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to disconnect')
   },
 
   test: async (configId: string) => {
-    const res = await api.post<{ valid: boolean }>(`/oauth/${configId}/test`)
-    return { success: !!(res.success && res.data?.valid), message: res.message || '' }
+    const res = await oauthClient.oauth[':configId'].test.$post({ param: { configId } })
+    const body = await res.json()
+    return { success: !!(body.success && (body.data as { valid: boolean } | undefined)?.valid), message: body.message ?? '' }
   },
 }
 
@@ -127,38 +138,49 @@ export const reportApi = {
         }
       })
     }
-    const res = await api.get<{ logs: EmailLog[]; stats: EmailStats; pagination: Pagination }>(`/report/logs?${params}`)
-    if (!res.success) throw new Error(res.message || 'Failed to load logs')
+    // Route reads filters from query without a zValidator; use the fetch fallback.
+    const res = await rpcFetch(`${rpcBase()}/report/logs?${params}`)
+    const body = (await res.json()) as { success: boolean; message?: string; data?: { logs: EmailLog[]; stats: EmailStats; pagination: Pagination } }
+    if (!body.success) throw new Error(body.message || 'Failed to load logs')
     return {
-      logs: res.data?.logs || [],
-      stats: res.data?.stats || { total: 0, sent: 0, failed: 0, opened: 0, clicked: 0, openRate: 0, clickRate: 0 },
-      pagination: res.data?.pagination || { page: 1, limit: 50, total: 0, totalPages: 0 },
+      logs: body.data?.logs || [],
+      stats: body.data?.stats || { total: 0, sent: 0, failed: 0, opened: 0, clicked: 0, openRate: 0, clickRate: 0 },
+      pagination: body.data?.pagination || { page: 1, limit: 50, total: 0, totalPages: 0 },
     }
   },
 
   getStats: async (): Promise<EmailStats> => {
-    const res = await api.get<EmailStats>('/report/stats')
-    if (!res.success) throw new Error(res.message || 'Failed to load stats')
-    return res.data || { total: 0, sent: 0, failed: 0, opened: 0, clicked: 0, openRate: 0, clickRate: 0 }
+    const res = await reportClient.report.stats.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load stats')
+    return (body.data as EmailStats | undefined) || { total: 0, sent: 0, failed: 0, opened: 0, clicked: 0, openRate: 0, clickRate: 0 }
   },
 
   deleteLog: async (id: string) => {
-    const res = await api.delete(`/report/logs/${id}`)
-    if (!res.success) throw new Error(res.message || 'Failed to delete log')
+    const res = await reportClient.report.logs[':id'].$delete({ param: { id } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to delete log')
   },
 
   deleteLogs: async (ids: string[]) => {
-    const res = await api.post<{ deleted: number }>('/report/logs/delete-bulk', { ids })
-    if (!res.success) throw new Error(res.message || 'Failed to delete logs')
-    return res.data?.deleted || 0
+    // /report/logs/delete-bulk parses JSON manually (no zValidator); use the fetch fallback.
+    const res = await rpcFetch(`${rpcBase()}/report/logs/delete-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    })
+    const body = (await res.json()) as { success: boolean; message?: string; data?: { deleted: number } }
+    if (!body.success) throw new Error(body.message || 'Failed to delete logs')
+    return body.data?.deleted || 0
   },
 }
 
 // Dashboard
 export const dashboardApi = {
   getStats: async (): Promise<DashboardStats> => {
-    const res = await api.get<DashboardStats>('/dashboard/stats')
-    if (!res.success) throw new Error(res.message || 'Failed to load dashboard')
+    const res = await dashboardClient.dashboard.stats.$get()
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Failed to load dashboard')
     const emptyQueue = {
       stats: {
         pending: 0,
@@ -176,7 +198,7 @@ export const dashboardApi = {
       recentJobs: [],
     }
     return (
-      res.data || {
+      (body.data as DashboardStats | undefined) || {
         stats: { total: 0, sent: 0, failed: 0 },
         queue: emptyQueue,
         scheduledJobs: [],
@@ -187,7 +209,9 @@ export const dashboardApi = {
   },
 
   getPollStatus: async () => {
-    const res = await api.get<{
+    const res = await dashboardClient.dashboard['poll-status'].$get()
+    const body = await res.json()
+    return body.data as {
       pollNeeded: boolean
       pollInterval: number
       hasActiveJobs: boolean
@@ -196,7 +220,6 @@ export const dashboardApi = {
       activeJobCount: number
       pendingJobCount: number
       pausedJobCount: number
-    }>('/dashboard/poll-status')
-    return res.data
+    } | undefined
   },
 }
