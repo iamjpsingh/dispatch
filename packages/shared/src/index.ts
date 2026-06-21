@@ -1,4 +1,5 @@
 // @dispatch/shared — cross-app zod schemas & inferred types (P6: RPC surface).
+export * as analytics from './analytics'
 export * as auth from './auth'
 export * as campaigns from './campaigns'
 export * as config from './config'

@@ -4,6 +4,7 @@
     "types": ["bun-types"],
     "paths": {
       "@dispatch/shared": ["../../packages/shared/src/index.ts"],
+      "@dispatch/shared/analytics": ["../../packages/shared/src/analytics.ts"],
       "@dispatch/shared/auth": ["../../packages/shared/src/auth.ts"],
       "@dispatch/shared/campaigns": ["../../packages/shared/src/campaigns.ts"],
       "@dispatch/shared/config": ["../../packages/shared/src/config.ts"],

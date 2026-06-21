@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
-  "exports": { ".": "./src/index.ts", "./auth": "./src/auth.ts", "./campaigns": "./src/campaigns.ts", "./config": "./src/config.ts", "./contacts": "./src/contacts.ts", "./forms": "./src/forms.ts", "./pages": "./src/pages.ts", "./templates": "./src/templates.ts" },
+  "exports": { ".": "./src/index.ts", "./analytics": "./src/analytics.ts", "./auth": "./src/auth.ts", "./campaigns": "./src/campaigns.ts", "./config": "./src/config.ts", "./contacts": "./src/contacts.ts", "./forms": "./src/forms.ts", "./pages": "./src/pages.ts", "./templates": "./src/templates.ts" },
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
     "lint": "bunx eslint src --ext .ts",
