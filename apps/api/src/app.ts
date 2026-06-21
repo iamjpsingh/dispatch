@@ -59,6 +59,9 @@ import { automationService } from './services/automationService'
 // Phase 3 Services (auto-initialize on import)
 import { warmupService } from './services/warmupService'
 
+// Phase 7 Services
+import { registerRetentionJob } from './services/queue/retentionJob'
+
 // ============================================================================
 // Application Setup
 // ============================================================================
@@ -281,6 +284,9 @@ export async function startBackgroundWorkers() {
 
   // Start warmup worker (advances warmup plans daily)
   warmupService.startWorker(WORKERS.WARMUP_POLL_INTERVAL)
+
+  // Register daily retention purge repeatable job (BullMQ/Valkey)
+  await registerRetentionJob()
 
   // Log startup info
   logger.startup(`\n🚀 ${API.NAME} v${API.VERSION}`)

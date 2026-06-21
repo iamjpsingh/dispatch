@@ -14,6 +14,7 @@ import { SEND_QUEUE, type SendBatchData } from './src/services/queue/sendQueue'
 import { SCHEDULER_QUEUE, type ScheduledRunData } from './src/services/queue/schedulerQueue'
 import { processSendBatch } from './src/services/queue/processor'
 import { processScheduledRun } from './src/services/queue/schedulerProcessor'
+import { startRetentionWorker } from './src/services/queue/retentionJob'
 import { queueStore } from './src/services/queue/queueStore'
 import { BATCH_DEFAULTS } from './src/config'
 import { logger } from './src/utils/logger'
@@ -58,9 +59,13 @@ const schedulerWorker = new Worker<ScheduledRunData>(
 schedulerWorker.on('ready', () => logger.startup('⏰ Scheduler worker ready'))
 schedulerWorker.on('failed', (job, err) => logger.error(`Scheduled run ${job?.id} failed: ${err.message}`))
 
+const retentionWorker = startRetentionWorker()
+retentionWorker.on('ready', () => logger.startup('🗑️  Retention worker ready'))
+retentionWorker.on('failed', (job, err) => logger.error(`Retention purge ${job?.id} failed: ${err.message}`))
+
 async function shutdown(signal: string) {
   logger.info(`${signal} received — closing workers (waiting for in-flight jobs)...`)
-  await Promise.all([sendWorker.close(), schedulerWorker.close()]) // stop intake, finish in-flight
+  await Promise.all([sendWorker.close(), schedulerWorker.close(), retentionWorker.close()]) // stop intake, finish in-flight
   connection.disconnect()
   process.exit(0)
 }
