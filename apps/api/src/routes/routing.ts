@@ -2,14 +2,16 @@
 
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
 import { success, error } from '../utils/response'
 import { routingEngine } from '../services/routingEngine'
-import { validateBody } from '../utils/validate'
 
 // ============================================================================
 // Schemas
 // ============================================================================
+
+const RoutingConfigSchema = z.record(z.string(), z.unknown())
 
 const InitProviderSchema = z.object({
   configId: z.string().min(1, 'configId is required'),
@@ -28,96 +30,88 @@ const FailoverSchema = z.object({
   reason: z.string().optional(),
 })
 
-const app = new Hono()
+const routingRoutes = new Hono()
+  // Get provider scores and rankings
+  .get('/routing/scores', async (c) => {
+    const user = requireAuth(c)
+    const scores = await routingEngine.scoreProviders(user.id)
+    return success(c, { scores })
+  })
+  // Get smart provider recommendation
+  .get('/routing/recommend', async (c) => {
+    const user = requireAuth(c)
+    const exclude = c.req.query('exclude')
+    const excludeIds = exclude ? exclude.split(',') : []
+    const decision = await routingEngine.selectProvider(user.id, excludeIds)
 
-// Get provider scores and rankings
-app.get('/routing/scores', async (c) => {
-  const user = requireAuth(c)
-  const scores = await routingEngine.scoreProviders(user.id)
-  return success(c, { scores })
-})
+    if (!decision) {
+      return error(c, 'No eligible providers available', 404)
+    }
 
-// Get smart provider recommendation
-app.get('/routing/recommend', async (c) => {
-  const user = requireAuth(c)
-  const exclude = c.req.query('exclude')
-  const excludeIds = exclude ? exclude.split(',') : []
-  const decision = await routingEngine.selectProvider(user.id, excludeIds)
+    return success(c, { decision })
+  })
+  // Get provider dashboard (today's stats, scores, failovers)
+  .get('/routing/dashboard', async (c) => {
+    const user = requireAuth(c)
+    const dashboard = await routingEngine.getProviderDashboard(user.id)
+    return success(c, dashboard)
+  })
+  // Get provider history
+  .get('/routing/history', async (c) => {
+    const user = requireAuth(c)
+    const days = parseInt(c.req.query('days') || '30')
+    const history = await routingEngine.getProviderHistory(user.id, days)
+    return success(c, { history })
+  })
+  // Get routing config
+  .get('/routing/config', async (c) => {
+    const user = requireAuth(c)
+    const config = await routingEngine.getRoutingConfig(user.id)
+    return success(c, { config })
+  })
+  // Update routing config
+  .put('/routing/config', zValidator('json', RoutingConfigSchema), async (c) => {
+    const user = requireAuth(c)
+    const body = c.req.valid('json')
 
-  if (!decision) {
-    return error(c, 'No eligible providers available', 404)
-  }
+    await routingEngine.updateRoutingConfig(user.id, body)
+    return success(c, null, 'Routing config updated')
+  })
+  // Initialize a provider for routing
+  .post('/routing/providers/init', zValidator('json', InitProviderSchema), async (c) => {
+    const user = requireAuth(c)
+    const { configId, providerType, configName, dailyLimit } = c.req.valid('json')
 
-  return success(c, { decision })
-})
+    await routingEngine.initializeProvider(user.id, configId, providerType, configName || '', dailyLimit)
+    return success(c, null, 'Provider initialized for routing')
+  })
+  // Mark provider healthy/unhealthy
+  .post('/routing/providers/:configId/health', zValidator('json', ProviderHealthSchema), async (c) => {
+    const user = requireAuth(c)
+    const configId = c.req.param('configId')
+    const { healthy, error: errorMsg } = c.req.valid('json')
 
-// Get provider dashboard (today's stats, scores, failovers)
-app.get('/routing/dashboard', async (c) => {
-  const user = requireAuth(c)
-  const dashboard = await routingEngine.getProviderDashboard(user.id)
-  return success(c, dashboard)
-})
+    if (healthy) {
+      await routingEngine.markProviderHealthy(user.id, configId)
+    } else {
+      await routingEngine.markProviderUnhealthy(user.id, configId, errorMsg || 'Marked unhealthy')
+    }
 
-// Get provider history
-app.get('/routing/history', async (c) => {
-  const user = requireAuth(c)
-  const days = parseInt(c.req.query('days') || '30')
-  const history = await routingEngine.getProviderHistory(user.id, days)
-  return success(c, { history })
-})
+    return success(c, null, `Provider marked ${healthy ? 'healthy' : 'unhealthy'}`)
+  })
+  // Trigger manual failover
+  .post('/routing/failover', zValidator('json', FailoverSchema), async (c) => {
+    const user = requireAuth(c)
+    const { failedConfigId, reason } = c.req.valid('json')
 
-// Get routing config
-app.get('/routing/config', async (c) => {
-  const user = requireAuth(c)
-  const config = await routingEngine.getRoutingConfig(user.id)
-  return success(c, { config })
-})
+    const decision = await routingEngine.failover(user.id, failedConfigId, reason || 'Manual failover')
 
-// Update routing config
-app.put('/routing/config', async (c) => {
-  const user = requireAuth(c)
-  const body = await validateBody(c, z.record(z.string(), z.unknown()))
+    if (!decision) {
+      return error(c, 'No alternative provider available', 404)
+    }
 
-  await routingEngine.updateRoutingConfig(user.id, body)
-  return success(c, null, 'Routing config updated')
-})
+    return success(c, { decision }, 'Failover successful')
+  })
 
-// Initialize a provider for routing
-app.post('/routing/providers/init', async (c) => {
-  const user = requireAuth(c)
-  const { configId, providerType, configName, dailyLimit } = await validateBody(c, InitProviderSchema)
-
-  await routingEngine.initializeProvider(user.id, configId, providerType, configName || '', dailyLimit)
-  return success(c, null, 'Provider initialized for routing')
-})
-
-// Mark provider healthy/unhealthy
-app.post('/routing/providers/:configId/health', async (c) => {
-  const user = requireAuth(c)
-  const configId = c.req.param('configId')
-  const { healthy, error: errorMsg } = await validateBody(c, ProviderHealthSchema)
-
-  if (healthy) {
-    await routingEngine.markProviderHealthy(user.id, configId)
-  } else {
-    await routingEngine.markProviderUnhealthy(user.id, configId, errorMsg || 'Marked unhealthy')
-  }
-
-  return success(c, null, `Provider marked ${healthy ? 'healthy' : 'unhealthy'}`)
-})
-
-// Trigger manual failover
-app.post('/routing/failover', async (c) => {
-  const user = requireAuth(c)
-  const { failedConfigId, reason } = await validateBody(c, FailoverSchema)
-
-  const decision = await routingEngine.failover(user.id, failedConfigId, reason || 'Manual failover')
-
-  if (!decision) {
-    return error(c, 'No alternative provider available', 404)
-  }
-
-  return success(c, { decision }, 'Failover successful')
-})
-
-export default app
+export default routingRoutes
+export type RoutingRoutes = typeof routingRoutes
