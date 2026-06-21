@@ -102,6 +102,48 @@ Predates P5; must be fixed no later than the P8 security gate.
 
 ---
 
+### P6 — RPC + API surface + frontend types (COMPLETE)
+Strangler migration, domain-by-domain; gate held green at every commit (api tsc **49** frozen
+baseline, web own-src **≤ 33**, backend **739 / 0 / 28**, web lib **41 / 0**).
+- **API surface — all 25 route modules** restructured from `const app = new Hono()` + scattered
+  `app.method()` statements into one fluent `new Hono().get(...).post(...)` chain, each exporting
+  `export type <Domain>Routes = typeof <chain>`. **Per-domain types** (not one global `AppType`) to
+  avoid the tsc perf cliff. Endpoint registration order preserved 1:1 (static-vs-`:param` matching).
+- **Validation** — `validateBody(c, S)` → bare 2-arg `zValidator('json', S)` + `c.req.valid('json')`.
+  Only the bare form preserves RPC request inference (wrapping it / passing a typed hook erases it).
+  Secret/signature-verified endpoints (tracking sink, provider webhooks, WhatsApp/Meta) KEEP their
+  manual `safeParse`-after-auth flow so validation never front-runs the fail-closed check.
+- **Versioning** — every route dual-mounted under `/api` and `/api/v1` via a version-normalized auth
+  middleware (`app.ts`). RPC client targets `/api/v1`.
+- **Schemas** — lifted to `@dispatch/shared/<domain>` for the batch-1/2 web-backed domains; kept
+  in-file for route-only domains (web imports the route *type*, not the schemas — YAGNI per R7).
+- **Frontend — all 13 web modules** on `hc<…Routes>(rpcBase(), { fetch: rpcFetch })` with the
+  `{success,data?}` envelope rule and typed `body.data as X` (no `(body as any)`). Multipart, file
+  download, and manually-parsed (unvalidated-body) endpoints use the `rpcFetch` fallback. Pre-existing
+  web↔schema type drift bridged with named `InferRequestType` casts (flagged, reconcile post-P6).
+- **Teardown** — the legacy `ApiClient` class + `api` singleton retired; `lib/api/client.ts` reduced
+  to shared types; obsolete ApiClient unit tests removed. **Drift guard** `tests/routes/rpc-surface.test.ts`
+  asserts every route module exports a `typeof`-based `*Routes` type from a fluent chain.
+- Execution: foundation + auth pilot, then batches 1–4 (config/templates/pages/forms → contacts/
+  campaigns/analytics → segments/automations/apikeys/warmup/routing → send/queue/dashboard/report/
+  admin/whatsapp/oauth/plugins/webhooks/tracking/events/cloudflare). Larger/late domains migrated by
+  serial self-committing subagents; each verified independently (gate + commit provenance).
+
+**Tracked P6 debt (non-blocking, carried forward):**
+- **#25** web `vue-tsc -b` deep-checks api `.ts` source through the `@dispatch/api/*` path alias, so
+  api's pre-existing baseline errors surface as a "leak" — the gate is therefore **web-own-src ≤ 33**
+  (api-source lines excluded), consistent with the api 49-baseline model.
+- **#26** `zValidator` returns the raw ZodError shape `{success:false,error}` on 400, not the friendly
+  `{success,message}` envelope; validation tests assert status-only (`400` + `success:false`).
+- Enum/shape drift bridged at the web boundary (campaign `type`, segment `type`, apikey scopes,
+  automation/whatsapp inputs) — reconcile the web vs schema vocabularies in a later pass.
+- **Pre-existing bugs surfaced by typing (NOT fixed, R8 — for P7/P8):** `admin POST /admin/teams`
+  missing `await` on `teamService.create`; `webhooks.ts` inbound-reply handlers reference an
+  unimported `eventBus`; web `email.ts` `sendTestEmail`/`checkSpamScore` hit dead `/send-test`·
+  `/spam-check` paths.
+
+---
+
 ## 🧹 Housekeeping
 - Commits from `85ea5d5` onward are **unsigned** (GPG agent timed out mid-session). Re-sign with
   `git rebase --exec 'git commit --amend --no-edit -S' <base>..HEAD` once the agent is unlocked.
@@ -109,7 +151,7 @@ Predates P5; must be fixed no later than the P8 security gate.
   secrets (Cloudflare D1 over HTTP, not local PG), Valkey-backed rate-limiting (opportunistic in P4).
 
 ## 🧭 Resume pointers
-- **Next phase: P6** (RPC + API surface + frontend types). P1–P5 complete.
+- **Next phase: P7** (Admin panel + audit UI + GDPR/i18n). P1–P6 complete.
 - Phase specs: `docs/superpowers/specs/`; plans: `docs/superpowers/plans/`.
 - Auto-loaded memory: `MEMORY.md` → `dispatch-p5-status.md` (P5 done) + `dispatch-session-status.md`.
 - Run the gated nets with the deps up: `RUN_QUEUE_IT=1` (Valkey), `RUN_STORAGE_IT=1` (MinIO);

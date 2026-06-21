@@ -1,6 +1,10 @@
 /**
- * API Client
- * Centralized HTTP client with type-safe responses
+ * API shared types
+ *
+ * The HTTP transport (formerly the `ApiClient` class + `api` singleton) was
+ * retired in P6 — every domain module now uses the typed hono/client RPC layer
+ * (see ../rpc/client.ts). This file keeps only the cross-module response/entity
+ * types those modules still import.
  */
 
 // ============================================================================
@@ -169,100 +173,3 @@ export interface DashboardStats {
   recentLogs: EmailLog[]
   timestamp: string
 }
-
-// ============================================================================
-// API Client
-// ============================================================================
-
-const BASE_URL = import.meta.env.VITE_API_URL || '/api'
-
-class ApiClient {
-  private async request<T>(method: string, endpoint: string, body?: unknown): Promise<ApiResponse<T>> {
-    const options: RequestInit = {
-      method,
-      credentials: 'include',
-      headers: {},
-    }
-
-    // Attach CSRF token for mutation requests
-    if (!['GET', 'HEAD'].includes(method)) {
-      const csrfToken = document.cookie
-        .split('; ')
-        .find((c) => c.startsWith('csrf_token='))
-        ?.split('=')[1]
-      if (csrfToken) {
-        ;(options.headers as Record<string, string>)['X-CSRF-Token'] = csrfToken
-      }
-    }
-
-    if (body && !(body instanceof FormData)) {
-      ;(options.headers as Record<string, string>)['Content-Type'] = 'application/json'
-      options.body = JSON.stringify(body)
-    } else if (body instanceof FormData) {
-      options.body = body
-    }
-
-    try {
-      const res = await fetch(`${BASE_URL}${endpoint}`, options)
-
-      // Handle non-JSON responses
-      const contentType = res.headers.get('content-type')
-      if (!contentType?.includes('application/json')) {
-        if (!res.ok) {
-          return { success: false, message: `HTTP Error: ${res.status}` }
-        }
-        return { success: true } as ApiResponse<T>
-      }
-
-      const json = await res.json()
-      return this.normalizeResponse<T>(json)
-    } catch (err) {
-      console.error('API request failed:', err)
-      return { success: false, message: 'Network error - check if backend is running' }
-    }
-  }
-
-  /**
-   * Normalize response to consistent format
-   * Handles both { success, data } and legacy { success, configs/logs/etc }
-   */
-  private normalizeResponse<T>(json: any): ApiResponse<T> {
-    // Already in correct format
-    if (json.data !== undefined) {
-      return json as ApiResponse<T>
-    }
-
-    // Legacy format - extract data from root
-    const { success, message, error, meta, ...rest } = json
-    return {
-      success,
-      message,
-      error,
-      meta,
-      data: Object.keys(rest).length > 0 ? (rest as T) : undefined,
-    }
-  }
-
-  // HTTP Methods
-  get<T>(endpoint: string) {
-    return this.request<T>('GET', endpoint)
-  }
-
-  post<T>(endpoint: string, body?: unknown) {
-    return this.request<T>('POST', endpoint, body)
-  }
-
-  put<T>(endpoint: string, body?: unknown) {
-    return this.request<T>('PUT', endpoint, body)
-  }
-
-  delete<T>(endpoint: string) {
-    return this.request<T>('DELETE', endpoint)
-  }
-
-  upload<T>(endpoint: string, formData: FormData) {
-    return this.request<T>('POST', endpoint, formData)
-  }
-}
-
-export const api = new ApiClient()

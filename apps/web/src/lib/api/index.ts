@@ -3,7 +3,6 @@
  * Re-exports all domain API modules for centralized access
  */
 export {
-  api,
   type ApiResponse,
   type User,
   type OrgInfo,
