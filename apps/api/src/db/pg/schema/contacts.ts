@@ -30,7 +30,7 @@ export const contacts = pgTable(
     org_id: text('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
     user_id: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     list_id: text('list_id').notNull().references(() => contact_lists.id, { onDelete: 'cascade' }),
-    email: text('email').notNull(),
+    email: text('email'),
     first_name: text('first_name'),
     last_name: text('last_name'),
     company: text('company'),

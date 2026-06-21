@@ -185,6 +185,7 @@ const contactsRoutes = new Hono()
 
     const contact = await contactService.getContact(orgId, contactId)
     if (!contact) return error(c, 'Contact not found', 404)
+    if (!contact.email) return error(c, 'Contact has been erased', 410)
 
     const pref = await preferenceCenterService.getPreference(orgId, contact.email)
     const effective = await preferenceCenterService.getEffectivePreference(orgId, contact.email)
@@ -203,6 +204,7 @@ const contactsRoutes = new Hono()
 
     const contact = await contactService.getContact(orgId, contactId)
     if (!contact) return error(c, 'Contact not found', 404)
+    if (!contact.email) return error(c, 'Contact has been erased', 410)
 
     if (body.preference === 'paused') {
       await preferenceCenterService.pause(orgId, contact.email, body.pause_days || 30)

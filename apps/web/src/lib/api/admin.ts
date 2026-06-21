@@ -522,6 +522,13 @@ export const adminApi = {
     if (!res.ok) throw new Error('Export failed')
     return res.blob()
   },
+
+  // --- GDPR erasure ---
+  gdprErase: async (contactId: string): Promise<void> => {
+    const res = await client.admin.contacts[':id']['gdpr-erase'].$post({ param: { id: contactId } })
+    const body = await res.json()
+    if (!body.success) throw new Error(body.message ?? 'Erase failed')
+  },
 }
 
 export interface SendingDomain {

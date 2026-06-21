@@ -4,6 +4,7 @@ import { and, eq, or, asc, desc, ilike, inArray, count, sql } from 'drizzle-orm'
 import { getDb } from '../db/pg/client'
 import { contact_lists, contacts, import_history, type ImportHistoryRow } from '../db/pg/schema'
 import { generateId } from '../utils/id'
+import { suppressionStore } from './queue/suppressionStore'
 
 // ============================================================================
 // Types
@@ -25,7 +26,7 @@ export interface Contact {
   org_id: string;
   user_id: string;
   list_id: string;
-  email: string;
+  email: string | null;
   first_name: string | null;
   last_name: string | null;
   company: string | null;
@@ -328,6 +329,12 @@ class ContactService {
           continue
         }
 
+        if (await suppressionStore.isSuppressed(userId, email)) {
+          result.invalid++
+          result.errors.push({ row: i + 1, email, reason: 'Email is suppressed' })
+          continue
+        }
+
         if (options.skipDuplicates !== false) {
           const exists = await tx.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.list_id, listId), eq(contacts.email, email))).limit(1)
           if (exists.length > 0) {
@@ -437,12 +444,14 @@ class ContactService {
       .where(and(eq(contacts.org_id, orgId), eq(contacts.list_id, listId), eq(contacts.status, 'active')))
       .orderBy(asc(contacts.email))
 
-    return rows.map((c) => ({
-      Email: c.email,
-      FirstName: c.first_name || undefined,
-      LastName: c.last_name || undefined,
-      Company: c.company || undefined,
-    }))
+    return rows
+      .filter((c) => c.email !== null)
+      .map((c) => ({
+        Email: c.email as string,
+        FirstName: c.first_name || undefined,
+        LastName: c.last_name || undefined,
+        Company: c.company || undefined,
+      }))
   }
 
   // --------------------------------------------------------------------------

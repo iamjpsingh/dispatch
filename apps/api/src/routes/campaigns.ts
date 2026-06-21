@@ -186,12 +186,14 @@ const campaignsRoutes = new Hono()
     // 4. Resolve recipients from the campaign's contact list (note: singular list_id).
     if (!campaign.list_id) return error(c, 'Campaign has no recipients', 400)
     const { contacts: listContacts } = await contactService.getContacts(orgId, campaign.list_id, { limit: 100000 })
-    const contacts: Contact[] = listContacts.map((contact) => ({
-      Email: contact.email,
-      FirstName: contact.first_name || undefined,
-      LastName: contact.last_name || undefined,
-      Company: contact.company || undefined,
-    }))
+    const contacts: Contact[] = listContacts
+      .filter((contact) => contact.email !== null)
+      .map((contact) => ({
+        Email: contact.email as string,
+        FirstName: contact.first_name || undefined,
+        LastName: contact.last_name || undefined,
+        Company: contact.company || undefined,
+      }))
     if (contacts.length === 0) return error(c, 'Campaign has no recipients', 400)
 
     // 5. Resolve the SMTP config: the campaign's config_id if set, else the user's default.

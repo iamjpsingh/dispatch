@@ -6,6 +6,15 @@ import ContactTimeline from '../components/contacts/ContactTimeline.vue'
 import ContactPreferences from '../components/contacts/ContactPreferences.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 import { Button } from '@/components/ui/button'
+import AlertDialog from '@/components/ui/alert-dialog/AlertDialog.vue'
+import AlertDialogTrigger from '@/components/ui/alert-dialog/AlertDialogTrigger.vue'
+import AlertDialogContent from '@/components/ui/alert-dialog/AlertDialogContent.vue'
+import AlertDialogHeader from '@/components/ui/alert-dialog/AlertDialogHeader.vue'
+import AlertDialogTitle from '@/components/ui/alert-dialog/AlertDialogTitle.vue'
+import AlertDialogDescription from '@/components/ui/alert-dialog/AlertDialogDescription.vue'
+import AlertDialogFooter from '@/components/ui/alert-dialog/AlertDialogFooter.vue'
+import AlertDialogCancel from '@/components/ui/alert-dialog/AlertDialogCancel.vue'
+import AlertDialogAction from '@/components/ui/alert-dialog/AlertDialogAction.vue'
 import {
   Mail, Eye, MousePointer, BarChart3, Link, Clock, Tag, Zap,
   AlertTriangle, ArrowLeft,
@@ -93,6 +102,7 @@ function parseTags(tagsJson: string | string[]): string[] {
 }
 
 const exportingGdpr = ref(false)
+const erasingGdpr = ref(false)
 
 async function downloadGdprExport() {
   exportingGdpr.value = true
@@ -108,6 +118,18 @@ async function downloadGdprExport() {
     // silently ignore — user sees no response if export permission is missing
   } finally {
     exportingGdpr.value = false
+  }
+}
+
+async function performGdprErase() {
+  erasingGdpr.value = true
+  try {
+    await adminApi.gdprErase(contactId.value)
+    router.push('/contacts')
+  } catch {
+    // silently ignore — permission or not-found errors surface no UX change
+  } finally {
+    erasingGdpr.value = false
   }
 }
 
@@ -161,6 +183,25 @@ onMounted(loadProfile)
           <Button variant="outline" size="sm" :disabled="exportingGdpr" @click="downloadGdprExport">
             {{ exportingGdpr ? 'Exporting…' : 'Export data (GDPR)' }}
           </Button>
+          <AlertDialog>
+            <AlertDialogTrigger as-child>
+              <Button variant="destructive" size="sm" :disabled="erasingGdpr">
+                {{ erasingGdpr ? 'Erasing…' : 'Erase data (GDPR)' }}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Permanently erase personal data?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Permanently erase this recipient's personal data? This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction @click="performGdprErase">Erase</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <div :class="['flex items-center gap-2 px-3 py-1.5 rounded-lg', scoreBg]">
             <span :class="['text-xl font-bold', scoreColor]">{{ profile.contact.engagement_score || 0 }}</span>
             <span class="text-[10px] text-muted-foreground leading-tight">Engagement<br/>Score</span>

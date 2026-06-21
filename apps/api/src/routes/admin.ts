@@ -909,6 +909,13 @@ const adminRoutes = new Hono()
     c.header('Content-Disposition', `attachment; filename="gdpr-export-${contactId}.json"`)
     return c.body(JSON.stringify(data, null, 2))
   })
+  .post('/admin/contacts/:id/gdpr-erase', requirePermission(PERMISSIONS.GDPR_MANAGE), async (c) => {
+    const orgId = getOrgId(c)
+    const user = requireAuth(c)
+    const ok = await gdprService.eraseRecipient(orgId, c.req.param('id'), user.id)
+    if (!ok) return error(c, 'Contact not found', 404)
+    return success(c, undefined, 'Recipient erased')
+  })
 
 export default adminRoutes
 export type AdminRoutes = typeof adminRoutes
