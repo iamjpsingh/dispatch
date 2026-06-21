@@ -22,7 +22,9 @@ export type AuditAction =
   // Campaigns
   | 'campaign.created' | 'campaign.launched' | 'campaign.paused' | 'campaign.cancelled' | 'campaign.deleted'
   // Contacts
-  | 'contacts.imported' | 'contacts.exported' | 'contacts.deleted'
+  | 'contacts.imported' | 'contacts.exported' | 'contacts.deleted' | 'contacts.erased'
+  // Data retention
+  | 'data.retention_purge'
   // API keys
   | 'apikey.created' | 'apikey.revoked'
 

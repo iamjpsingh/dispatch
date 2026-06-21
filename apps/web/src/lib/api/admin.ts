@@ -515,6 +515,13 @@ export const adminApi = {
     const body = await res.json()
     if (!body.success) throw new Error(body.message ?? 'Failed')
   },
+
+  // --- GDPR / DSAR export ---
+  gdprExport: async (contactId: string): Promise<Blob> => {
+    const res = await rpcFetch(`${rpcBase()}/admin/contacts/${contactId}/gdpr-export`, { method: 'GET' })
+    if (!res.ok) throw new Error('Export failed')
+    return res.blob()
+  },
 }
 
 export interface SendingDomain {

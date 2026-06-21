@@ -11,6 +11,7 @@ import { orgService } from '../services/orgService'
 import { teamService } from '../services/teamService'
 import { rbacService } from '../services/rbacService'
 import { auditService } from '../services/auditService'
+import { gdprService } from '../services/gdprService'
 import { invitationService } from '../services/invitationService'
 import { systemSettingsService } from '../services/systemSettingsService'
 import { systemMailerService } from '../services/systemMailerService'
@@ -893,6 +894,20 @@ const adminRoutes = new Hono()
     const user = requireAuth(c)
     const invitations = await invitationService.listForEmail(user.email)
     return success(c, { invitations })
+  })
+  // ==========================================================================
+  // GDPR / DSAR — Data Subject Access Request export (org-scoped)
+  // ==========================================================================
+  .get('/admin/contacts/:id/gdpr-export', requirePermission(PERMISSIONS.GDPR_MANAGE), async (c) => {
+    const orgId = getOrgId(c)
+    const user = requireAuth(c)
+    const contactId = c.req.param('id')
+    const data = await gdprService.exportRecipient(orgId, contactId)
+    if (!data) return error(c, 'Contact not found', 404)
+    auditService.log({ orgId, actorId: user.id, action: 'contacts.exported', entityType: 'contact', entityId: contactId })
+    c.header('Content-Type', 'application/json')
+    c.header('Content-Disposition', `attachment; filename="gdpr-export-${contactId}.json"`)
+    return c.body(JSON.stringify(data, null, 2))
   })
 
 export default adminRoutes

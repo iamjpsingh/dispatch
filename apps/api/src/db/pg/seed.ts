@@ -41,6 +41,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'audit.view',
       'logs.view',
       'billing.view', 'billing.manage',
+      'gdpr.manage',
     ],
   },
   {
@@ -66,6 +67,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'apikeys.view', 'apikeys.manage',
       'audit.view',
       'logs.view',
+      'gdpr.manage',
     ],
   },
   {

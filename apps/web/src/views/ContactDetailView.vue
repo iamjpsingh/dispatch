@@ -10,6 +10,7 @@ import {
   Mail, Eye, MousePointer, BarChart3, Link, Clock, Tag, Zap,
   AlertTriangle, ArrowLeft,
 } from 'lucide-vue-next'
+import { adminApi } from '../lib/api/admin'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,6 +92,25 @@ function parseTags(tagsJson: string | string[]): string[] {
   try { return JSON.parse(tagsJson || '[]') } catch { return [] }
 }
 
+const exportingGdpr = ref(false)
+
+async function downloadGdprExport() {
+  exportingGdpr.value = true
+  try {
+    const blob = await adminApi.gdprExport(contactId.value)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `gdpr-export-${contactId.value}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    // silently ignore — user sees no response if export permission is missing
+  } finally {
+    exportingGdpr.value = false
+  }
+}
+
 onMounted(loadProfile)
 </script>
 
@@ -138,6 +158,9 @@ onMounted(loadProfile)
           </div>
         </template>
         <template #actions>
+          <Button variant="outline" size="sm" :disabled="exportingGdpr" @click="downloadGdprExport">
+            {{ exportingGdpr ? 'Exporting…' : 'Export data (GDPR)' }}
+          </Button>
           <div :class="['flex items-center gap-2 px-3 py-1.5 rounded-lg', scoreBg]">
             <span :class="['text-xl font-bold', scoreColor]">{{ profile.contact.engagement_score || 0 }}</span>
             <span class="text-[10px] text-muted-foreground leading-tight">Engagement<br/>Score</span>
