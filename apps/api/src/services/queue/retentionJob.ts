@@ -11,8 +11,17 @@ const RETENTION_QUEUE = 'data-retention'
 const windowDays = () => Number(process.env.RETENTION_DAYS ?? 730)
 
 export async function registerRetentionJob(): Promise<void> {
-  const q = new Queue(RETENTION_QUEUE, { connection: createRedisConnection() })
-  await q.add('purge', {}, { repeat: { pattern: '0 2 * * *' }, jobId: 'daily-retention-purge', removeOnComplete: true, removeOnFail: 100 })
+  // Fire-once at boot: register the repeatable scheduler, then release the producer
+  // connection. BullMQ's worker owns repeat scheduling thereafter, so nothing reuses
+  // this queue (unlike the long-lived scheduler producer that routes call per send).
+  const conn = createRedisConnection()
+  const q = new Queue(RETENTION_QUEUE, { connection: conn })
+  try {
+    await q.add('purge', {}, { repeat: { pattern: '0 2 * * *' }, jobId: 'daily-retention-purge', removeOnComplete: true, removeOnFail: 100 })
+  } finally {
+    await q.close()
+    await conn.quit()
+  }
 }
 
 export function startRetentionWorker(): Worker {
