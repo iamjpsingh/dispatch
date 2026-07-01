@@ -329,7 +329,7 @@ class ContactService {
           continue
         }
 
-        if (await suppressionStore.isSuppressed(userId, email)) {
+        if (await suppressionStore.isSuppressed(userId, email, tx)) {
           result.invalid++
           result.errors.push({ row: i + 1, email, reason: 'Email is suppressed' })
           continue

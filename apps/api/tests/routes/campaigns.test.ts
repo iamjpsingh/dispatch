@@ -48,6 +48,13 @@ vi.mock('../../src/services/queueEngine', () => ({
   },
 }))
 
+// CAN-SPAM launch gate (P7a) loads the org and 400s if it has no postal address.
+vi.mock('../../src/services/orgService', () => ({
+  orgService: {
+    get: vi.fn(),
+  },
+}))
+
 vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }))
@@ -65,6 +72,7 @@ import { templateService } from '../../src/services/templateService'
 import { contactService } from '../../src/services/contactService'
 import { d1UserDatabase } from '../../src/services/d1UserDatabase'
 import { queueEngine } from '../../src/services/queueEngine'
+import { orgService } from '../../src/services/orgService'
 import campaignRoutes from '../../src/routes/campaigns'
 
 const TEST_USER = { id: 'user-1', email: 'test@test.com', name: 'Test User' }
@@ -456,6 +464,7 @@ describe('Campaign Routes', () => {
       vi.mocked(d1UserDatabase.getUserDefaultSMTPConfig).mockResolvedValue(DEFAULT_SMTP_CONFIG as any)
       vi.mocked(queueEngine.enqueue).mockReturnValue('job-x')
       vi.mocked(campaignService.setStatus).mockReturnValue(true)
+      vi.mocked(orgService.get).mockResolvedValue({ postal_address: '123 Test St, City, ST' } as any)
     }
 
     it('enqueues a send job for the campaign recipients, links the job, and marks it sending', async () => {

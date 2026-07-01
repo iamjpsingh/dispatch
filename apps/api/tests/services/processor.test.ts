@@ -30,6 +30,11 @@ vi.mock('../../src/services/graymailService', () => ({ graymailService: { record
 const suppress = vi.fn()
 vi.mock('../../src/services/queue/suppressionStore', () => ({ suppressionStore: { suppress: (...a: unknown[]) => suppress(...a) } }))
 
+// CAN-SPAM gate (P7a): the processor loads the org and fail-closes if it has no postal
+// address. These P4.C fixtures predate that gate, so stub a compliant org.
+const orgGet = vi.fn()
+vi.mock('../../src/services/orgService', () => ({ orgService: { get: (...a: unknown[]) => orgGet(...a) } }))
+
 import { freshDbMigrated, type TestDb } from '../helpers/pg'
 import { __setTestDb } from '../../src/db/pg/client'
 import { queueStore } from '../../src/services/queue/queueStore'
@@ -61,6 +66,7 @@ describe('P4.C — processSendBatch', () => {
     gate.mockResolvedValue({ allowed: true })
     emitSpy.mockResolvedValue(undefined)
     mockSend.mockResolvedValue({ messageId: 'm1' })
+    orgGet.mockResolvedValue({ postal_address: '123 Test St, City, ST', sender_company_name: 'Test Co' })
   }, 30_000)
   afterEach(() => {
     __setTestDb(null)

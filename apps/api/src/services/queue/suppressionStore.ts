@@ -2,16 +2,19 @@
 // Replaces the SQLite suppression methods in queueDatabase. user_id-keyed to
 // match uq_suppress_user_email; emails lowercased; INSERT ... ON CONFLICT DO NOTHING.
 import { and, eq, desc, or } from 'drizzle-orm'
-import { getDb } from '../../db/pg/client'
+import { getDb, type Db } from '../../db/pg/client'
 import { suppression_list, type SuppressionRow } from '../../db/pg/schema'
 import { generateId } from '../../utils/id'
 import { hashEmail } from '../../utils/suppressionHash'
 
 export const suppressionStore = {
-  async isSuppressed(userId: string, email: string): Promise<boolean> {
+  // `executor` lets a caller run this read on an open transaction's handle. Passing the
+  // base getDb() while a transaction is in flight deadlocks on a single-connection driver
+  // (PGlite in tests); importContacts calls this inside its import txn, so it passes `tx`.
+  async isSuppressed(userId: string, email: string, executor: Db = getDb()): Promise<boolean> {
     const normalized = email.toLowerCase()
     const hash = hashEmail(normalized)
-    const [row] = await getDb()
+    const [row] = await executor
       .select({ id: suppression_list.id })
       .from(suppression_list)
       .where(and(eq(suppression_list.user_id, userId), or(eq(suppression_list.email, normalized), eq(suppression_list.email_hash, hash))))
