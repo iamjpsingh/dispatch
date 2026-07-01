@@ -144,6 +144,34 @@ baseline, web own-src **≤ 33**, backend **739 / 0 / 28**, web lib **41 / 0**).
 
 ---
 
+### P7a — GDPR / CAN-SPAM compliance (COMPLETE, pushed)
+Subagent-driven; gate held green (api tsc **49**, web own-src **≤ 33**, backend **750 / 0 / 28**).
+Commits `b599e82..d9a3512` on `feat/saas-replatform` (pushed to origin).
+- **Sender identity** — `organizations` gains `sender_company_name` / `postal_address` /
+  `postal_address_set_at` (migration 0012); `getSenderIdentity`/`setSenderIdentity`; admin route
+  (`ORG_VIEW`/`ORG_MANAGE`) + shadcn settings card.
+- **CAN-SPAM hard-gate** — `assertSenderIdentity` fail-closed at BOTH campaign launch AND the worker
+  (`processor.ts`); `buildComplianceFooter` (HTML-escaped) injected once per send.
+- **GDPR DSAR export** — `gdprService.exportRecipient` (org-scoped, audited) behind a new
+  `GDPR_MANAGE` permission (seeded to owner/admin); route + ContactDetailView button.
+- **GDPR erasure** — `eraseRecipient` anonymizes the contact (email→null) + de-identifies
+  analytics/logs in one txn, then suppression-by-hash (HMAC-SHA256, server-only secret); idempotent,
+  org-scoped. `contacts.email` made nullable (migration 0013); `email_logs.email` tombstoned
+  `'[erased]'`. Import + send both consult suppression.
+- **Retention purge** — daily BullMQ repeatable (`retentionService.purgeExpired` + audit cleanup),
+  `RETENTION_DAYS` window (default 730).
+- **Final review + hardening** — verified directly (the multi-agent review workflow failed twice: a
+  `parallel()` thunk bug, then an infra stall). Fixes: retention producer connection leak (`8bcf101`);
+  `SUPPRESSION_HASH_SECRET` boot fail-fast + GDPR-button toasts (`1438ad8`); and **8 full-suite
+  regressions** the per-task flow missed — an import-transaction deadlock (`isSuppressed` on the base
+  db handle inside `db.transaction`) + 2 stale CAN-SPAM gate fixtures (`d9a3512`).
+
+**Deferred from P7 (still open):** P7b audit-event wiring · i18n (both design non-goals).
+**P7a follow-up (deferrable):** `/send` bulk route lacks the upfront `assertSenderIdentity` fast-fail
+(worker still fail-closes — no compliance hole, only delayed-vs-immediate UX).
+
+---
+
 ## 🧹 Housekeeping
 - Commits from `85ea5d5` onward are **unsigned** (GPG agent timed out mid-session). Re-sign with
   `git rebase --exec 'git commit --amend --no-edit -S' <base>..HEAD` once the agent is unlocked.
@@ -151,8 +179,9 @@ baseline, web own-src **≤ 33**, backend **739 / 0 / 28**, web lib **41 / 0**).
   secrets (Cloudflare D1 over HTTP, not local PG), Valkey-backed rate-limiting (opportunistic in P4).
 
 ## 🧭 Resume pointers
-- **Next phase: P7** (Admin panel + audit UI + GDPR/i18n). P1–P6 complete.
+- **Next: P7b** (audit-event wiring) + i18n, then **P8** (security & compliance audit gate).
+  P1–P6 + **P7a (GDPR/CAN-SPAM)** complete and pushed to origin.
 - Phase specs: `docs/superpowers/specs/`; plans: `docs/superpowers/plans/`.
-- Auto-loaded memory: `MEMORY.md` → `dispatch-p5-status.md` (P5 done) + `dispatch-session-status.md`.
+- Auto-loaded memory: `MEMORY.md` → `dispatch-p7a-status.md` (P7a done) + `dispatch-session-status.md`.
 - Run the gated nets with the deps up: `RUN_QUEUE_IT=1` (Valkey), `RUN_STORAGE_IT=1` (MinIO);
   default `bun test` runs without them.
