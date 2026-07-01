@@ -8,11 +8,13 @@ import { templateService } from './services/templateService'
 import { systemSettingsService } from './services/systemSettingsService'
 import { storageService } from './services/storageService'
 import { assertEncryptionKey } from './utils/crypto'
+import { assertSuppressionSecret } from './utils/suppressionHash'
 import { logger } from './utils/logger'
 
 export async function boot(opts: { migrate?: boolean; seed?: boolean } = {}): Promise<void> {
   const { migrate = true, seed = true } = opts
   assertEncryptionKey() // fail fast: never run with secrets unencryptable
+  assertSuppressionSecret() // fail fast: suppression-by-hash needs the secret on send + import
   if (migrate) await runMigrations()
   if (seed) {
     await seedSystemRoles()

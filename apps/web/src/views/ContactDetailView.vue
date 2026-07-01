@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useToast } from '../composables/useToast'
 import PageHeader from '../components/ui/PageHeader.vue'
 import ContactTimeline from '../components/contacts/ContactTimeline.vue'
 import ContactPreferences from '../components/contacts/ContactPreferences.vue'
@@ -101,6 +102,7 @@ function parseTags(tagsJson: string | string[]): string[] {
   try { return JSON.parse(tagsJson || '[]') } catch { return [] }
 }
 
+const toast = useToast()
 const exportingGdpr = ref(false)
 const erasingGdpr = ref(false)
 
@@ -114,8 +116,8 @@ async function downloadGdprExport() {
     a.download = `gdpr-export-${contactId.value}.json`
     a.click()
     URL.revokeObjectURL(url)
-  } catch {
-    // silently ignore — user sees no response if export permission is missing
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'GDPR export failed')
   } finally {
     exportingGdpr.value = false
   }
@@ -126,8 +128,8 @@ async function performGdprErase() {
   try {
     await adminApi.gdprErase(contactId.value)
     router.push('/contacts')
-  } catch {
-    // silently ignore — permission or not-found errors surface no UX change
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'GDPR erasure failed')
   } finally {
     erasingGdpr.value = false
   }
