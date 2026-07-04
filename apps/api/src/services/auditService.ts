@@ -5,75 +5,9 @@ import { getDb } from '../db/pg/client'
 import { audit_logs, activity_logs } from '../db/pg/schema'
 import { generateId } from '../utils/id'
 import { logger } from '../utils/logger'
+import type { AuditEntry, ActivityEntry, LogQuery } from './audit/types'
 
-export type AuditAction =
-  // Auth
-  | 'user.login' | 'user.logout' | 'user.register'
-  // Org
-  | 'org.created' | 'org.updated' | 'org.deleted' | 'org.suspended'
-  // Members
-  | 'member.invited' | 'member.joined' | 'member.role_changed' | 'member.removed' | 'member.suspended'
-  // Teams
-  | 'team.created' | 'team.updated' | 'team.deleted' | 'team.member_added' | 'team.member_removed'
-  // Permissions
-  | 'permission.granted' | 'permission.revoked'
-  // Settings
-  | 'settings.updated' | 'smtp.created' | 'smtp.updated' | 'smtp.deleted'
-  // Campaigns
-  | 'campaign.created' | 'campaign.launched' | 'campaign.paused' | 'campaign.cancelled' | 'campaign.deleted'
-  // Contacts
-  | 'contacts.imported' | 'contacts.exported' | 'contacts.deleted' | 'contacts.erased'
-  // Data retention
-  | 'data.retention_purge'
-  // API keys
-  | 'apikey.created' | 'apikey.revoked'
-
-export type ActivityAction =
-  | 'campaign.created' | 'campaign.updated' | 'campaign.sent'
-  | 'template.created' | 'template.updated' | 'template.deleted'
-  | 'contact.created' | 'contact.updated' | 'contact.deleted'
-  | 'list.created' | 'list.updated' | 'list.deleted'
-  | 'automation.created' | 'automation.activated' | 'automation.paused'
-  | 'segment.created' | 'segment.updated'
-  | 'team.created' | 'team.updated'
-  | 'member.invited' | 'member.joined'
-  | 'settings.updated'
-
-interface AuditEntry {
-  orgId?: string
-  actorId: string
-  actorEmail?: string
-  action: AuditAction
-  entityType: string
-  entityId?: string
-  changes?: Record<string, { from: unknown; to: unknown }>
-  ipAddress?: string
-  userAgent?: string
-  metadata?: Record<string, unknown>
-}
-
-interface ActivityEntry {
-  orgId?: string
-  actorId: string
-  actorEmail?: string
-  action: ActivityAction
-  entityType: string
-  entityId?: string
-  description: string
-  metadata?: Record<string, unknown>
-}
-
-interface LogQuery {
-  orgId?: string
-  actorId?: string
-  action?: string
-  entityType?: string
-  entityId?: string
-  from?: string
-  to?: string
-  page?: number
-  limit?: number
-}
+export type { AuditAction, ActivityAction } from './audit/types'
 
 class AuditService {
   /**

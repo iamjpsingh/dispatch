@@ -144,7 +144,7 @@ app.use('/public/*', serveStatic({ root: './' }))
 // Routes
 // ============================================================================
 
-const routes = [
+export const routes = [
   indexRoutes,
   authRoutes,
   oauthRoutes,
