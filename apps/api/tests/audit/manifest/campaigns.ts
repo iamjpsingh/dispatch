@@ -1,0 +1,22 @@
+import type { AuditAction } from '../../../src/services/audit/types'
+export const campaignsManifest = {
+  'POST /campaigns': 'campaign.created',
+  'PUT /campaigns/:id': 'campaign.updated',
+  'DELETE /campaigns/:id': 'campaign.deleted',
+  'POST /campaigns/:id/draft': { exempt: 'draft-autosave: publish/launch is the audited event' },
+  'POST /campaigns/:id/schedule': 'campaign.scheduled',
+  'POST /campaigns/:id/reschedule': 'campaign.rescheduled',
+  'POST /campaigns/:id/launch': 'campaign.launched',
+  'POST /campaigns/:id/pause': 'campaign.paused',
+  'POST /campaigns/:id/cancel': 'campaign.cancelled',
+  'POST /campaigns/:id/clone': 'campaign.cloned',
+  'POST /campaigns/:id/archive': 'campaign.archived',
+  'POST /campaigns/:id/ab/variant': 'campaign.ab_variant_created',
+  'POST /campaigns/:id/ab/winner': 'campaign.ab_winner_declared',
+  'PUT /campaigns/:id/ab/auto-winner': 'campaign.ab_auto_winner_configured',
+  'POST /campaigns/:id/ab/check-winner': { exempt: 'derived-recompute: reads variant stats, no state change' },
+  'PUT /campaigns/frequency-cap': 'settings.updated',
+  'PUT /campaigns/graymail': 'settings.updated',
+  'POST /campaigns/graymail/reset/:email': 'campaign.graymail_reset',
+  'PUT /campaigns/:id/rotation': 'routing.updated',
+} satisfies Record<string, AuditAction | { exempt: string }>
