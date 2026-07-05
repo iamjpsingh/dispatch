@@ -27,6 +27,7 @@ import { FileService } from '../services/fileService'
 import { storageService } from '../services/storageService'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 const contactsRoutes = new Hono()
   // ==========================================================================
@@ -38,6 +39,8 @@ const contactsRoutes = new Hono()
     const { name, description } = c.req.valid('json')
 
     const list = await contactService.createList(orgId, user.id, name.trim(), description)
+    auditFromContext(c, { action: 'list.created', entityType: 'list', entityId: list.id })
+    activityFromContext(c, { action: 'list.created', entityType: 'list', entityId: list.id, description: `Created list ${list.id}` })
     return success(c, list, 'Contact list created')
   })
   .get('/contacts/lists', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
@@ -52,6 +55,8 @@ const contactsRoutes = new Hono()
 
     const updated = await contactService.updateList(orgId, listId, body.name, body.description)
     if (!updated) return error(c, 'List not found', 404)
+    auditFromContext(c, { action: 'list.updated', entityType: 'list', entityId: listId })
+    activityFromContext(c, { action: 'list.updated', entityType: 'list', entityId: listId, description: `Updated list ${listId}` })
     return success(c, undefined, 'List updated')
   })
   .delete('/contacts/lists/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => {
@@ -60,6 +65,8 @@ const contactsRoutes = new Hono()
 
     const deleted = await contactService.deleteList(orgId, listId)
     if (!deleted) return error(c, 'List not found', 404)
+    auditFromContext(c, { action: 'list.deleted', entityType: 'list', entityId: listId })
+    activityFromContext(c, { action: 'list.deleted', entityType: 'list', entityId: listId, description: `Deleted list ${listId}` })
     return success(c, undefined, 'List deleted')
   })
   // ==========================================================================
@@ -98,6 +105,8 @@ const contactsRoutes = new Hono()
 
     const merged = await contactService.mergeContacts(orgId, primary_id, merge_ids)
     if (!merged) return error(c, 'Merge failed — contact not found', 404)
+    auditFromContext(c, { action: 'contacts.merged', entityType: 'contact', entityId: primary_id, metadata: { mergedIds: merge_ids } })
+    activityFromContext(c, { action: 'contact.deleted', entityType: 'contact', entityId: primary_id, description: `Merged ${merge_ids.length} contact(s) into ${primary_id}` })
     return success(c, undefined, `Merged ${merge_ids.length} contact(s) into primary`)
   })
   // ==========================================================================
@@ -125,6 +134,8 @@ const contactsRoutes = new Hono()
     const { ids } = c.req.valid('json')
 
     const deleted = await contactService.deleteContacts(orgId, ids)
+    auditFromContext(c, { action: 'contacts.deleted', entityType: 'contact', metadata: { count: deleted } })
+    activityFromContext(c, { action: 'contact.deleted', entityType: 'contact', description: `Deleted ${deleted} contact(s)`, metadata: { count: deleted } })
     return success(c, { deleted }, `${deleted} contact(s) deleted`)
   })
   .post('/contacts/bulk/tag', requirePermission(PERMISSIONS.CONTACTS_MANAGE), zValidator('json', BulkTagSchema), async (c) => {
@@ -132,6 +143,8 @@ const contactsRoutes = new Hono()
     const { ids, tags } = c.req.valid('json')
 
     const updated = await contactService.tagContacts(orgId, ids, tags)
+    auditFromContext(c, { action: 'contacts.tagged', entityType: 'contact', metadata: { count: updated, tag: tags } })
+    activityFromContext(c, { action: 'contact.updated', entityType: 'contact', description: `Tagged ${updated} contact(s)`, metadata: { count: updated, tag: tags } })
     return success(c, { updated }, `${updated} contact(s) tagged`)
   })
   .post('/contacts/bulk/move', requirePermission(PERMISSIONS.CONTACTS_MANAGE), zValidator('json', BulkMoveSchema), async (c) => {
@@ -139,6 +152,8 @@ const contactsRoutes = new Hono()
     const { ids, target_list_id } = c.req.valid('json')
 
     const moved = await contactService.moveContacts(orgId, ids, target_list_id)
+    auditFromContext(c, { action: 'contacts.moved', entityType: 'contact', metadata: { count: moved, listId: target_list_id } })
+    activityFromContext(c, { action: 'contact.updated', entityType: 'contact', description: `Moved ${moved} contact(s) to list ${target_list_id}`, metadata: { count: moved, listId: target_list_id } })
     return success(c, { moved }, `${moved} contact(s) moved`)
   })
   // ==========================================================================
@@ -212,6 +227,7 @@ const contactsRoutes = new Hono()
       await preferenceCenterService.setPreference(orgId, contact.email, body.preference as PreferenceType, body.reason)
     }
 
+    auditFromContext(c, { action: 'contact.preference_updated', entityType: 'contact', entityId: contactId, metadata: { preference: body.preference } })
     return success(c, undefined, `Preference updated to ${body.preference}`)
   })
   // ==========================================================================
@@ -298,6 +314,8 @@ const contactsRoutes = new Hono()
 
     try {
       const contact = await contactService.addContact(orgId, user.id, listId, body)
+      auditFromContext(c, { action: 'contacts.created', entityType: 'contact', entityId: contact.id })
+      activityFromContext(c, { action: 'contact.created', entityType: 'contact', entityId: contact.id, description: `Created contact ${contact.id}` })
       return success(c, contact, 'Contact added')
     } catch (err: any) {
       if (err.message?.includes('UNIQUE')) {
@@ -313,6 +331,8 @@ const contactsRoutes = new Hono()
 
     const updated = await contactService.updateContact(orgId, contactId, body)
     if (!updated) return error(c, 'Contact not found', 404)
+    auditFromContext(c, { action: 'contacts.updated', entityType: 'contact', entityId: contactId })
+    activityFromContext(c, { action: 'contact.updated', entityType: 'contact', entityId: contactId, description: `Updated contact ${contactId}` })
     return success(c, undefined, 'Contact updated')
   })
   // ==========================================================================
@@ -384,6 +404,8 @@ const contactsRoutes = new Hono()
 
     // Record history
     await contactService.recordImport(orgId, user.id, listId, file.name, format, result, fieldMapping, fileKey)
+
+    auditFromContext(c, { action: 'contacts.imported', entityType: 'contact', entityId: listId, metadata: { imported: result.imported, listId } })
 
     return success(
       c,
