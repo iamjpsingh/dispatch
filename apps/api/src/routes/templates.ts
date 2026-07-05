@@ -23,6 +23,7 @@ import { d1UserDatabase } from '../services/d1UserDatabase'
 import { createTransport, configFromRecord } from '../services/transports'
 import { htmlToText } from '../utils/htmlToText'
 import { success, error } from '../utils/response'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 const templatesRoutes = new Hono()
   // ==========================================================================
@@ -60,6 +61,8 @@ const templatesRoutes = new Hono()
     const body = c.req.valid('json')
 
     const template = await templateService.create(orgId, user.id, body)
+    auditFromContext(c, { action: 'template.created', entityType: 'template', entityId: template.id })
+    activityFromContext(c, { action: 'template.created', entityType: 'template', entityId: template.id, description: `Created template ${template.id}` })
     return success(c, template, 'Template created', 201)
   })
   .get('/templates/starters', async (c) => {
@@ -85,6 +88,8 @@ const templatesRoutes = new Hono()
     const updated = await templateService.update(orgId, templateId, body)
     if (!updated) return error(c, 'Template not found or is a starter template', 404)
 
+    auditFromContext(c, { action: 'template.updated', entityType: 'template', entityId: templateId })
+    activityFromContext(c, { action: 'template.updated', entityType: 'template', entityId: templateId, description: `Updated template ${templateId}` })
     return success(c, undefined, 'Template updated')
   })
   .delete('/templates/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async (c) => {
@@ -94,6 +99,8 @@ const templatesRoutes = new Hono()
     const deleted = await templateService.delete(orgId, templateId)
     if (!deleted) return error(c, 'Template not found or cannot be deleted', 404)
 
+    auditFromContext(c, { action: 'template.deleted', entityType: 'template', entityId: templateId })
+    activityFromContext(c, { action: 'template.deleted', entityType: 'template', entityId: templateId, description: `Deleted template ${templateId}` })
     return success(c, undefined, 'Template deleted')
   })
   // ==========================================================================
@@ -109,6 +116,8 @@ const templatesRoutes = new Hono()
     const duplicate = await templateService.duplicate(orgId, user.id, templateId, newName)
     if (!duplicate) return error(c, 'Template not found', 404)
 
+    auditFromContext(c, { action: 'template.duplicated', entityType: 'template', entityId: duplicate.id })
+    activityFromContext(c, { action: 'template.created', entityType: 'template', entityId: duplicate.id, description: `Duplicated template ${templateId} as ${duplicate.id}` })
     return success(c, duplicate, 'Template duplicated', 201)
   })
   .post('/templates/:id/preview', requirePermission(PERMISSIONS.TEMPLATES_VIEW), zValidator('json', PreviewSchema), async (c) => {
@@ -199,6 +208,7 @@ const templatesRoutes = new Hono()
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     const section = await templateService.createSection(orgId, user.id, body)
+    auditFromContext(c, { action: 'section.created', entityType: 'section', entityId: section.id })
     return success(c, section, 'Section created', 201)
   })
   .get('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
@@ -212,12 +222,14 @@ const templatesRoutes = new Hono()
     const body = c.req.valid('json')
     const updated = await templateService.updateSection(orgId, c.req.param('id'), body)
     if (!updated) return error(c, 'Section not found', 404)
+    auditFromContext(c, { action: 'section.updated', entityType: 'section', entityId: c.req.param('id') })
     return success(c, undefined, 'Section updated')
   })
   .delete('/templates/sections/:id', requirePermission(PERMISSIONS.TEMPLATES_MANAGE), async (c) => {
     const orgId = getOrgId(c)
     const deleted = await templateService.deleteSection(orgId, c.req.param('id'))
     if (!deleted) return error(c, 'Section not found', 404)
+    auditFromContext(c, { action: 'section.deleted', entityType: 'section', entityId: c.req.param('id') })
     return success(c, undefined, 'Section deleted')
   })
   .post('/templates/sections/:id/use', requirePermission(PERMISSIONS.TEMPLATES_VIEW), async (c) => {
@@ -265,6 +277,8 @@ const templatesRoutes = new Hono()
         description: body.description,
         mjml_source: body.mjml,
       })
+      auditFromContext(c, { action: 'template.created', entityType: 'template', entityId: template.id })
+      activityFromContext(c, { action: 'template.created', entityType: 'template', entityId: template.id, description: `Created template ${template.id} from MJML` })
       return success(c, template, 'Template created from MJML')
     } catch (err: any) {
       return error(c, `MJML compilation failed: ${err.message}`, 400)

@@ -8,6 +8,7 @@ import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { automationService } from '../services/automationService'
 import { success, error } from '../utils/response'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -49,6 +50,8 @@ const automationsRoutes = new Hono()
     const body = c.req.valid('json')
 
     const automation = await automationService.create(orgId, user.id, body)
+    auditFromContext(c, { action: 'automation.created', entityType: 'automation', entityId: automation.id })
+    activityFromContext(c, { action: 'automation.created', entityType: 'automation', entityId: automation.id, description: `Created automation ${automation.id}` })
     return success(c, automation, 'Automation created', 201)
   })
   .get('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_VIEW), async (c) => {
@@ -69,6 +72,8 @@ const automationsRoutes = new Hono()
     const updated = await automationService.update(orgId, automationId, body)
     if (!updated) return error(c, 'Automation not found or cannot be edited while active', 404)
 
+    auditFromContext(c, { action: 'automation.updated', entityType: 'automation', entityId: automationId })
+    activityFromContext(c, { action: 'automation.updated', entityType: 'automation', entityId: automationId, description: `Updated automation ${automationId}` })
     return success(c, undefined, 'Automation updated')
   })
   .delete('/automations/:id', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
@@ -78,6 +83,8 @@ const automationsRoutes = new Hono()
     const deleted = await automationService.delete(orgId, automationId)
     if (!deleted) return error(c, 'Automation not found or is currently active', 404)
 
+    auditFromContext(c, { action: 'automation.deleted', entityType: 'automation', entityId: automationId })
+    activityFromContext(c, { action: 'automation.deleted', entityType: 'automation', entityId: automationId, description: `Deleted automation ${automationId}` })
     return success(c, undefined, 'Automation deleted')
   })
   // ==========================================================================
@@ -90,6 +97,8 @@ const automationsRoutes = new Hono()
     const activated = await automationService.activate(orgId, automationId)
     if (!activated) return error(c, 'Automation not found or cannot be activated', 404)
 
+    auditFromContext(c, { action: 'automation.activated', entityType: 'automation', entityId: automationId })
+    activityFromContext(c, { action: 'automation.activated', entityType: 'automation', entityId: automationId, description: `Activated automation ${automationId}` })
     return success(c, undefined, 'Automation activated')
   })
   .post('/automations/:id/pause', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
@@ -99,6 +108,8 @@ const automationsRoutes = new Hono()
     const paused = await automationService.pause(orgId, automationId)
     if (!paused) return error(c, 'Automation not found or not active', 404)
 
+    auditFromContext(c, { action: 'automation.paused', entityType: 'automation', entityId: automationId })
+    activityFromContext(c, { action: 'automation.paused', entityType: 'automation', entityId: automationId, description: `Paused automation ${automationId}` })
     return success(c, undefined, 'Automation paused')
   })
   .post('/automations/:id/deactivate', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
@@ -108,6 +119,8 @@ const automationsRoutes = new Hono()
     const deactivated = await automationService.deactivate(orgId, automationId)
     if (!deactivated) return error(c, 'Automation not found', 404)
 
+    auditFromContext(c, { action: 'automation.deactivated', entityType: 'automation', entityId: automationId })
+    activityFromContext(c, { action: 'automation.deactivated', entityType: 'automation', entityId: automationId, description: `Deactivated automation ${automationId}` })
     return success(c, undefined, 'Automation deactivated')
   })
   // ==========================================================================
@@ -136,6 +149,7 @@ const automationsRoutes = new Hono()
     const enrolled = await automationService.enrollContact(automationId, contact_id)
     if (!enrolled) return error(c, 'Could not enroll contact (already enrolled or no steps)', 400)
 
+    auditFromContext(c, { action: 'automation.contact_enrolled', entityType: 'automation', entityId: automationId, metadata: { contactId: contact_id } })
     return success(c, undefined, 'Contact enrolled')
   })
   .delete('/automations/:id/enrollments/:contactId', requirePermission(PERMISSIONS.AUTOMATIONS_MANAGE), async (c) => {
@@ -149,6 +163,7 @@ const automationsRoutes = new Hono()
     const exited = await automationService.exitContact(automationId, contactId, 'manual')
     if (!exited) return error(c, 'Enrollment not found or not active', 404)
 
+    auditFromContext(c, { action: 'automation.contact_unenrolled', entityType: 'automation', entityId: automationId, metadata: { contactId } })
     return success(c, undefined, 'Contact removed from automation')
   })
   // ==========================================================================
@@ -177,6 +192,7 @@ const automationsRoutes = new Hono()
     if (!automation) return error(c, 'Automation not found', 404)
 
     await automationService.update(orgId, automationId, { goal_condition: JSON.stringify(body) })
+    auditFromContext(c, { action: 'automation.goal_updated', entityType: 'automation', entityId: automationId })
     return success(c, undefined, 'Goal condition set')
   })
   /** Remove goal condition */
@@ -188,6 +204,7 @@ const automationsRoutes = new Hono()
     if (!automation) return error(c, 'Automation not found', 404)
 
     await automationService.update(orgId, automationId, { goal_condition: null })
+    auditFromContext(c, { action: 'automation.goal_removed', entityType: 'automation', entityId: automationId })
     return success(c, undefined, 'Goal condition removed')
   })
 

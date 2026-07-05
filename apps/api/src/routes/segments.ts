@@ -8,6 +8,7 @@ import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { segmentService } from '../services/segmentService'
 import { success, error } from '../utils/response'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -39,6 +40,8 @@ const segmentsRoutes = new Hono()
     const body = c.req.valid('json')
 
     const segment = await segmentService.create(orgId, user.id, body)
+    auditFromContext(c, { action: 'segment.created', entityType: 'segment', entityId: segment.id })
+    activityFromContext(c, { action: 'segment.created', entityType: 'segment', entityId: segment.id, description: `Created segment ${segment.id}` })
     return success(c, segment, 'Segment created', 201)
   })
   .get('/segments/:id', requirePermission(PERMISSIONS.SEGMENTS_VIEW), async (c) => {
@@ -58,6 +61,8 @@ const segmentsRoutes = new Hono()
     const updated = await segmentService.update(orgId, segmentId, body)
     if (!updated) return error(c, 'Segment not found', 404)
 
+    auditFromContext(c, { action: 'segment.updated', entityType: 'segment', entityId: segmentId })
+    activityFromContext(c, { action: 'segment.updated', entityType: 'segment', entityId: segmentId, description: `Updated segment ${segmentId}` })
     return success(c, undefined, 'Segment updated')
   })
   .delete('/segments/:id', requirePermission(PERMISSIONS.SEGMENTS_MANAGE), async (c) => {
@@ -67,6 +72,8 @@ const segmentsRoutes = new Hono()
     const deleted = await segmentService.delete(orgId, segmentId)
     if (!deleted) return error(c, 'Segment not found', 404)
 
+    auditFromContext(c, { action: 'segment.deleted', entityType: 'segment', entityId: segmentId })
+    activityFromContext(c, { action: 'segment.deleted', entityType: 'segment', entityId: segmentId, description: `Deleted segment ${segmentId}` })
     return success(c, undefined, 'Segment deleted')
   })
   // ==========================================================================
@@ -82,6 +89,8 @@ const segmentsRoutes = new Hono()
     if (segment.type !== 'static') return error(c, 'Can only add contacts to static segments', 400)
 
     const added = await segmentService.addContacts(segmentId, contact_ids)
+    auditFromContext(c, { action: 'segment.members_added', entityType: 'segment', entityId: segmentId, metadata: { count: added } })
+    activityFromContext(c, { action: 'segment.updated', entityType: 'segment', entityId: segmentId, description: `Added ${added} contact(s) to segment ${segmentId}`, metadata: { count: added } })
     return success(c, { added }, `${added} contact(s) added to segment`)
   })
   .delete('/segments/:id/contacts', requirePermission(PERMISSIONS.SEGMENTS_MANAGE), zValidator('json', ContactIdsSchema), async (c) => {
@@ -93,6 +102,8 @@ const segmentsRoutes = new Hono()
     if (!segment) return error(c, 'Segment not found', 404)
 
     const removed = await segmentService.removeContacts(segmentId, contact_ids)
+    auditFromContext(c, { action: 'segment.members_removed', entityType: 'segment', entityId: segmentId, metadata: { count: removed } })
+    activityFromContext(c, { action: 'segment.updated', entityType: 'segment', entityId: segmentId, description: `Removed ${removed} contact(s) from segment ${segmentId}`, metadata: { count: removed } })
     return success(c, { removed }, `${removed} contact(s) removed from segment`)
   })
   .get('/segments/:id/contacts', requirePermission(PERMISSIONS.SEGMENTS_VIEW), async (c) => {
