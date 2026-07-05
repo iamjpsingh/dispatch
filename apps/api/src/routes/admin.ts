@@ -664,7 +664,7 @@ const adminRoutes = new Hono()
     const updates = c.req.valid('json')
 
     try {
-      const updated = teamService.update(orgId, teamId, updates, user.id)
+      const updated = await teamService.update(orgId, teamId, updates, user.id)
       if (!updated) return error(c, 'Team not found or no change', 404)
       auditFromContext(c, { action: 'team.updated', entityType: 'team', entityId: teamId })
       return success(c, undefined, 'Team updated')
@@ -712,7 +712,7 @@ const adminRoutes = new Hono()
     if (!orgMember) return error(c, 'User is not a member of this organization', 400)
 
     try {
-      const added = teamService.addMember(orgId, teamId, userId, role || 'member', user.id)
+      const added = await teamService.addMember(orgId, teamId, userId, role || 'member', user.id)
       if (!added) return error(c, 'User is already a team member', 400)
       auditFromContext(c, { action: 'team.member_added', entityType: 'team', entityId: teamId, metadata: { userId } })
       return success(c, undefined, 'Member added to team', 201)
@@ -721,14 +721,14 @@ const adminRoutes = new Hono()
     }
   })
   /** Remove member from team */
-  .delete('/admin/teams/:teamId/members/:userId', requirePermission(PERMISSIONS.TEAMS_MANAGE), (c) => {
+  .delete('/admin/teams/:teamId/members/:userId', requirePermission(PERMISSIONS.TEAMS_MANAGE), async (c) => {
     const user = requireAuth(c)
     const orgId = getOrgId(c)
     const teamId = c.req.param('teamId')
     const targetId = c.req.param('userId')
 
     try {
-      const removed = teamService.removeMember(orgId, teamId, targetId, user.id)
+      const removed = await teamService.removeMember(orgId, teamId, targetId, user.id)
       if (!removed) return error(c, 'Team member not found', 404)
       auditFromContext(c, { action: 'team.member_removed', entityType: 'team', entityId: teamId, metadata: { userId: targetId } })
       return success(c, undefined, 'Member removed from team')
