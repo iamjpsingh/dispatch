@@ -27,12 +27,14 @@ export const adminAuthManifest = {
   'POST /admin/org/members': 'member.added',
   'PUT /admin/org/members/:userId/role': 'member.role_changed',
   'DELETE /admin/org/members/:userId': 'member.removed',
-  // admin.ts — teams (service: teamService self-audits)
-  'POST /admin/teams': 'team.created',
-  'PUT /admin/teams/:teamId': 'team.updated',
-  'DELETE /admin/teams/:teamId': 'team.deleted',
-  'POST /admin/teams/:teamId/members': 'team.member_added',
-  'DELETE /admin/teams/:teamId/members/:userId': 'team.member_removed',
+  // admin.ts — teams. created (activity feed) + deleted (audit) = service (teamService).
+  // updated + member_added + member_removed = ROUTE-layer (T9 found teamService did NOT
+  // audit them; member_added was mis-logged as team.created — service bug flagged for P8).
+  'POST /admin/teams': 'team.created', // service (activity feed)
+  'PUT /admin/teams/:teamId': 'team.updated', // route
+  'DELETE /admin/teams/:teamId': 'team.deleted', // service (audit)
+  'POST /admin/teams/:teamId/members': 'team.member_added', // route
+  'DELETE /admin/teams/:teamId/members/:userId': 'team.member_removed', // route
   // admin.ts — permissions / invitations / gdpr
   'POST /admin/permissions/:userId/grant': 'permission.granted',
   'POST /admin/permissions/:userId/revoke': 'permission.revoked',

@@ -17,7 +17,10 @@ vi.mock('../../../src/services/rbacService', () => ({
   rbacService: { canManageUser: vi.fn(), isMember: vi.fn(), isPlatformAdmin: vi.fn() },
 }))
 vi.mock('../../../src/services/orgService', () => ({
-  orgService: { updateMemberRole: vi.fn() },
+  orgService: { updateMemberRole: vi.fn(), getMember: vi.fn() },
+}))
+vi.mock('../../../src/services/teamService', () => ({
+  teamService: { update: vi.fn(), addMember: vi.fn(), removeMember: vi.fn(), get: vi.fn() },
 }))
 vi.mock('../../../src/services/sendingDomainService', () => ({
   sendingDomainService: { addDomain: vi.fn(), getDnsRecords: vi.fn(() => []) },
@@ -36,6 +39,7 @@ vi.mock('../../../src/services/authLocalService', () => ({
 import { auditService } from '../../../src/services/auditService'
 import { rbacService } from '../../../src/services/rbacService'
 import { orgService } from '../../../src/services/orgService'
+import { teamService } from '../../../src/services/teamService'
 import { sendingDomainService } from '../../../src/services/sendingDomainService'
 import { authLocalService } from '../../../src/services/authLocalService'
 import adminRoutes from '../../../src/routes/admin'
@@ -98,6 +102,49 @@ describe('admin/auth audit wiring', () => {
     expect(res.status).toBe(200)
     expect(auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'member.role_changed', entityType: 'member', entityId: 'user-2' })
+    )
+  })
+
+  it('PUT /admin/teams/:teamId fires team.updated', async () => {
+    vi.mocked(teamService.update).mockResolvedValue(true)
+
+    const res = await appFor(adminRoutes).fetch(json('PUT', '/admin/teams/team-9', { name: 'Renamed' }))
+
+    expect(res.status).toBe(200)
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'team.updated', entityType: 'team', entityId: 'team-9' })
+    )
+  })
+
+  it('POST /admin/teams/:teamId/members fires team.member_added', async () => {
+    vi.mocked(teamService.get).mockResolvedValue({ id: 'team-9' } as any)
+    vi.mocked(orgService.getMember).mockResolvedValue({ id: 'om-1' } as any)
+    vi.mocked(teamService.addMember).mockResolvedValue(true)
+
+    const res = await appFor(adminRoutes).fetch(json('POST', '/admin/teams/team-9/members', { userId: 'user-7' }))
+
+    expect(res.status).toBe(201)
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'team.member_added',
+        entityType: 'team',
+        metadata: expect.objectContaining({ userId: 'user-7' }),
+      })
+    )
+  })
+
+  it('DELETE /admin/teams/:teamId/members/:userId fires team.member_removed', async () => {
+    vi.mocked(teamService.removeMember).mockResolvedValue(true)
+
+    const res = await appFor(adminRoutes).fetch(json('DELETE', '/admin/teams/team-9/members/user-7'))
+
+    expect(res.status).toBe(200)
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'team.member_removed',
+        entityType: 'team',
+        metadata: expect.objectContaining({ userId: 'user-7' }),
+      })
     )
   })
 

@@ -666,6 +666,7 @@ const adminRoutes = new Hono()
     try {
       const updated = teamService.update(orgId, teamId, updates, user.id)
       if (!updated) return error(c, 'Team not found or no change', 404)
+      auditFromContext(c, { action: 'team.updated', entityType: 'team', entityId: teamId })
       return success(c, undefined, 'Team updated')
     } catch (e: any) {
       return error(c, e.message || 'Failed to update team', 500)
@@ -713,6 +714,7 @@ const adminRoutes = new Hono()
     try {
       const added = teamService.addMember(orgId, teamId, userId, role || 'member', user.id)
       if (!added) return error(c, 'User is already a team member', 400)
+      auditFromContext(c, { action: 'team.member_added', entityType: 'team', entityId: teamId, metadata: { userId } })
       return success(c, undefined, 'Member added to team', 201)
     } catch (e: any) {
       return error(c, e.message || 'Failed to add team member', 500)
@@ -728,6 +730,7 @@ const adminRoutes = new Hono()
     try {
       const removed = teamService.removeMember(orgId, teamId, targetId, user.id)
       if (!removed) return error(c, 'Team member not found', 404)
+      auditFromContext(c, { action: 'team.member_removed', entityType: 'team', entityId: teamId, metadata: { userId: targetId } })
       return success(c, undefined, 'Member removed from team')
     } catch (e: any) {
       return error(c, e.message || 'Failed to remove team member', 500)
