@@ -165,34 +165,6 @@ const contactsRoutes = new Hono()
     const stats = await preferenceCenterService.getStats(orgId)
     return success(c, { stats })
   })
-  /** Public: preference center page data (for tracking worker to call) */
-  .get('/contacts/preferences/public/:email', async (c) => {
-    // This is called by the tracking worker when a contact visits the preference page.
-    // No auth required — email is the identifier.
-    const email = c.req.param('email')
-    const orgId = c.req.query('org') || ''
-    if (!orgId || !email) return error(c, 'Missing parameters', 400)
-
-    const pref = await preferenceCenterService.getEffectivePreference(orgId, email)
-    return success(c, { email, preference: pref })
-  })
-  /** Public: update preference from tracking worker */
-  .post('/contacts/preferences/public/:email', async (c) => {
-    const email = c.req.param('email')
-    const body = await c.req.json() as { org: string; preference: string; reason?: string; pause_days?: number }
-    if (!body.org || !email) return error(c, 'Missing parameters', 400)
-
-    const validPrefs = ['subscribed', 'campaign_only', 'digest_weekly', 'digest_monthly', 'paused', 'unsubscribed']
-    if (!validPrefs.includes(body.preference)) return error(c, 'Invalid preference', 400)
-
-    if (body.preference === 'paused') {
-      await preferenceCenterService.pause(body.org, email, body.pause_days || 30)
-    } else {
-      await preferenceCenterService.setPreference(body.org, email, body.preference as PreferenceType, body.reason)
-    }
-
-    return success(c, undefined, 'Preference updated')
-  })
   /** Get email preferences for a contact */
   .get('/contacts/preferences/:contactId', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
     const orgId = getOrgId(c)

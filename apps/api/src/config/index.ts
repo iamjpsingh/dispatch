@@ -68,7 +68,6 @@ export const AUTH = {
     '/api/whatsapp/webhook',
     // Platform mailer OAuth now uses unified /api/auth/google/callback & /api/auth/microsoft/callback
     '/api/admin/cloudflare/callback',
-    '/api/contacts/preferences/public/',
     '/api/webhooks/inbound/',
     '/api/forms/',
   ],

@@ -347,12 +347,12 @@ const sendRoutes = new Hono()
 // ============================================================================
 
   .get('/scheduled-jobs', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
-  const jobs = await schedulerService.getScheduledJobs()
+  const jobs = await schedulerService.getScheduledJobs(getOrgId(c))
   return success(c, jobs)
   })
   .delete('/scheduled-jobs/:id', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const jobId = c.req.param('id')
-  const cancelled = await schedulerService.cancelScheduledJob(jobId)
+  const cancelled = await schedulerService.cancelScheduledJob(jobId, getOrgId(c))
 
   if (cancelled) {
     auditFromContext(c, { action: 'job.cancelled', entityType: 'job', entityId: jobId })

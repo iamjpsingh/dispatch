@@ -41,12 +41,12 @@ class SchedulerService {
     return jobId
   }
 
-  async getScheduledJobs() {
-    return schedulerStore.getActive()
+  async getScheduledJobs(orgId: string) {
+    return schedulerStore.getActive(orgId)
   }
 
-  async cancelScheduledJob(jobId: string): Promise<boolean> {
-    const cancelled = await schedulerStore.cancel(jobId)
+  async cancelScheduledJob(jobId: string, orgId: string): Promise<boolean> {
+    const cancelled = await schedulerStore.cancel(jobId, orgId)
     if (cancelled) await removeScheduledRun(jobId)
     return cancelled
   }

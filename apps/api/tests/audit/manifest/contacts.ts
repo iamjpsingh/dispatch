@@ -9,7 +9,6 @@ export const contactsManifest = {
   'POST /contacts/bulk/delete': 'contacts.deleted',
   'POST /contacts/bulk/tag': 'contacts.tagged',
   'POST /contacts/bulk/move': 'contacts.moved',
-  'POST /contacts/preferences/public/:email': { exempt: 'machine-public-ingestion: public unauth preference update' },
   'PUT /contacts/preferences/:contactId': 'contact.preference_updated',
   'POST /contacts/:listId': 'contacts.created',
   'PUT /contacts/item/:id': 'contacts.updated',

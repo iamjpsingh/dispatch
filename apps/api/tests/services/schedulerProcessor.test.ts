@@ -78,8 +78,8 @@ describe('P4.D — processScheduledRun', () => {
   })
 
   it('does not enqueue a cancelled job', async () => {
-    await schedulerStore.create(row({ id: 's3' }))
-    await schedulerStore.cancel('s3')
+    await schedulerStore.create(row({ id: 's3', org_id: 'org-x' }))
+    await schedulerStore.cancel('s3', 'org-x')
     await processScheduledRun('s3')
     expect(enqueue).not.toHaveBeenCalled()
   })

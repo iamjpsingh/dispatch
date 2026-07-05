@@ -47,10 +47,10 @@ describe.skipIf(!RUN)('P4.D — schedulerService (BullMQ + PG)', () => {
     const delayed = await getSchedulerQueue().getDelayed()
     expect(delayed.map((j) => j.id)).toContain(id)
 
-    const active = await schedulerService.getScheduledJobs()
+    const active = await schedulerService.getScheduledJobs('org-x')
     expect(active.map((r) => r.id)).toContain(id)
 
-    expect(await schedulerService.cancelScheduledJob(id)).toBe(true)
+    expect(await schedulerService.cancelScheduledJob(id, 'org-x')).toBe(true)
     expect((await schedulerStore.get(id))!.status).toBe('cancelled')
     expect(await getSchedulerQueue().getJob(id)).toBeUndefined()
   })

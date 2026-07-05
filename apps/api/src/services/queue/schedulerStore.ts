@@ -22,8 +22,9 @@ export const schedulerStore = {
    * batch_config: those JSON blobs hold the EmailConfig (plaintext SMTP creds) and
    * the full recipient list, which must never reach the browser (R9). Use get() for
    * the internal processor path that needs the blobs.
+   * Org-scoped (R9): legacy rows with org_id IS NULL are invisible via this path.
    */
-  async getActive() {
+  async getActive(orgId: string) {
     return getDb()
       .select({
         id: scheduled_jobs.id,
@@ -40,7 +41,7 @@ export const schedulerStore = {
         created_at: scheduled_jobs.created_at,
       })
       .from(scheduled_jobs)
-      .where(inArray(scheduled_jobs.status, ['scheduled', 'running']))
+      .where(and(eq(scheduled_jobs.org_id, orgId), inArray(scheduled_jobs.status, ['scheduled', 'running'])))
       .orderBy(asc(scheduled_jobs.scheduled_time))
   },
 
@@ -62,12 +63,18 @@ export const schedulerStore = {
     await getDb().update(scheduled_jobs).set({ status: 'failed' }).where(eq(scheduled_jobs.id, id))
   },
 
-  /** Cancel only an as-yet-unrun job. Returns whether a row changed. */
-  async cancel(id: string): Promise<boolean> {
+  /** Cancel only an as-yet-unrun job owned by orgId (R9). Returns whether a row changed. */
+  async cancel(id: string, orgId: string): Promise<boolean> {
     const changed = await getDb()
       .update(scheduled_jobs)
       .set({ status: 'cancelled' })
-      .where(and(eq(scheduled_jobs.id, id), inArray(scheduled_jobs.status, ['scheduled', 'running'])))
+      .where(
+        and(
+          eq(scheduled_jobs.id, id),
+          eq(scheduled_jobs.org_id, orgId),
+          inArray(scheduled_jobs.status, ['scheduled', 'running'])
+        )
+      )
       .returning({ id: scheduled_jobs.id })
     return changed.length > 0
   },

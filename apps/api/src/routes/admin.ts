@@ -647,7 +647,7 @@ const adminRoutes = new Hono()
     const { name, description } = c.req.valid('json')
 
     try {
-      const team = teamService.create(orgId, name.trim(), user.id, description)
+      const team = await teamService.create(orgId, name.trim(), user.id, description)
       return success(c, team, 'Team created', 201)
     } catch (e: any) {
       return error(c, e.message || 'Failed to create team', 500)
@@ -670,13 +670,13 @@ const adminRoutes = new Hono()
     }
   })
   /** Delete team */
-  .delete('/admin/teams/:teamId', requirePermission(PERMISSIONS.TEAMS_MANAGE), (c) => {
+  .delete('/admin/teams/:teamId', requirePermission(PERMISSIONS.TEAMS_MANAGE), async (c) => {
     const user = requireAuth(c)
     const orgId = getOrgId(c)
     const teamId = c.req.param('teamId')
 
     try {
-      const deleted = teamService.delete(orgId, teamId, user.id)
+      const deleted = await teamService.delete(orgId, teamId, user.id)
       if (!deleted) return error(c, 'Team not found', 404)
       return success(c, undefined, 'Team deleted')
     } catch (e: any) {

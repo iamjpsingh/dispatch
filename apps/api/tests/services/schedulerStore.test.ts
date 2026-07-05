@@ -40,11 +40,11 @@ describe('P4.D — schedulerStore (Postgres)', () => {
   })
 
   it('getActive returns only scheduled/running, sorted by scheduled_time', async () => {
-    await schedulerStore.create(row({ id: 'a', scheduled_time: new Date('2026-07-02T00:00:00Z').toISOString() }))
-    await schedulerStore.create(row({ id: 'b', scheduled_time: new Date('2026-07-01T00:00:00Z').toISOString() }))
-    await schedulerStore.create(row({ id: 'c' }))
+    await schedulerStore.create(row({ id: 'a', org_id: 'org-x', scheduled_time: new Date('2026-07-02T00:00:00Z').toISOString() }))
+    await schedulerStore.create(row({ id: 'b', org_id: 'org-x', scheduled_time: new Date('2026-07-01T00:00:00Z').toISOString() }))
+    await schedulerStore.create(row({ id: 'c', org_id: 'org-x' }))
     await schedulerStore.markCompleted('c')
-    const active = await schedulerStore.getActive()
+    const active = await schedulerStore.getActive('org-x')
     expect(active.map((r) => r.id)).toEqual(['b', 'a']) // c excluded (completed), sorted asc
   })
 
@@ -59,12 +59,12 @@ describe('P4.D — schedulerStore (Postgres)', () => {
   })
 
   it('cancel transitions scheduled -> cancelled, but not a completed job', async () => {
-    await schedulerStore.create(row({ id: 's1' }))
-    expect(await schedulerStore.cancel('s1')).toBe(true)
+    await schedulerStore.create(row({ id: 's1', org_id: 'org-x' }))
+    expect(await schedulerStore.cancel('s1', 'org-x')).toBe(true)
     expect((await schedulerStore.get('s1'))!.status).toBe('cancelled')
-    await schedulerStore.create(row({ id: 's2' }))
+    await schedulerStore.create(row({ id: 's2', org_id: 'org-x' }))
     await schedulerStore.markCompleted('s2')
-    expect(await schedulerStore.cancel('s2')).toBe(false)
+    expect(await schedulerStore.cancel('s2', 'org-x')).toBe(false)
   })
 
   // P5.5 — org_id threaded for org-scoped logging of scheduled sends.

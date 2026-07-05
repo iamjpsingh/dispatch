@@ -15,7 +15,7 @@ import { logger } from '../utils/logger'
 // ============================================================================
 
 interface SchedulerServiceLike {
-  getScheduledJobs(): Promise<Array<{ status: string | null; [key: string]: unknown }>>
+  getScheduledJobs(orgId: string): Promise<Array<{ status: string | null; [key: string]: unknown }>>
 }
 
 // Lazy-loaded services
@@ -43,7 +43,7 @@ const dashboardRoutes = new Hono()
 
     try {
       const scheduler = getSchedulerService()
-      const scheduledJobs = (await scheduler?.getScheduledJobs()) ?? []
+      const scheduledJobs = (await scheduler?.getScheduledJobs(orgId)) ?? []
       const allLogs = (await logService.getLogs(orgId)) ?? []
 
       // Queue stats from persistent engine
@@ -97,10 +97,11 @@ const dashboardRoutes = new Hono()
    */
   .get('/dashboard/poll-status', async (c) => {
     const user = requireAuth(c)
+    const orgId = getOrgId(c)
 
     try {
       const scheduler = getSchedulerService()
-      const scheduledJobs = (await scheduler?.getScheduledJobs()) ?? []
+      const scheduledJobs = (await scheduler?.getScheduledJobs(orgId)) ?? []
 
       const queueStats = await queueEngine.getStats(user.id)
       const hasActiveJobs = queueStats.running > 0
@@ -162,10 +163,11 @@ const dashboardRoutes = new Hono()
    */
   .get('/dashboard/data', async (c) => {
     const user = requireAuth(c)
+    const orgId = getOrgId(c)
 
     try {
       const scheduler = getSchedulerService()
-      const scheduledJobs = ((await scheduler?.getScheduledJobs()) ?? [])
+      const scheduledJobs = ((await scheduler?.getScheduledJobs(orgId)) ?? [])
         .filter((j) => j.status === 'scheduled' || j.status === 'running')
         .slice(0, 5)
 
