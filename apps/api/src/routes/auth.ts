@@ -21,6 +21,7 @@ import { COOKIE, isHttps } from '../config'
 import { error, success, ErrorMessages } from '../utils/response'
 import { systemMailerService } from '../services/systemMailerService'
 import { logger } from '../utils/logger'
+import { auditFromContext } from '../services/audit/context'
 
 const authRoutes = new Hono()
   /**
@@ -177,6 +178,7 @@ const authRoutes = new Hono()
       }
 
       await authLocalService.switchOrg(token, orgId)
+      auditFromContext(c, { action: 'session.org_switched', entityType: 'org', entityId: orgId, metadata: { toOrgId: orgId } })
       return success(c, { orgId }, 'Organization switched')
     } catch (err) {
       logger.error('Switch org error:', err)
@@ -262,6 +264,7 @@ const authRoutes = new Hono()
         return error(c, 'Current password is incorrect', 400)
       }
 
+      auditFromContext(c, { action: 'auth.password_changed', entityType: 'user', entityId: session.user.id })
       return success(c, undefined, 'Password changed successfully')
     } catch (err) {
       logger.error('Change password error:', err)
@@ -287,6 +290,7 @@ const authRoutes = new Hono()
         return error(c, 'Failed to update profile. Email may already be in use.', 400)
       }
 
+      auditFromContext(c, { action: 'user.profile_updated', entityType: 'user', entityId: updated.id })
       return success(c, {
         user: {
           id: updated.id,
@@ -322,6 +326,7 @@ const authRoutes = new Hono()
 
     try {
       await authLocalService.setUsername(session.user.id, body.username)
+      auditFromContext(c, { action: 'user.username_updated', entityType: 'user', entityId: session.user.id })
       return success(c, undefined, 'Username updated')
     } catch (e: any) {
       return error(c, e.message, 400)

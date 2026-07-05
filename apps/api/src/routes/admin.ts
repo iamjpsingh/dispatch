@@ -25,6 +25,7 @@ import { users, organizations, org_members, sessions } from '../db/pg/schema'
 import { eq, and } from 'drizzle-orm'
 import { SERVER } from '../config'
 import { success, error, paginated } from '../utils/response'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -106,6 +107,7 @@ const adminRoutes = new Hono()
       .where(and(eq(users.id, userId), eq(users.is_platform_admin, 0)))
       .returning()
     if (updated.length === 0) return error(c, 'User not found', 404)
+    auditFromContext(c, { action: 'user.status_changed', entityType: 'user', entityId: userId, metadata: { status: body.status } })
     return success(c, undefined, `User ${body.status}`)
   })
   .delete('/admin/platform/users/:userId', requirePlatformAdmin(), async (c) => {
@@ -121,6 +123,7 @@ const adminRoutes = new Hono()
     await dbc.delete(org_members).where(eq(org_members.user_id, userId))
     await dbc.delete(sessions).where(eq(sessions.user_id, userId))
     await dbc.delete(users).where(eq(users.id, userId))
+    auditFromContext(c, { action: 'user.deleted', entityType: 'user', entityId: userId })
     return success(c, undefined, 'User deleted')
   })
   /** Suspend/activate/delete an org (platform admin only) */
@@ -136,6 +139,7 @@ const adminRoutes = new Hono()
       .where(eq(organizations.id, orgId))
       .returning()
     if (updated.length === 0) return error(c, 'Organization not found', 404)
+    auditFromContext(c, { action: 'org.status_changed', entityType: 'org', entityId: orgId })
     return success(c, undefined, `Organization ${body.status}`)
   })
   .delete('/admin/platform/orgs/:orgId', requirePlatformAdmin(), async (c) => {
@@ -144,6 +148,7 @@ const adminRoutes = new Hono()
     await dbc.delete(org_members).where(eq(org_members.org_id, orgId))
     const deleted = await dbc.delete(organizations).where(eq(organizations.id, orgId)).returning()
     if (deleted.length === 0) return error(c, 'Organization not found', 404)
+    auditFromContext(c, { action: 'org.deleted', entityType: 'org', entityId: orgId })
     return success(c, undefined, 'Organization deleted')
   })
   // ==========================================================================
@@ -163,6 +168,7 @@ const adminRoutes = new Hono()
         return error(c, 'fromName, fromEmail, and providerConfig are required', 400)
       }
       await systemMailerService.saveConfig(body, user.id)
+      auditFromContext(c, { action: 'smtp.updated', entityType: 'smtp', metadata: { secretChanged: true } })
 
       // Auto-register bounce webhooks with provider API (fire-and-forget)
       webhookRegistrationService.register(body.providerConfig).then(result => {
@@ -209,6 +215,7 @@ const adminRoutes = new Hono()
   .delete('/admin/platform/settings/mailer', requirePlatformAdmin(), async (c) => {
     const user = requireAuth(c)
     await systemMailerService.removeConfig(user.id)
+    auditFromContext(c, { action: 'smtp.deleted', entityType: 'smtp' })
     return success(c, undefined, 'System mailer configuration removed')
   })
   /** Get/save OAuth credentials (Google/Microsoft client ID+secret for the platform) */
@@ -238,6 +245,7 @@ const adminRoutes = new Hono()
         }
       }
       await systemSettingsService.setSecretJson(`oauth_${body.provider}`, { clientId: body.clientId, clientSecret: finalSecret }, user.id)
+      auditFromContext(c, { action: 'oauth.updated', entityType: 'setting', entityId: body.provider, metadata: { secretChanged: true } })
       return success(c, undefined, `${body.provider} OAuth credentials saved`)
     } catch (e: any) {
       return error(c, e.message || 'Failed', 500)
@@ -271,6 +279,7 @@ const adminRoutes = new Hono()
         return error(c, 'clientId and clientSecret required', 400)
       }
       await systemSettingsService.setSecretJson('cloudflare_oauth', body, user.id)
+      auditFromContext(c, { action: 'cloudflare.updated', entityType: 'setting', metadata: { secretChanged: true } })
       return success(c, undefined, 'Cloudflare OAuth credentials saved')
     } catch (e: any) {
       return error(c, e.message || 'Failed', 500)
@@ -376,6 +385,7 @@ const adminRoutes = new Hono()
         subdomain: body.subdomain,
       })
 
+      auditFromContext(c, { action: 'cloudflare.worker_deployed', entityType: 'setting', entityId: body.domain })
       return success(c, deployment, 'Tracking Worker deployed')
     } catch (e: any) {
       return error(c, e.message, 500)
@@ -387,6 +397,7 @@ const adminRoutes = new Hono()
       const domain = c.req.param('domain')
       const orgId = c.req.query('orgId') || 'platform'
       await cloudflareService.undeployTrackingWorker(orgId, domain)
+      auditFromContext(c, { action: 'cloudflare.worker_undeployed', entityType: 'setting', entityId: domain })
       return success(c, undefined, 'Tracking Worker removed')
     } catch (e: any) {
       return error(c, e.message, 500)
@@ -428,6 +439,7 @@ const adminRoutes = new Hono()
     if (!body.slug) return error(c, 'slug is required', 400)
     try {
       await orgService.updateSlug(orgId, body.slug)
+      auditFromContext(c, { action: 'org.slug_changed', entityType: 'org', entityId: orgId, metadata: { slug: body.slug } })
       return success(c, undefined, 'Organization slug updated')
     } catch (e: any) {
       return error(c, e.message, 400)
@@ -443,6 +455,7 @@ const adminRoutes = new Hono()
   .put('/admin/org/sender-identity', requirePermission(PERMISSIONS.ORG_MANAGE), zValidator('json', SenderIdentitySchema), async (c) => {
     const orgId = getOrgId(c)
     await orgService.setSenderIdentity(orgId, c.req.valid('json'))
+    auditFromContext(c, { action: 'org.sender_identity_updated', entityType: 'org', entityId: orgId })
     return success(c, undefined, 'Sender identity updated')
   })
   // ==========================================================================
@@ -460,6 +473,7 @@ const adminRoutes = new Hono()
     try {
       const domain = await sendingDomainService.addDomain(orgId, body.domain)
       const dnsRecords = sendingDomainService.getDnsRecords(domain)
+      auditFromContext(c, { action: 'domain.created', entityType: 'domain', entityId: domain.id })
       return success(c, { domain, dnsRecords }, 'Domain added — configure DNS records below', 201)
     } catch (e: any) {
       return error(c, e.message, 400)
@@ -475,12 +489,14 @@ const adminRoutes = new Hono()
     const orgId = getOrgId(c)
     const verified = await sendingDomainService.verifyDomain(orgId, c.req.param('id'))
     if (!verified) return error(c, 'Domain not found', 404)
+    auditFromContext(c, { action: 'domain.verified', entityType: 'domain', entityId: c.req.param('id') })
     return success(c, undefined, 'Domain verified')
   })
   .delete('/admin/org/domains/:id', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
     const orgId = getOrgId(c)
     const deleted = await sendingDomainService.deleteDomain(orgId, c.req.param('id'))
     if (!deleted) return error(c, 'Domain not found', 404)
+    auditFromContext(c, { action: 'domain.deleted', entityType: 'domain', entityId: c.req.param('id') })
     return success(c, undefined, 'Domain deleted')
   })
   // Sending emails under a domain
@@ -502,6 +518,7 @@ const adminRoutes = new Hono()
     if (!body.domain_id || !body.email) return error(c, 'domain_id and email required', 400)
     try {
       const email = await sendingDomainService.addEmail(orgId, body.domain_id, body.email, body.display_name, body.assigned_to)
+      auditFromContext(c, { action: 'sending_email.created', entityType: 'sending_email', entityId: email.id })
       return success(c, email, 'Sending email created', 201)
     } catch (e: any) {
       return error(c, e.message, 400)
@@ -512,12 +529,14 @@ const adminRoutes = new Hono()
     const body = await c.req.json() as { display_name?: string; assigned_to?: string | null; is_default?: boolean }
     const updated = await sendingDomainService.updateEmail(orgId, c.req.param('id'), body)
     if (!updated) return error(c, 'Email not found', 404)
+    auditFromContext(c, { action: 'sending_email.updated', entityType: 'sending_email', entityId: c.req.param('id') })
     return success(c, undefined, 'Sending email updated')
   })
   .delete('/admin/org/sending-emails/:id', requirePermission(PERMISSIONS.ORG_MANAGE), async (c) => {
     const orgId = getOrgId(c)
     const deleted = await sendingDomainService.deleteEmail(orgId, c.req.param('id'))
     if (!deleted) return error(c, 'Email not found', 404)
+    auditFromContext(c, { action: 'sending_email.deleted', entityType: 'sending_email', entityId: c.req.param('id') })
     return success(c, undefined, 'Sending email deleted')
   })
   // ==========================================================================
@@ -566,6 +585,7 @@ const adminRoutes = new Hono()
 
     try {
       const member = await orgService.addMember(orgId, target.id, role || 'member', user.id)
+      auditFromContext(c, { action: 'member.added', entityType: 'member', entityId: member.id })
       return success(c, member, 'Member added', 201)
     } catch (e: any) {
       return error(c, e.message || 'Failed to add member', 500)
@@ -585,6 +605,7 @@ const adminRoutes = new Hono()
     try {
       const updated = await orgService.updateMemberRole(orgId, targetId, role, user.id)
       if (!updated) return error(c, 'Member not found or no change', 404)
+      auditFromContext(c, { action: 'member.role_changed', entityType: 'member', entityId: targetId, metadata: { role } })
       return success(c, undefined, 'Member role updated')
     } catch (e: any) {
       return error(c, e.message || 'Failed to update member role', 500)
@@ -607,6 +628,7 @@ const adminRoutes = new Hono()
     try {
       const removed = await orgService.removeMember(orgId, targetId, user.id)
       if (!removed) return error(c, 'Member not found or is org owner', 404)
+      auditFromContext(c, { action: 'member.removed', entityType: 'member', entityId: targetId })
       return success(c, undefined, 'Member removed')
     } catch (e: any) {
       return error(c, e.message || 'Failed to remove member', 500)
@@ -742,6 +764,7 @@ const adminRoutes = new Hono()
 
     try {
       await rbacService.grantPermission(orgId, targetId, permission, user.id)
+      auditFromContext(c, { action: 'permission.granted', entityType: 'member', entityId: targetId, metadata: { permission } })
       return success(c, undefined, 'Permission granted')
     } catch (e: any) {
       return error(c, e.message || 'Failed to grant permission', 500)
@@ -760,6 +783,7 @@ const adminRoutes = new Hono()
 
     try {
       await rbacService.revokePermission(orgId, targetId, permission, user.id)
+      auditFromContext(c, { action: 'permission.revoked', entityType: 'member', entityId: targetId, metadata: { permission } })
       return success(c, undefined, 'Permission revoked')
     } catch (e: any) {
       return error(c, e.message || 'Failed to revoke permission', 500)
@@ -778,6 +802,7 @@ const adminRoutes = new Hono()
 
     try {
       await rbacService.removePermissionOverride(orgId, targetId, permission)
+      auditFromContext(c, { action: 'permission.override_removed', entityType: 'member', entityId: targetId })
       return success(c, undefined, 'Permission override removed')
     } catch (e: any) {
       return error(c, e.message || 'Failed to remove permission override', 500)
@@ -854,6 +879,7 @@ const adminRoutes = new Hono()
 
     const cancelled = await invitationService.cancel(id, user.id)
     if (!cancelled) return error(c, 'Invitation not found or already processed', 404)
+    auditFromContext(c, { action: 'invitation.cancelled', entityType: 'member', entityId: id })
     return success(c, undefined, 'Invitation cancelled')
   })
   /** Resend an invitation */
@@ -863,6 +889,7 @@ const adminRoutes = new Hono()
 
     const invitation = await invitationService.resend(id, user.id)
     if (!invitation) return error(c, 'Invitation not found or already processed', 404)
+    auditFromContext(c, { action: 'invitation.resent', entityType: 'member', entityId: id })
     return success(c, invitation, 'Invitation resent')
   })
   // ==========================================================================
