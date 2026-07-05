@@ -77,11 +77,20 @@ vi.mock('../../../src/services/sendHelpers', () => ({
   sendBulkOAuthEmails: vi.fn(),
 }))
 
+vi.mock('../../../src/services/schedulerService', () => ({
+  schedulerService: {
+    scheduleJob: vi.fn(),
+    getScheduledJobs: vi.fn(),
+    cancelScheduledJob: vi.fn(),
+  },
+}))
+
 import { auditService } from '../../../src/services/auditService'
 import { whatsappService } from '../../../src/services/whatsappService'
 import { queueEngine } from '../../../src/services/queueEngine'
 import { pluginManager } from '../../../src/services/pluginManager'
 import * as sendHelpers from '../../../src/services/sendHelpers'
+import { schedulerService } from '../../../src/services/schedulerService'
 import whatsappRoutes from '../../../src/routes/whatsapp'
 import queueRoutes from '../../../src/routes/queue'
 import pluginsRoutes from '../../../src/routes/plugins'
@@ -185,6 +194,84 @@ describe('infra (whatsapp/queue/plugins/send) audit wiring', () => {
     expect(auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'send.enqueued', entityType: 'send', entityId: 'job-999', actorId: 'u1', orgId: 'org1' })
     )
+    expect(auditService.logActivity).not.toHaveBeenCalled()
+  })
+
+  it('POST /send (scheduled branch) fires send.enqueued with mode scheduled (audit-only)', async () => {
+    vi.mocked(sendHelpers.getUserConfig).mockResolvedValue({
+      id: 'cfg-1', name: 'My SMTP', provider_type: 'smtp', host: 'smtp.test.com', from_email: 'from@test.com',
+    } as any)
+    vi.mocked(sendHelpers.validateSendRequest).mockReturnValue(null)
+    vi.mocked(sendHelpers.testConnection).mockResolvedValue(null)
+    vi.mocked(sendHelpers.processExcelFile).mockResolvedValue({ contacts: [{ email: 'a@test.com' }] })
+    vi.mocked(sendHelpers.checkProviderLimits).mockReturnValue(null)
+    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>', html: '<p>Hi</p>' } as any)
+    vi.mocked(sendHelpers.buildEmailConfig).mockReturnValue({
+      host: 'smtp.test.com', port: 587, secure: false, auth: { user: 'u', pass: 'p' },
+    } as any)
+    vi.mocked(schedulerService.scheduleJob).mockResolvedValue('sched-777')
+
+    const formData = new FormData()
+    formData.set('configId', 'cfg-1')
+    formData.set('subject', 'Hello')
+    formData.set('htmlContent', '<p>Hi</p>')
+    formData.set('excelFile', new File(['x'], 'contacts.xlsx'))
+    formData.set('scheduleEmail', 'on')
+    // Explicit far-future literal — avoids new Date()/Date.now() in the test.
+    formData.set('scheduledTime', '2099-01-01T00:00:00.000Z')
+
+    const res = await appFor(sendRoutes as any).fetch(
+      new Request('http://localhost/send', { method: 'POST', body: formData })
+    )
+
+    expect(res.status).toBe(200)
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'send.enqueued',
+        entityType: 'send',
+        entityId: 'sched-777',
+        actorId: 'u1',
+        orgId: 'org1',
+        metadata: expect.objectContaining({ mode: 'scheduled' }),
+      })
+    )
+    expect(auditService.logActivity).not.toHaveBeenCalled()
+  })
+
+  it('POST /send (oauth branch) fires send.enqueued with mode oauth and no entityId (audit-only)', async () => {
+    vi.mocked(sendHelpers.getUserConfig).mockResolvedValue({
+      id: 'cfg-oauth', name: 'My Gmail', provider_type: 'google', oauth_email: 'me@gmail.com', from_email: 'me@gmail.com',
+    } as any)
+    vi.mocked(sendHelpers.validateSendRequest).mockReturnValue(null)
+    vi.mocked(sendHelpers.testConnection).mockResolvedValue(null)
+    vi.mocked(sendHelpers.processExcelFile).mockResolvedValue({ contacts: [{ email: 'a@test.com' }] })
+    vi.mocked(sendHelpers.checkProviderLimits).mockReturnValue(null)
+    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>', html: '<p>Hi</p>' } as any)
+    vi.mocked(sendHelpers.sendBulkOAuthEmails).mockResolvedValue({ sent: 1, failed: 0, errors: [] } as any)
+
+    const formData = new FormData()
+    formData.set('configId', 'cfg-oauth')
+    formData.set('subject', 'Hello')
+    formData.set('htmlContent', '<p>Hi</p>')
+    formData.set('excelFile', new File(['x'], 'contacts.xlsx'))
+
+    const res = await appFor(sendRoutes as any).fetch(
+      new Request('http://localhost/send', { method: 'POST', body: formData })
+    )
+
+    expect(res.status).toBe(200)
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'send.enqueued',
+        entityType: 'send',
+        actorId: 'u1',
+        orgId: 'org1',
+        metadata: expect.objectContaining({ mode: 'oauth' }),
+      })
+    )
+    // OAuth send has no persistent job id — entityId must be absent.
+    const enqueueCall = vi.mocked(auditService.log).mock.calls.find(([e]) => e.action === 'send.enqueued')
+    expect(enqueueCall?.[0].entityId).toBeUndefined()
     expect(auditService.logActivity).not.toHaveBeenCalled()
   })
 })

@@ -474,6 +474,8 @@ async function handleScheduledSend(c: Context, params: ScheduledSendParams) {
 
   logger.info(`Email campaign scheduled: ${jobId} for user ${user.email}`)
 
+  auditFromContext(c, { action: 'send.enqueued', entityType: 'send', entityId: jobId, metadata: { count: contacts.length, mode: 'scheduled' } })
+
   return success(
     c,
     {
@@ -503,6 +505,8 @@ async function handleOAuthSend(c: Context, params: OAuthSendParams) {
     .catch((err) => {
       logger.error('OAuth bulk email sending failed:', err)
     })
+
+  auditFromContext(c, { action: 'send.enqueued', entityType: 'send', metadata: { count: contacts.length, mode: 'oauth' } })
 
   return success(
     c,
