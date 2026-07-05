@@ -10,6 +10,7 @@ import { success, error } from '../utils/response'
 import { systemSettingsService } from '../services/systemSettingsService'
 import { logger } from '../utils/logger'
 import { handleOAuthCallback, getValidOAuthToken, type OAuthProvider } from '../utils/oauth'
+import { auditFromContext } from '../services/audit/context'
 
 const oauthRoutes = new Hono()
   /**
@@ -112,6 +113,7 @@ const oauthRoutes = new Hono()
         return error(c, 'Failed to disconnect', 500)
       }
 
+      auditFromContext(c, { action: 'provider.disconnected', entityType: 'smtp', entityId: configId })
       logger.info(`Disconnected ${config.provider_type} account: ${config.oauth_email}`)
       return success(c, undefined, 'Account disconnected')
     } catch (err) {

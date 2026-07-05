@@ -8,6 +8,7 @@ import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { apiKeyService } from '../services/apiKeyService'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -49,6 +50,7 @@ const apiKeysRoutes = new Hono()
 
     const { id, key, keyPrefix } = await apiKeyService.create(orgId, user.id, body.name.trim(), scopes, body.expires_at)
 
+    auditFromContext(c, { action: 'apikey.created', entityType: 'apikey', entityId: id })
     return success(
       c,
       { id, name: body.name.trim(), key, key_prefix: keyPrefix, scopes, message: 'Save this key - it cannot be shown again' },
@@ -61,6 +63,7 @@ const apiKeysRoutes = new Hono()
     const orgId = getOrgId(c)
     const removed = await apiKeyService.revoke(orgId, c.req.param('id'))
     if (!removed) return error(c, 'API key not found', 404)
+    auditFromContext(c, { action: 'apikey.revoked', entityType: 'apikey', entityId: c.req.param('id') })
     return success(c, undefined, 'API key revoked')
   })
   /** POST /api-keys/:id/toggle - Enable/disable a key */
@@ -69,6 +72,7 @@ const apiKeysRoutes = new Hono()
     const { enabled } = c.req.valid('json')
     const ok = await apiKeyService.toggle(orgId, c.req.param('id'), enabled)
     if (!ok) return error(c, 'API key not found', 404)
+    auditFromContext(c, { action: 'apikey.toggled', entityType: 'apikey', entityId: c.req.param('id') })
     return success(c, undefined, enabled ? 'Key enabled' : 'Key disabled')
   })
   /** PUT /api-keys/:id/scopes - Update key scopes */
@@ -77,6 +81,7 @@ const apiKeysRoutes = new Hono()
     const { scopes } = c.req.valid('json')
     const ok = await apiKeyService.updateScopes(orgId, c.req.param('id'), scopes)
     if (!ok) return error(c, 'API key not found', 404)
+    auditFromContext(c, { action: 'apikey.scopes_updated', entityType: 'apikey', entityId: c.req.param('id'), metadata: { scopes } })
     return success(c, undefined, 'Scopes updated')
   })
 

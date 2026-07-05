@@ -17,6 +17,7 @@ import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
 import { createTransport, configFromRecord } from '../services/transports'
+import { auditFromContext } from '../services/audit/context'
 
 const configRoutes = new Hono()
   // ==========================================================================
@@ -94,6 +95,7 @@ const configRoutes = new Hono()
         return error(c, 'Failed to create configuration', 500)
       }
 
+      auditFromContext(c, { action: 'smtp.created', entityType: 'smtp', entityId: configId, metadata: { secretChanged: true } })
       return success(c, { configId }, '✅ Configuration saved')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -124,6 +126,9 @@ const configRoutes = new Hono()
         is_default: !!body.is_default || !!body.isDefault,
       })
 
+      if (configId) {
+        auditFromContext(c, { action: 'smtp.created', entityType: 'smtp', entityId: configId, metadata: { secretChanged: true } })
+      }
       return success(c, { configId }, configId ? '✅ Created' : 'Failed')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -154,6 +159,7 @@ const configRoutes = new Hono()
         return error(c, 'Configuration not found', 404)
       }
 
+      auditFromContext(c, { action: 'smtp.updated', entityType: 'smtp', entityId: configId, metadata: body.pass ? { secretChanged: true } : undefined })
       return success(c, undefined, '✅ Configuration updated')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -174,6 +180,9 @@ const configRoutes = new Hono()
       const updates = buildUpdates(body)
       const updated = await d1UserDatabase.updateSMTPConfig(configId, user.id, updates)
 
+      if (updated) {
+        auditFromContext(c, { action: 'smtp.updated', entityType: 'smtp', entityId: configId, metadata: body.pass ? { secretChanged: true } : undefined })
+      }
       return success(c, undefined, updated ? '✅ Updated' : 'Not found')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -198,6 +207,7 @@ const configRoutes = new Hono()
         return error(c, 'Configuration not found', 404)
       }
 
+      auditFromContext(c, { action: 'smtp.deleted', entityType: 'smtp', entityId: configId })
       return success(c, undefined, '✅ Configuration deleted')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -215,6 +225,9 @@ const configRoutes = new Hono()
       const configId = c.req.param('configId')
 
       const deleted = await d1UserDatabase.deleteSMTPConfig(configId, user.id)
+      if (deleted) {
+        auditFromContext(c, { action: 'smtp.deleted', entityType: 'smtp', entityId: configId })
+      }
       return success(c, undefined, deleted ? '✅ Deleted' : 'Not found')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -239,6 +252,7 @@ const configRoutes = new Hono()
         return error(c, 'Configuration not found', 404)
       }
 
+      auditFromContext(c, { action: 'smtp.updated', entityType: 'smtp', entityId: configId, metadata: { isDefault: true } })
       return success(c, undefined, '✅ Default configuration updated')
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
@@ -349,6 +363,7 @@ const configRoutes = new Hono()
         return error(c, 'Failed to create configuration', 500)
       }
 
+      auditFromContext(c, { action: 'smtp.created', entityType: 'smtp', entityId: configId, metadata: { secretChanged: true } })
       return success(c, { configId }, `${providerType.toUpperCase()} configuration saved`)
     } catch (err) {
       if ((err as any)?.name === 'AppError') throw err // let global onError map validation 400s
