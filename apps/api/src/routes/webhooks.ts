@@ -16,6 +16,7 @@ import {
   getMailgunSigningKey,
   getSendGridVerificationKey,
   getSparkPostAuthToken,
+  isAllowedSnsUrl,
 } from '../middleware/webhookSignature'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
@@ -147,23 +148,29 @@ const webhooksRoutes = new Hono()
   try {
     const payload = await c.req.json()
 
-    // Auto-confirm SNS subscription
+    // Auto-confirm SNS subscription — verify signature AND allowlist the
+    // SubscribeURL host BEFORE fetching it (SSRF guard).
     if (payload.Type === 'SubscriptionConfirmation') {
-      if (payload.SubscribeURL) {
-        logger.info('[Webhook] SNS: Auto-confirming subscription...')
-        await fetch(payload.SubscribeURL)
-        logger.info('[Webhook] SNS: Subscription confirmed')
+      const valid = await verifySNSSignature(payload)
+      if (!valid || !payload.SubscribeURL || !isAllowedSnsUrl(payload.SubscribeURL)) {
+        logger.warn('[Webhook] SNS: rejected subscription confirmation (bad signature or URL)')
+        return c.json({ ok: false, error: 'Invalid subscription confirmation' }, 401)
       }
+      logger.info('[Webhook] SNS: Auto-confirming subscription...')
+      await fetch(payload.SubscribeURL)
+      logger.info('[Webhook] SNS: Subscription confirmed')
       return c.json({ ok: true, message: 'Subscription confirmed' })
     }
 
-    // Verify SNS signature
-    if (payload.SigningCertURL) {
-      const valid = await verifySNSSignature(payload)
-      if (!valid) {
-        logger.warn('[Webhook] SES: Invalid SNS signature')
-        return c.json({ ok: false, error: 'Invalid signature' }, 401)
-      }
+    // Verify SNS signature — required, fail closed
+    if (!payload.SigningCertURL) {
+      logger.warn('[Webhook] SES: missing SigningCertURL')
+      return c.json({ ok: false, error: 'Invalid signature' }, 401)
+    }
+    const valid = await verifySNSSignature(payload)
+    if (!valid) {
+      logger.warn('[Webhook] SES: Invalid SNS signature')
+      return c.json({ ok: false, error: 'Invalid signature' }, 401)
     }
 
     const event = parseSES(payload)
@@ -185,18 +192,17 @@ const webhooksRoutes = new Hono()
   try {
     const payload = await c.req.json()
 
-    // Verify Mailgun signature if signing key is available
+    // Verify Mailgun signature — required, fail closed
     const signingKey = await getMailgunSigningKey()
-    if (signingKey) {
-      const eventData = payload['event-data'] || payload
-      const sig = eventData.signature || payload.signature
-      if (sig && sig.timestamp && sig.token && sig.signature) {
-        const valid = verifyMailgunSignature(sig.timestamp, sig.token, sig.signature, signingKey)
-        if (!valid) {
-          logger.warn('[Webhook] Mailgun: Invalid signature')
-          return c.json({ ok: false, error: 'Invalid signature' }, 401)
-        }
-      }
+    if (!signingKey) {
+      return c.json({ ok: false, error: 'Webhook verification not configured' }, 401)
+    }
+    const eventData = payload['event-data'] || payload
+    const sig = eventData.signature || payload.signature
+    if (!sig?.timestamp || !sig?.token || !sig?.signature ||
+        !verifyMailgunSignature(sig.timestamp, sig.token, sig.signature, signingKey)) {
+      logger.warn('[Webhook] Mailgun: invalid signature')
+      return c.json({ ok: false, error: 'Invalid signature' }, 401)
     }
 
     const event = parseMailgun(payload)
@@ -218,18 +224,17 @@ const webhooksRoutes = new Hono()
   try {
     const rawBody = await c.req.text()
 
-    // Verify SendGrid signature if verification key is available
+    // Verify SendGrid signature — required, fail closed
     const verificationKey = await getSendGridVerificationKey()
-    if (verificationKey) {
-      const signature = c.req.header('x-twilio-email-event-webhook-signature')
-      const timestamp = c.req.header('x-twilio-email-event-webhook-timestamp')
-      if (signature && timestamp) {
-        const valid = verifySendGridSignature(verificationKey, rawBody, signature, timestamp)
-        if (!valid) {
-          logger.warn('[Webhook] SendGrid: Invalid signature')
-          return c.json({ ok: false, error: 'Invalid signature' }, 401)
-        }
-      }
+    if (!verificationKey) {
+      return c.json({ ok: false, error: 'Webhook verification not configured' }, 401)
+    }
+    const signature = c.req.header('x-twilio-email-event-webhook-signature')
+    const timestamp = c.req.header('x-twilio-email-event-webhook-timestamp')
+    if (!signature || !timestamp ||
+        !verifySendGridSignature(verificationKey, rawBody, signature, timestamp)) {
+      logger.warn('[Webhook] SendGrid: invalid signature')
+      return c.json({ ok: false, error: 'Invalid signature' }, 401)
     }
 
     const payload = JSON.parse(rawBody)
@@ -251,8 +256,8 @@ const webhooksRoutes = new Hono()
   try {
     const payload = await c.req.json()
 
-    // Postmark doesn't use signature verification — relies on webhook URL secrecy
-    // and optional basic auth (configured at Postmark's end)
+    // SECURITY: relies on URL secrecy — Postmark has no signature mechanism.
+    // Optional basic auth can be configured at Postmark's end (documented Medium, P8 followup).
 
     const event = parsePostmark(payload)
     if (!event) {
@@ -272,17 +277,15 @@ const webhooksRoutes = new Hono()
   try {
     const rawBody = await c.req.text()
 
-    // Verify SparkPost signature if auth token is available
+    // Verify SparkPost signature — required, fail closed
     const authToken = await getSparkPostAuthToken()
-    if (authToken) {
-      const signature = c.req.header('x-messagesystems-webhook-token')
-      if (signature) {
-        const valid = verifySparkPostSignature(rawBody, signature, authToken)
-        if (!valid) {
-          logger.warn('[Webhook] SparkPost: Invalid signature')
-          return c.json({ ok: false, error: 'Invalid signature' }, 401)
-        }
-      }
+    if (!authToken) {
+      return c.json({ ok: false, error: 'Webhook verification not configured' }, 401)
+    }
+    const signature = c.req.header('x-messagesystems-webhook-token')
+    if (!signature || !verifySparkPostSignature(rawBody, signature, authToken)) {
+      logger.warn('[Webhook] SparkPost: invalid signature')
+      return c.json({ ok: false, error: 'Invalid signature' }, 401)
     }
 
     const payload = JSON.parse(rawBody)
@@ -308,21 +311,12 @@ const webhooksRoutes = new Hono()
     // SendGrid Inbound Parse sends multipart/form-data
     const body = await c.req.parseBody()
     const from = String(body.from || '')
-    const to = String(body.to || '')
     const subject = String(body.subject || '')
-    const text = String(body.text || '')
     const inReplyTo = String(body.headers || '').match(/In-Reply-To:\s*<([^>]+)>/i)?.[1] || ''
 
     logger.info(`[Reply] Inbound from ${from} — subject: ${subject}${inReplyTo ? ` — reply to: ${inReplyTo}` : ''}`)
 
-    eventBus.emit('email_reply_received', {
-      provider: 'sendgrid',
-      from,
-      to,
-      subject,
-      textBody: text.substring(0, 1000),
-      inReplyTo,
-    })
+    // NOTE: inbound-reply event routing is unbuilt (no listener); logging only. P9 candidate.
 
     return c.json({ ok: true })
   } catch (err) {
@@ -334,22 +328,11 @@ const webhooksRoutes = new Hono()
   try {
     const body = await c.req.parseBody()
     const from = String(body.from || body.sender || '')
-    const to = String(body.recipient || '')
     const subject = String(body.subject || '')
-    const text = String(body['body-plain'] || '')
-    const inReplyTo = String(body['In-Reply-To'] || body['message-headers'] || '')
-      .match(/<([^>]+)>/)?.[1] || ''
 
     logger.info(`[Reply] Inbound from ${from} — subject: ${subject}`)
 
-    eventBus.emit('email_reply_received', {
-      provider: 'mailgun',
-      from,
-      to,
-      subject,
-      textBody: text.substring(0, 1000),
-      inReplyTo,
-    })
+    // NOTE: inbound-reply event routing is unbuilt (no listener); logging only. P9 candidate.
 
     return c.json({ ok: true })
   } catch (err) {
@@ -361,21 +344,11 @@ const webhooksRoutes = new Hono()
   try {
     const payload = await c.req.json()
     const from = payload.FromFull?.Email || payload.From || ''
-    const to = payload.ToFull?.[0]?.Email || payload.To || ''
     const subject = payload.Subject || ''
-    const text = payload.TextBody || ''
-    const inReplyTo = (payload.Headers || []).find((h: any) => h.Name === 'In-Reply-To')?.Value?.replace(/[<>]/g, '') || ''
 
     logger.info(`[Reply] Inbound from ${from} — subject: ${subject}`)
 
-    eventBus.emit('email_reply_received', {
-      provider: 'postmark',
-      from,
-      to,
-      subject,
-      textBody: text.substring(0, 1000),
-      inReplyTo,
-    })
+    // NOTE: inbound-reply event routing is unbuilt (no listener); logging only. P9 candidate.
 
     return c.json({ ok: true })
   } catch (err) {

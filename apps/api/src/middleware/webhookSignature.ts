@@ -111,6 +111,20 @@ export async function verifySNSSignature(payload: any): Promise<boolean> {
 }
 
 // ============================================================================
+// SNS SubscribeURL allowlist — reused by webhooks.ts before auto-confirming a
+// subscription, to prevent SSRF via an attacker-controlled SubscribeURL.
+// ============================================================================
+
+export function isAllowedSnsUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl)
+    return u.protocol === 'https:' && /^sns\.[a-z0-9-]+\.amazonaws\.com$/.test(u.hostname)
+  } catch {
+    return false
+  }
+}
+
+// ============================================================================
 // Helpers for webhook routes
 // ============================================================================
 
