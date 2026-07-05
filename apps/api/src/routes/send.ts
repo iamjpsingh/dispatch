@@ -170,9 +170,11 @@ const sendRoutes = new Hono()
       return error(c, finalHtmlContent.error, 400)
     }
 
-    // Spam content pre-scan
-    const spamScan = scanForSpam(subject, typeof finalHtmlContent === 'string' ? finalHtmlContent : finalHtmlContent.html)
-    // Return warnings to frontend but don't block sending (user decides)
+    // Spam content pre-scan (warnings are advisory — never block the send)
+    const spamScan = scanForSpam(subject, finalHtmlContent.content)
+    if (!spamScan.pass) {
+      logger.warn(`[send] spam pre-scan flagged content (score ${spamScan.score}): ${spamScan.warnings.join('; ')}`)
+    }
 
     // Build email config
     const emailConfig = isOAuthConfig ? null : buildEmailConfig(userConfig)

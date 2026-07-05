@@ -80,11 +80,9 @@ describe('infra send (POST /send branches) audit wiring', () => {
     vi.mocked(sendHelpers.testConnection).mockResolvedValue(null)
     vi.mocked(sendHelpers.processExcelFile).mockResolvedValue({ contacts: [{ email: 'a@test.com' }] })
     vi.mocked(sendHelpers.checkProviderLimits).mockReturnValue(null)
-    // NOTE: send.ts's spam pre-scan reads `finalHtmlContent.html`, but processHtmlTemplate's
-    // real return shape is `{ content }` (pre-existing mismatch in send.ts, out of scope for
-    // this audit-wiring task — see task-8 report). Mock supplies both keys so the existing
-    // (unrelated) handler code path doesn't crash before reaching the enqueue call under test.
-    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>', html: '<p>Hi</p>' } as any)
+    // REAL shape: processHtmlTemplate returns { content } only — no `html` key.
+    // (Passing the real shape asserts the send pre-scan doesn't crash on the missing `html`.)
+    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>' } as any)
     vi.mocked(sendHelpers.buildEmailConfig).mockReturnValue({
       host: 'smtp.test.com', port: 587, secure: false, auth: { user: 'u', pass: 'p' },
     } as any)
@@ -115,7 +113,7 @@ describe('infra send (POST /send branches) audit wiring', () => {
     vi.mocked(sendHelpers.testConnection).mockResolvedValue(null)
     vi.mocked(sendHelpers.processExcelFile).mockResolvedValue({ contacts: [{ email: 'a@test.com' }] })
     vi.mocked(sendHelpers.checkProviderLimits).mockReturnValue(null)
-    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>', html: '<p>Hi</p>' } as any)
+    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>' } as any)
     vi.mocked(sendHelpers.buildEmailConfig).mockReturnValue({
       host: 'smtp.test.com', port: 587, secure: false, auth: { user: 'u', pass: 'p' },
     } as any)
@@ -156,7 +154,7 @@ describe('infra send (POST /send branches) audit wiring', () => {
     vi.mocked(sendHelpers.testConnection).mockResolvedValue(null)
     vi.mocked(sendHelpers.processExcelFile).mockResolvedValue({ contacts: [{ email: 'a@test.com' }] })
     vi.mocked(sendHelpers.checkProviderLimits).mockReturnValue(null)
-    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>', html: '<p>Hi</p>' } as any)
+    vi.mocked(sendHelpers.processHtmlTemplate).mockResolvedValue({ content: '<p>Hi</p>' } as any)
     vi.mocked(sendHelpers.sendBulkOAuthEmails).mockResolvedValue({ sent: 1, failed: 0, errors: [] } as any)
 
     const formData = new FormData()
