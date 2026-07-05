@@ -29,6 +29,7 @@ import {
 import { logger } from '../utils/logger'
 import { orgService } from '../services/orgService'
 import { assertSenderIdentity } from '../utils/canspam'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 const campaignsRoutes = new Hono()
   // ==========================================================================
@@ -68,6 +69,8 @@ const campaignsRoutes = new Hono()
     const body = c.req.valid('json')
 
     const campaign = await campaignService.create(orgId, user.id, body)
+    auditFromContext(c, { action: 'campaign.created', entityType: 'campaign', entityId: campaign.id })
+    activityFromContext(c, { action: 'campaign.created', entityType: 'campaign', entityId: campaign.id, description: `Created campaign ${campaign.id}` })
     return success(c, campaign, 'Campaign created', 201)
   })
   .get('/campaigns/dashboard', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
@@ -97,6 +100,8 @@ const campaignsRoutes = new Hono()
     const updated = await campaignService.update(orgId, campaignId, body)
     if (!updated) return error(c, 'Campaign not found or cannot be edited', 404)
 
+    auditFromContext(c, { action: 'campaign.updated', entityType: 'campaign', entityId: campaignId })
+    activityFromContext(c, { action: 'campaign.updated', entityType: 'campaign', entityId: campaignId, description: `Updated campaign ${campaignId}` })
     return success(c, undefined, 'Campaign updated')
   })
   .delete('/campaigns/:id', requirePermission(PERMISSIONS.CAMPAIGNS_DELETE), async (c) => {
@@ -106,6 +111,8 @@ const campaignsRoutes = new Hono()
     const deleted = await campaignService.delete(orgId, campaignId)
     if (!deleted) return error(c, 'Campaign not found or cannot be deleted', 404)
 
+    auditFromContext(c, { action: 'campaign.deleted', entityType: 'campaign', entityId: campaignId })
+    activityFromContext(c, { action: 'campaign.deleted', entityType: 'campaign', entityId: campaignId, description: `Deleted campaign ${campaignId}` })
     return success(c, undefined, 'Campaign deleted')
   })
   // ==========================================================================
@@ -129,6 +136,7 @@ const campaignsRoutes = new Hono()
     const scheduled = await campaignService.schedule(orgId, campaignId, scheduled_at)
     if (!scheduled) return error(c, 'Campaign not found or not in draft/testing status', 404)
 
+    auditFromContext(c, { action: 'campaign.scheduled', entityType: 'campaign', entityId: campaignId, metadata: { scheduledAt: scheduled_at } })
     return success(c, undefined, 'Campaign scheduled')
   })
   /** Reschedule an already-scheduled campaign (for calendar drag-and-drop) */
@@ -146,6 +154,7 @@ const campaignsRoutes = new Hono()
     const rescheduled = await campaignService.schedule(orgId, campaignId, scheduled_at)
     if (!rescheduled) return error(c, 'Failed to reschedule', 500)
 
+    auditFromContext(c, { action: 'campaign.rescheduled', entityType: 'campaign', entityId: campaignId })
     return success(c, { scheduled_at }, 'Campaign rescheduled')
   })
   .post('/campaigns/:id/launch', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
@@ -243,6 +252,9 @@ const campaignsRoutes = new Hono()
 
     logger.info(`Campaign ${campaignId} launched: job ${jobId}, ${contacts.length} recipients`)
 
+    auditFromContext(c, { action: 'campaign.launched', entityType: 'campaign', entityId: campaignId })
+    activityFromContext(c, { action: 'campaign.sent', entityType: 'campaign', entityId: campaignId, description: `Launched campaign ${campaignId}` })
+
     // 8. Return the job id + recipient count.
     return success(c, { jobId, recipientCount: contacts.length }, 'Campaign launched')
   })
@@ -253,6 +265,7 @@ const campaignsRoutes = new Hono()
     const paused = await campaignService.setStatus(orgId, campaignId, 'paused')
     if (!paused) return error(c, 'Campaign not found', 404)
 
+    auditFromContext(c, { action: 'campaign.paused', entityType: 'campaign', entityId: campaignId })
     return success(c, undefined, 'Campaign paused')
   })
   .post('/campaigns/:id/cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
@@ -262,6 +275,7 @@ const campaignsRoutes = new Hono()
     const cancelled = await campaignService.setStatus(orgId, campaignId, 'cancelled')
     if (!cancelled) return error(c, 'Campaign not found', 404)
 
+    auditFromContext(c, { action: 'campaign.cancelled', entityType: 'campaign', entityId: campaignId })
     return success(c, undefined, 'Campaign cancelled')
   })
   .post('/campaigns/:id/clone', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
@@ -272,6 +286,8 @@ const campaignsRoutes = new Hono()
     const cloned = await campaignService.clone(orgId, user.id, campaignId)
     if (!cloned) return error(c, 'Campaign not found', 404)
 
+    auditFromContext(c, { action: 'campaign.cloned', entityType: 'campaign', entityId: cloned.id })
+    activityFromContext(c, { action: 'campaign.created', entityType: 'campaign', entityId: cloned.id, description: `Cloned campaign ${campaignId} to ${cloned.id}` })
     return success(c, cloned, 'Campaign cloned', 201)
   })
   .post('/campaigns/:id/archive', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
@@ -281,6 +297,7 @@ const campaignsRoutes = new Hono()
     const archived = await campaignService.setStatus(orgId, campaignId, 'archived')
     if (!archived) return error(c, 'Campaign not found', 404)
 
+    auditFromContext(c, { action: 'campaign.archived', entityType: 'campaign', entityId: campaignId })
     return success(c, undefined, 'Campaign archived')
   })
   // ==========================================================================
@@ -323,6 +340,7 @@ const campaignsRoutes = new Hono()
       senderEmail: body.sender_email,
     })
 
+    auditFromContext(c, { action: 'campaign.ab_variant_created', entityType: 'campaign', entityId: campaignId })
     return success(c, variant, 'Variant created', 201)
   })
   .get('/campaigns/:id/ab/variants', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
@@ -342,6 +360,7 @@ const campaignsRoutes = new Hono()
     const declared = await campaignService.declareWinner(campaignId, variant_id)
     if (!declared) return error(c, 'Variant not found', 404)
 
+    auditFromContext(c, { action: 'campaign.ab_winner_declared', entityType: 'campaign', entityId: campaignId })
     return success(c, undefined, 'Winner declared')
   })
   // ==========================================================================
@@ -356,6 +375,7 @@ const campaignsRoutes = new Hono()
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     await frequencyCapService.setConfig(orgId, body.maxPerWindow, body.windowHours, body.enabled)
+    auditFromContext(c, { action: 'settings.updated', entityType: 'setting', entityId: orgId })
     return success(c, undefined, 'Frequency cap updated')
   })
   // ==========================================================================
@@ -376,6 +396,7 @@ const campaignsRoutes = new Hono()
     const updated = { ...existing, auto_winner: true, winner_metric: body.winner_metric, auto_winner_after_hours: body.auto_winner_after_hours }
     await campaignService.update(orgId, campaignId, { ab_config: JSON.stringify(updated) })
 
+    auditFromContext(c, { action: 'campaign.ab_auto_winner_configured', entityType: 'campaign', entityId: campaignId })
     return success(c, undefined, `Auto-winner configured: declare based on ${body.winner_metric} after ${body.auto_winner_after_hours}h`)
   })
   /** Check and auto-declare A/B winner (called by worker or manually) */
@@ -436,6 +457,8 @@ const campaignsRoutes = new Hono()
     await campaignService.declareWinner(campaignId, bestVariant.id)
     logger.info(`[AB] Auto-declared winner for ${campaignId}: variant ${bestVariant.variant_label}`)
 
+    auditFromContext(c, { action: 'campaign.ab_winner_declared', entityType: 'campaign', entityId: campaignId })
+
     return success(c, {
       decided: true,
       winner: { ...bestVariant, is_winner: 1 },
@@ -455,6 +478,7 @@ const campaignsRoutes = new Hono()
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     await graymailService.setConfig(orgId, body.enabled, body.threshold)
+    auditFromContext(c, { action: 'settings.updated', entityType: 'setting', entityId: orgId })
     return success(c, undefined, 'Graymail settings updated')
   })
   .get('/campaigns/graymail/contacts', requirePermission(PERMISSIONS.CAMPAIGNS_VIEW), async (c) => {
@@ -473,6 +497,7 @@ const campaignsRoutes = new Hono()
     const orgId = getOrgId(c)
     const email = c.req.param('email')
     await graymailService.resetContact(orgId, email)
+    auditFromContext(c, { action: 'campaign.graymail_reset', entityType: 'contact', entityId: email })
     return success(c, undefined, 'Graymail status reset')
   })
   // ==========================================================================
@@ -488,6 +513,7 @@ const campaignsRoutes = new Hono()
     if (!campaign) return error(c, 'Campaign not found', 404)
 
     await campaignService.update(orgId, campaignId, { rotation_config: JSON.stringify(body) })
+    auditFromContext(c, { action: 'routing.updated', entityType: 'routing', entityId: campaignId })
     return success(c, undefined, `Rotation set to ${body.mode}`)
   })
   /** Get rotation config for a campaign */
