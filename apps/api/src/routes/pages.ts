@@ -9,6 +9,7 @@ import { PERMISSIONS } from '../services/rbacService'
 import { landingPageService } from '../services/landingPageService'
 import { TRACKING } from '../config'
 import { success, error } from '../utils/response'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 const pagesRoutes = new Hono()
   // ==========================================================================
@@ -28,6 +29,8 @@ const pagesRoutes = new Hono()
 
     try {
       const page = await landingPageService.create(orgId, user.id, body)
+      auditFromContext(c, { action: 'page.created', entityType: 'page', entityId: page.id })
+      activityFromContext(c, { action: 'page.created', entityType: 'page', entityId: page.id, description: `Created page ${page.id}` })
       return success(c, page, 'Landing page created')
     } catch (e: any) {
       return error(c, e.message || 'Failed to create page', 400)
@@ -54,6 +57,8 @@ const pagesRoutes = new Hono()
     try {
       const updated = await landingPageService.update(orgId, pageId, body)
       if (!updated) return error(c, 'Page not found', 404)
+      auditFromContext(c, { action: 'page.updated', entityType: 'page', entityId: pageId })
+      activityFromContext(c, { action: 'page.updated', entityType: 'page', entityId: pageId, description: `Updated page ${pageId}` })
       return success(c, undefined, 'Page updated')
     } catch (e: any) {
       return error(c, e.message || 'Failed to update page', 400)
@@ -65,6 +70,8 @@ const pagesRoutes = new Hono()
 
     const deleted = await landingPageService.delete(orgId, pageId)
     if (!deleted) return error(c, 'Page not found', 404)
+    auditFromContext(c, { action: 'page.deleted', entityType: 'page', entityId: pageId })
+    activityFromContext(c, { action: 'page.deleted', entityType: 'page', entityId: pageId, description: `Deleted page ${pageId}` })
     return success(c, undefined, 'Page deleted')
   })
   // ==========================================================================
@@ -81,6 +88,7 @@ const pagesRoutes = new Hono()
     const workerUrl = TRACKING.WORKER_URL || ''
     const publicUrl = workerUrl ? `${workerUrl}/p/${page?.slug}` : `/p/${page?.slug}`
 
+    auditFromContext(c, { action: 'page.published', entityType: 'page', entityId: pageId })
     return success(c, { url: publicUrl }, 'Page published')
   })
   .post('/pages/:id/unpublish', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
@@ -89,6 +97,7 @@ const pagesRoutes = new Hono()
 
     const unpublished = await landingPageService.unpublish(orgId, pageId)
     if (!unpublished) return error(c, 'Page not found', 404)
+    auditFromContext(c, { action: 'page.unpublished', entityType: 'page', entityId: pageId })
     return success(c, undefined, 'Page unpublished')
   })
   // ==========================================================================

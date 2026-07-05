@@ -11,6 +11,7 @@ import { contactService } from '../services/contactService'
 import { eventBus } from '../services/eventBus'
 import { TRACKING } from '../config'
 import { success, error } from '../utils/response'
+import { auditFromContext, activityFromContext } from '../services/audit/context'
 
 const formsRoutes = new Hono()
   // ==========================================================================
@@ -26,6 +27,8 @@ const formsRoutes = new Hono()
     if (!list) return error(c, 'List not found', 404)
 
     const form = await formService.create(orgId, user.id, body)
+    auditFromContext(c, { action: 'form.created', entityType: 'form', entityId: form.id })
+    activityFromContext(c, { action: 'form.created', entityType: 'form', entityId: form.id, description: `Created form ${form.id}` })
     return success(c, form, 'Form endpoint created')
   })
   .get('/forms', requirePermission(PERMISSIONS.CONTACTS_VIEW), async (c) => {
@@ -48,6 +51,8 @@ const formsRoutes = new Hono()
 
     const updated = await formService.update(orgId, formId, body)
     if (!updated) return error(c, 'Form not found', 404)
+    auditFromContext(c, { action: 'form.updated', entityType: 'form', entityId: formId })
+    activityFromContext(c, { action: 'form.updated', entityType: 'form', entityId: formId, description: `Updated form ${formId}` })
     return success(c, undefined, 'Form updated')
   })
   .delete('/forms/:id', requirePermission(PERMISSIONS.CONTACTS_MANAGE), async (c) => {
@@ -56,6 +61,8 @@ const formsRoutes = new Hono()
 
     const deleted = await formService.delete(orgId, formId)
     if (!deleted) return error(c, 'Form not found', 404)
+    auditFromContext(c, { action: 'form.deleted', entityType: 'form', entityId: formId })
+    activityFromContext(c, { action: 'form.deleted', entityType: 'form', entityId: formId, description: `Deleted form ${formId}` })
     return success(c, undefined, 'Form deleted')
   })
   // ==========================================================================
@@ -197,6 +204,7 @@ const formsRoutes = new Hono()
 
     const newStatus = await formService.toggleStatus(orgId, formId)
     if (!newStatus) return error(c, 'Form not found', 404)
+    auditFromContext(c, { action: 'form.status_changed', entityType: 'form', entityId: formId })
     return success(c, { status: newStatus }, `Form ${newStatus}`)
   })
   // ==========================================================================

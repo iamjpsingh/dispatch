@@ -19,6 +19,7 @@ import {
 } from '../middleware/webhookSignature'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -56,6 +57,7 @@ const webhooksRoutes = new Hono()
   const body = c.req.valid('json')
 
   const webhook = await webhookService.create(orgId, user.id, body)
+  auditFromContext(c, { action: 'webhook.created', entityType: 'webhook', entityId: webhook.id })
   return success(c, { ...webhook, secret: webhook.secret.substring(0, 8) + '...' }, 'Webhook created', 201)
   })
   .get('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_VIEW), async (c) => {
@@ -75,6 +77,7 @@ const webhooksRoutes = new Hono()
   const updated = await webhookService.update(orgId, webhookId, body)
   if (!updated) return error(c, 'Webhook not found', 404)
 
+  auditFromContext(c, { action: 'webhook.updated', entityType: 'webhook', entityId: webhookId })
   return success(c, undefined, 'Webhook updated')
   })
   .delete('/webhooks/:id', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) => {
@@ -84,6 +87,7 @@ const webhooksRoutes = new Hono()
   const deleted = await webhookService.delete(orgId, webhookId)
   if (!deleted) return error(c, 'Webhook not found', 404)
 
+  auditFromContext(c, { action: 'webhook.deleted', entityType: 'webhook', entityId: webhookId })
   return success(c, undefined, 'Webhook deleted')
   })
   // ==========================================================================
@@ -97,6 +101,7 @@ const webhooksRoutes = new Hono()
   const toggled = await webhookService.toggleEnabled(orgId, webhookId, body.enabled)
   if (!toggled) return error(c, 'Webhook not found', 404)
 
+  auditFromContext(c, { action: 'webhook.toggled', entityType: 'webhook', entityId: webhookId })
   return success(c, undefined, body.enabled ? 'Webhook enabled' : 'Webhook disabled')
   })
   .post('/webhooks/:id/test', requirePermission(PERMISSIONS.WEBHOOKS_MANAGE), async (c) => {
@@ -129,6 +134,7 @@ const webhooksRoutes = new Hono()
   if (!webhook) return error(c, 'Webhook not found', 404)
 
   const cleared = await webhookService.clearLogs(webhookId)
+  auditFromContext(c, { action: 'webhook.logs_cleared', entityType: 'webhook', entityId: webhookId })
   return success(c, { cleared }, `${cleared} log(s) cleared`)
   })
   // ==========================================================================
