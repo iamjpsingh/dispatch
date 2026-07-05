@@ -17,6 +17,7 @@ import { parseIntSafe } from '../utils/validation'
 import { logger } from '../utils/logger'
 import { scanForSpam } from '../services/spamScanner'
 import type { EmailJob, BatchConfig, Contact, EmailConfig } from '../types/index'
+import { auditFromContext } from '../services/audit/context'
 
 import {
   type UserSMTPConfig,
@@ -352,6 +353,7 @@ const sendRoutes = new Hono()
   const cancelled = await schedulerService.cancelScheduledJob(jobId)
 
   if (cancelled) {
+    auditFromContext(c, { action: 'job.cancelled', entityType: 'job', entityId: jobId })
     return success(c, undefined, 'Scheduled job cancelled')
   }
   return error(c, 'Job not found or cannot be cancelled', 404)
@@ -387,25 +389,34 @@ const sendRoutes = new Hono()
   .post('/batch-pause', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const runningJobs = await queueEngine.getJobs(user.id, 'running', 1)
+  let count = 0
   if (runningJobs.length > 0) {
     await queueEngine.pause(runningJobs[0].id)
+    count = 1
   }
+  auditFromContext(c, { action: 'job.paused', entityType: 'job', metadata: { count } })
   return success(c, undefined, 'Job paused')
   })
   .post('/batch-resume', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const pausedJobs = await queueEngine.getJobs(user.id, 'paused', 1)
+  let count = 0
   if (pausedJobs.length > 0) {
     await queueEngine.resume(pausedJobs[0].id)
+    count = 1
   }
+  auditFromContext(c, { action: 'job.resumed', entityType: 'job', metadata: { count } })
   return success(c, undefined, 'Job resumed')
   })
   .delete('/batch-cancel', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), async (c) => {
   const user = requireAuth(c)
   const runningJobs = await queueEngine.getJobs(user.id, 'running', 1)
+  let count = 0
   if (runningJobs.length > 0) {
     await queueEngine.cancel(runningJobs[0].id)
+    count = 1
   }
+  auditFromContext(c, { action: 'job.cancelled', entityType: 'job', metadata: { count } })
   return success(c, undefined, 'Job cancelled')
   })
 
@@ -540,6 +551,8 @@ async function handleSmtpSend(c: Context, params: SmtpSendParams) {
   })
 
   logger.info(`Job ${jobId} enqueued: ${contacts.length} contacts (${useBatch ? 'batch' : 'direct'} mode)`)
+
+  auditFromContext(c, { action: 'send.enqueued', entityType: 'send', entityId: jobId, metadata: { count: contacts.length } })
 
   if (useBatch) {
     return success(

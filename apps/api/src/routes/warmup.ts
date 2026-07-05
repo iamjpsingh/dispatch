@@ -6,6 +6,7 @@ import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
 import { success, error } from '../utils/response'
 import { warmupService } from '../services/warmupService'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -65,6 +66,7 @@ const warmupRoutes = new Hono()
       custom_schedule: body.custom_schedule,
     })
 
+    auditFromContext(c, { action: 'warmup.created', entityType: 'warmup', entityId: plan.id })
     return success(c, plan, 'Warmup plan created', 201)
   })
   // Pause warmup
@@ -76,6 +78,7 @@ const warmupRoutes = new Hono()
       return error(c, 'Cannot pause plan (not active or not found)', 404)
     }
 
+    auditFromContext(c, { action: 'warmup.paused', entityType: 'warmup', entityId: planId })
     return success(c, null, 'Warmup plan paused')
   })
   // Resume warmup
@@ -87,6 +90,7 @@ const warmupRoutes = new Hono()
       return error(c, 'Cannot resume plan (not paused or not found)', 404)
     }
 
+    auditFromContext(c, { action: 'warmup.resumed', entityType: 'warmup', entityId: planId })
     return success(c, null, 'Warmup plan resumed')
   })
   // Cancel warmup
@@ -98,6 +102,7 @@ const warmupRoutes = new Hono()
       return error(c, 'Cannot cancel plan', 404)
     }
 
+    auditFromContext(c, { action: 'warmup.cancelled', entityType: 'warmup', entityId: planId })
     return success(c, null, 'Warmup plan cancelled')
   })
   // Delete warmup (only completed/cancelled)
@@ -109,6 +114,7 @@ const warmupRoutes = new Hono()
       return error(c, 'Cannot delete active warmup plan', 400)
     }
 
+    auditFromContext(c, { action: 'warmup.deleted', entityType: 'warmup', entityId: planId })
     return success(c, null, 'Warmup plan deleted')
   })
   // Check warmup status for a config

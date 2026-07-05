@@ -12,6 +12,7 @@ import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
 import { parseIntSafe } from '../utils/validation'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Types
@@ -182,6 +183,7 @@ const reportRoutes = new Hono()
       try {
         const result = await d1Service.deleteLog(user.id, logId)
         logger.debug(`Delete result: ${result}`)
+        auditFromContext(c, { action: 'send.log_deleted', entityType: 'send', entityId: logId })
         return success(c, undefined, 'Log deleted')
       } catch (err) {
         logger.error('Delete log error:', err)
@@ -191,6 +193,7 @@ const reportRoutes = new Hono()
 
     // Local fallback
     await logService.deleteLog(getOrgId(c), logId)
+    auditFromContext(c, { action: 'send.log_deleted', entityType: 'send', entityId: logId })
     return success(c, undefined, 'Log deleted')
   })
   /**
@@ -209,6 +212,7 @@ const reportRoutes = new Hono()
     if (d1Service.isConfigured()) {
       try {
         await d1Service.deleteLogs(user.id, ids)
+        auditFromContext(c, { action: 'send.logs_bulk_deleted', entityType: 'send', metadata: { count: ids.length } })
         return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
       } catch (err) {
         logger.error('Bulk delete error:', err)
@@ -219,6 +223,7 @@ const reportRoutes = new Hono()
     // Local fallback
     const orgId = getOrgId(c)
     for (const id of ids) await logService.deleteLog(orgId, id)
+    auditFromContext(c, { action: 'send.logs_bulk_deleted', entityType: 'send', metadata: { count: ids.length } })
     return success(c, { deleted: ids.length }, `${ids.length} logs deleted`)
   })
 

@@ -7,6 +7,7 @@ import { PERMISSIONS } from '../services/rbacService'
 import { queueEngine } from '../services/queueEngine'
 import type { JobStatus } from '../services/queueEngine'
 import { success, error } from '../utils/response'
+import { auditFromContext } from '../services/audit/context'
 
 const queueRoutes = new Hono()
   // ==========================================================================
@@ -81,6 +82,7 @@ const queueRoutes = new Hono()
       return error(c, 'Job is not running or does not exist', 400)
     }
 
+    auditFromContext(c, { action: 'job.paused', entityType: 'job', entityId: jobId })
     return success(c, undefined, 'Job paused')
   })
   /**
@@ -95,6 +97,7 @@ const queueRoutes = new Hono()
       return error(c, 'Job is not paused or does not exist', 400)
     }
 
+    auditFromContext(c, { action: 'job.resumed', entityType: 'job', entityId: jobId })
     return success(c, undefined, 'Job resumed — will be picked up by worker')
   })
   /**
@@ -109,6 +112,7 @@ const queueRoutes = new Hono()
       return error(c, 'Job cannot be cancelled (already completed or does not exist)', 400)
     }
 
+    auditFromContext(c, { action: 'job.cancelled', entityType: 'job', entityId: jobId })
     return success(c, undefined, 'Job cancelled')
   })
   // ==========================================================================
@@ -165,6 +169,7 @@ const queueRoutes = new Hono()
     }
 
     await queueEngine.suppress(user.id, email, reason, 'manual')
+    auditFromContext(c, { action: 'suppression.added', entityType: 'suppression', entityId: email })
     return success(c, undefined, `${email} added to suppression list`)
   })
   /**
@@ -179,6 +184,7 @@ const queueRoutes = new Hono()
       return error(c, 'Email not found in suppression list', 404)
     }
 
+    auditFromContext(c, { action: 'suppression.removed', entityType: 'suppression', entityId: email })
     return success(c, undefined, `${email} removed from suppression list`)
   })
 

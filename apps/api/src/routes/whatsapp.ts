@@ -9,6 +9,7 @@ import { PERMISSIONS } from '../services/rbacService'
 import { whatsappService } from '../services/whatsappService'
 import { success, error } from '../utils/response'
 import { AppError } from '../utils/validate'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -94,17 +95,20 @@ const whatsappRoutes = new Hono()
     const body = c.req.valid('json')
 
     const config = await whatsappService.createConfig(orgId, user.id, body)
+    auditFromContext(c, { action: 'whatsapp.config_created', entityType: 'whatsapp', entityId: config.id })
     return success(c, { ...config, access_token: '***' }, 'WhatsApp account connected', 201)
   })
   .put('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), zValidator('json', UpdateConfigSchema), async (c) => {
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     await whatsappService.updateConfig(orgId, c.req.param('id'), body)
+    auditFromContext(c, { action: 'whatsapp.config_updated', entityType: 'whatsapp', entityId: c.req.param('id') })
     return success(c, null, 'Config updated')
   })
   .delete('/whatsapp/configs/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), async (c) => {
     const orgId = getOrgId(c)
     await whatsappService.deleteConfig(orgId, c.req.param('id'))
+    auditFromContext(c, { action: 'whatsapp.config_deleted', entityType: 'whatsapp', entityId: c.req.param('id') })
     return success(c, null, 'Config deleted')
   })
   // ==========================================================================
@@ -126,11 +130,13 @@ const whatsappRoutes = new Hono()
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     const tpl = await whatsappService.createTemplate(orgId, body.config_id, body)
+    auditFromContext(c, { action: 'whatsapp.template_created', entityType: 'template', entityId: tpl.id })
     return success(c, tpl, 'Template submitted for approval', 201)
   })
   .delete('/whatsapp/templates/:id', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), async (c) => {
     const orgId = getOrgId(c)
     await whatsappService.deleteTemplate(orgId, c.req.param('id'))
+    auditFromContext(c, { action: 'whatsapp.template_deleted', entityType: 'template', entityId: c.req.param('id') })
     return success(c, null, 'Template deleted')
   })
   // ==========================================================================
@@ -140,18 +146,21 @@ const whatsappRoutes = new Hono()
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     const msg = await whatsappService.sendTemplate(orgId, body.config_id, body)
+    auditFromContext(c, { action: 'whatsapp.message_sent', entityType: 'send', entityId: msg.id })
     return success(c, msg, 'Message sent')
   })
   .post('/whatsapp/send-text', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), zValidator('json', SendTextSchema), async (c) => {
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     const msg = await whatsappService.sendText(orgId, body.config_id, body.phone, body.text, body.contact_id)
+    auditFromContext(c, { action: 'whatsapp.message_sent', entityType: 'send', entityId: msg.id })
     return success(c, msg, 'Message sent')
   })
   .post('/whatsapp/send-bulk', requirePermission(PERMISSIONS.WHATSAPP_MANAGE), zValidator('json', BulkSendSchema), async (c) => {
     const orgId = getOrgId(c)
     const body = c.req.valid('json')
     const result = await whatsappService.sendBulk(orgId, body.config_id, body.template_name, body.recipients, body.language)
+    auditFromContext(c, { action: 'whatsapp.bulk_sent', entityType: 'send', metadata: { count: body.recipients.length } })
     return success(c, result, `Sent ${result.sent}, failed ${result.failed}`)
   })
   // ==========================================================================

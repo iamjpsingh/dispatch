@@ -6,6 +6,7 @@ import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
 import { success, error } from '../utils/response'
 import { routingEngine } from '../services/routingEngine'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -75,6 +76,7 @@ const routingRoutes = new Hono()
     const body = c.req.valid('json')
 
     await routingEngine.updateRoutingConfig(user.id, body)
+    auditFromContext(c, { action: 'routing.updated', entityType: 'routing' })
     return success(c, null, 'Routing config updated')
   })
   // Initialize a provider for routing
@@ -83,6 +85,7 @@ const routingRoutes = new Hono()
     const { configId, providerType, configName, dailyLimit } = c.req.valid('json')
 
     await routingEngine.initializeProvider(user.id, configId, providerType, configName || '', dailyLimit)
+    auditFromContext(c, { action: 'routing.provider_initialized', entityType: 'routing', entityId: configId })
     return success(c, null, 'Provider initialized for routing')
   })
   // Mark provider healthy/unhealthy
@@ -97,6 +100,7 @@ const routingRoutes = new Hono()
       await routingEngine.markProviderUnhealthy(user.id, configId, errorMsg || 'Marked unhealthy')
     }
 
+    auditFromContext(c, { action: 'routing.provider_health_changed', entityType: 'routing', entityId: configId })
     return success(c, null, `Provider marked ${healthy ? 'healthy' : 'unhealthy'}`)
   })
   // Trigger manual failover
@@ -110,6 +114,7 @@ const routingRoutes = new Hono()
       return error(c, 'No alternative provider available', 404)
     }
 
+    auditFromContext(c, { action: 'routing.failover_triggered', entityType: 'routing', entityId: failedConfigId })
     return success(c, { decision }, 'Failover successful')
   })
 

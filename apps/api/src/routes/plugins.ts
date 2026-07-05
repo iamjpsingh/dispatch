@@ -6,6 +6,7 @@ import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
 import { success, error } from '../utils/response'
 import { pluginManager } from '../services/pluginManager'
+import { auditFromContext } from '../services/audit/context'
 
 // ============================================================================
 // Schemas
@@ -76,6 +77,7 @@ const pluginsRoutes = new Hono()
         manifest: body.manifest,
         settings: body.settings,
       })
+      auditFromContext(c, { action: 'plugin.installed', entityType: 'plugin', entityId: plugin.id })
       return success(c, plugin, 'Plugin installed', 201)
     } catch (err: any) {
       if (err.message?.includes('UNIQUE')) {
@@ -95,6 +97,7 @@ const pluginsRoutes = new Hono()
       return error(c, `Provider "${providerName}" not found`, 404)
     }
 
+    auditFromContext(c, { action: 'provider.connected', entityType: 'plugin', entityId: plugin.id })
     return success(c, plugin, 'Provider plugin installed', 201)
   })
   // Activate plugin
@@ -106,6 +109,7 @@ const pluginsRoutes = new Hono()
       return error(c, 'Plugin not found', 404)
     }
 
+    auditFromContext(c, { action: 'plugin.enabled', entityType: 'plugin', entityId: pluginId })
     return success(c, null, 'Plugin activated')
   })
   // Disable plugin
@@ -117,6 +121,7 @@ const pluginsRoutes = new Hono()
       return error(c, 'Plugin not found', 404)
     }
 
+    auditFromContext(c, { action: 'plugin.disabled', entityType: 'plugin', entityId: pluginId })
     return success(c, null, 'Plugin disabled')
   })
   // Update plugin settings
@@ -129,6 +134,7 @@ const pluginsRoutes = new Hono()
       return error(c, 'Plugin not found', 404)
     }
 
+    auditFromContext(c, { action: 'plugin.settings_updated', entityType: 'plugin', entityId: pluginId })
     return success(c, null, 'Plugin settings updated')
   })
   // Uninstall plugin
@@ -140,6 +146,7 @@ const pluginsRoutes = new Hono()
       return error(c, 'Plugin not found', 404)
     }
 
+    auditFromContext(c, { action: 'plugin.uninstalled', entityType: 'plugin', entityId: pluginId })
     return success(c, null, 'Plugin uninstalled')
   })
 
