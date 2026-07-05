@@ -264,7 +264,6 @@ const authRoutes = new Hono()
         return error(c, 'Current password is incorrect', 400)
       }
 
-      auditFromContext(c, { action: 'auth.password_changed', entityType: 'user', entityId: session.user.id })
       return success(c, undefined, 'Password changed successfully')
     } catch (err) {
       logger.error('Change password error:', err)

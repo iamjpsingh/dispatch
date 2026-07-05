@@ -585,7 +585,6 @@ const adminRoutes = new Hono()
 
     try {
       const member = await orgService.addMember(orgId, target.id, role || 'member', user.id)
-      auditFromContext(c, { action: 'member.added', entityType: 'member', entityId: member.id })
       return success(c, member, 'Member added', 201)
     } catch (e: any) {
       return error(c, e.message || 'Failed to add member', 500)
@@ -605,7 +604,6 @@ const adminRoutes = new Hono()
     try {
       const updated = await orgService.updateMemberRole(orgId, targetId, role, user.id)
       if (!updated) return error(c, 'Member not found or no change', 404)
-      auditFromContext(c, { action: 'member.role_changed', entityType: 'member', entityId: targetId, metadata: { role } })
       return success(c, undefined, 'Member role updated')
     } catch (e: any) {
       return error(c, e.message || 'Failed to update member role', 500)
@@ -628,7 +626,6 @@ const adminRoutes = new Hono()
     try {
       const removed = await orgService.removeMember(orgId, targetId, user.id)
       if (!removed) return error(c, 'Member not found or is org owner', 404)
-      auditFromContext(c, { action: 'member.removed', entityType: 'member', entityId: targetId })
       return success(c, undefined, 'Member removed')
     } catch (e: any) {
       return error(c, e.message || 'Failed to remove member', 500)
@@ -882,7 +879,6 @@ const adminRoutes = new Hono()
 
     const cancelled = await invitationService.cancel(id, user.id)
     if (!cancelled) return error(c, 'Invitation not found or already processed', 404)
-    auditFromContext(c, { action: 'invitation.cancelled', entityType: 'member', entityId: id })
     return success(c, undefined, 'Invitation cancelled')
   })
   /** Resend an invitation */

@@ -24,9 +24,9 @@ export const adminAuthManifest = {
   'PUT /admin/org/sending-emails/:id': 'sending_email.updated',
   'DELETE /admin/org/sending-emails/:id': 'sending_email.deleted',
   'PUT /admin/org': 'org.updated', // service (orgService self-audits)
-  'POST /admin/org/members': 'member.added',
-  'PUT /admin/org/members/:userId/role': 'member.role_changed',
-  'DELETE /admin/org/members/:userId': 'member.removed',
+  'POST /admin/org/members': 'member.added', // service (orgService.addMember logs member.invited)
+  'PUT /admin/org/members/:userId/role': 'member.role_changed', // service (orgService.updateMemberRole)
+  'DELETE /admin/org/members/:userId': 'member.removed', // service (orgService.removeMember)
   // admin.ts — teams. created (activity feed) + deleted (audit) = service (teamService).
   // updated + member_added + member_removed = ROUTE-layer (T9 found teamService did NOT
   // audit them; member_added was mis-logged as team.created — service bug flagged for P8).
@@ -40,7 +40,7 @@ export const adminAuthManifest = {
   'POST /admin/permissions/:userId/revoke': 'permission.revoked',
   'DELETE /admin/permissions/:userId/:permission': 'permission.override_removed',
   'POST /admin/invitations': 'member.invited', // service (invitationService self-audits)
-  'DELETE /admin/invitations/:id': 'invitation.cancelled',
+  'DELETE /admin/invitations/:id': 'invitation.cancelled', // service (invitationService.cancel)
   'POST /admin/invitations/:id/resend': 'invitation.resent',
   'POST /admin/invitations/accept/:token': 'member.joined', // service
   'POST /admin/contacts/:id/gdpr-erase': 'contacts.erased', // service (gdprService self-audits)
@@ -51,7 +51,7 @@ export const adminAuthManifest = {
   'POST /auth/switch-org': 'session.org_switched',
   'POST /auth/forgot-password': { exempt: 'actor-less: unauthenticated; no server-derived actor at route layer' },
   'POST /auth/reset-password': { exempt: 'actor-less: unauthenticated; token-based, no session actor' },
-  'POST /auth/change-password': 'auth.password_changed',
+  'POST /auth/change-password': 'auth.password_changed', // service (authLocalService.updatePassword logs user.password_change — untyped, P8 to reconcile)
   'PUT /auth/profile': 'user.profile_updated',
   'PUT /auth/profile/username': 'user.username_updated',
 } satisfies Record<string, AuditAction | { exempt: string }>

@@ -17,7 +17,7 @@ vi.mock('../../../src/services/rbacService', () => ({
   rbacService: { canManageUser: vi.fn(), isMember: vi.fn(), isPlatformAdmin: vi.fn() },
 }))
 vi.mock('../../../src/services/orgService', () => ({
-  orgService: { updateMemberRole: vi.fn(), getMember: vi.fn() },
+  orgService: { updateSlug: vi.fn(), getMember: vi.fn() },
 }))
 vi.mock('../../../src/services/teamService', () => ({
   teamService: { update: vi.fn(), addMember: vi.fn(), removeMember: vi.fn(), get: vi.fn() },
@@ -93,15 +93,14 @@ describe('admin/auth audit wiring', () => {
     )
   })
 
-  it('PUT /admin/org/members/:userId/role fires member.role_changed', async () => {
-    vi.mocked(rbacService.canManageUser).mockResolvedValue(true)
-    vi.mocked(orgService.updateMemberRole).mockResolvedValue(true)
+  it('PUT /admin/org/slug fires org.slug_changed (route-audited; member role/add/remove are service-audited)', async () => {
+    vi.mocked(orgService.updateSlug).mockResolvedValue(undefined as any)
 
-    const res = await appFor(adminRoutes).fetch(json('PUT', '/admin/org/members/user-2/role', { role: 'admin' }))
+    const res = await appFor(adminRoutes).fetch(json('PUT', '/admin/org/slug', { slug: 'new-slug' }))
 
     expect(res.status).toBe(200)
     expect(auditService.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'member.role_changed', entityType: 'member', entityId: 'user-2' })
+      expect.objectContaining({ action: 'org.slug_changed', entityType: 'org', entityId: 'org1', metadata: { slug: 'new-slug' } })
     )
   })
 
