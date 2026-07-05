@@ -365,7 +365,7 @@ export const campaignsManifest = {
   'POST /campaigns/:id/ab/variant': 'campaign.ab_variant_created',
   'POST /campaigns/:id/ab/winner': 'campaign.ab_winner_declared',
   'PUT /campaigns/:id/ab/auto-winner': 'campaign.ab_auto_winner_configured',
-  'POST /campaigns/:id/ab/check-winner': { exempt: 'derived-recompute: reads variant stats, no state change' },
+  'POST /campaigns/:id/ab/check-winner': 'campaign.ab_winner_declared',
   'PUT /campaigns/frequency-cap': 'settings.updated',
   'PUT /campaigns/graymail': 'settings.updated',
   'POST /campaigns/graymail/reset/:email': 'campaign.graymail_reset',
@@ -789,13 +789,14 @@ describe('<slice> audit wiring', () => {
 | POST /campaigns/:id/archive | campaign.archived | — | campaign : `campaignId` | |
 | POST /campaigns/:id/ab/variant | campaign.ab_variant_created | — | campaign : `campaignId` | |
 | POST /campaigns/:id/ab/winner | campaign.ab_winner_declared | — | campaign : `campaignId` | |
+| POST /campaigns/:id/ab/check-winner | campaign.ab_winner_declared | — | campaign : `campaignId` | **conditional** — call ONLY on the path that reaches `campaignService.declareWinner(...)` (right after it, before the success return); the waiting / already-declared / no-data early-returns get NO call |
 | PUT /campaigns/:id/ab/auto-winner | campaign.ab_auto_winner_configured | — | campaign : `campaignId` | |
 | PUT /campaigns/frequency-cap | settings.updated | — | setting : `orgId` | entityType `'setting'` |
 | PUT /campaigns/graymail | settings.updated | — | setting : `orgId` | entityType `'setting'` |
 | POST /campaigns/graymail/reset/:email | campaign.graymail_reset | — | contact : `c.req.param('email')` | |
 | PUT /campaigns/:id/rotation | routing.updated | — | routing : `campaignId` | |
 
-Exempt (no call): `POST /campaigns/:id/draft`, `POST /campaigns/:id/ab/check-winner`.
+Exempt (no call): `POST /campaigns/:id/draft`.
 
 **Worked example (launch handler):** after the block that enqueues the send and before `return`:
 ```ts
@@ -803,8 +804,8 @@ auditFromContext(c, { action: 'campaign.launched', entityType: 'campaign', entit
 activityFromContext(c, { action: 'campaign.sent', entityType: 'campaign', entityId: campaignId, description: `Launched campaign ${campaignId}` })
 ```
 
-- [ ] **Step 1:** Add the import + all 17 calls per the table.
-- [ ] **Step 2:** Write `tests/audit/wiring/campaigns.test.ts` spot-tests for launch (`campaign.launched` + `campaign.sent`), delete (`campaign.deleted`), and clone (`campaign.cloned`).
+- [ ] **Step 1:** Add the import + all 18 calls per the table (17 unconditional + the 1 conditional `check-winner` call placed only on the `declareWinner` path).
+- [ ] **Step 2:** Write `tests/audit/wiring/campaigns.test.ts` spot-tests for launch (`campaign.launched` + `campaign.sent`), delete (`campaign.deleted`), clone (`campaign.cloned`), and check-winner (asserts `campaign.ab_winner_declared` fires on the winner-declared path AND does NOT fire on a waiting/already-declared early-return).
 - [ ] **Step 3:** Run: `bunx vitest run tests/audit/wiring/campaigns.test.ts tests/routes/campaigns.test.ts` → PASS.
 - [ ] **Step 4:** Run: `bunx vitest run tests/audit/coverage.test.ts` → still PASS.
 - [ ] **Step 5:** `bun typecheck` + `bun lint`.

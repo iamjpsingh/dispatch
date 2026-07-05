@@ -14,7 +14,7 @@ export const campaignsManifest = {
   'POST /campaigns/:id/ab/variant': 'campaign.ab_variant_created',
   'POST /campaigns/:id/ab/winner': 'campaign.ab_winner_declared',
   'PUT /campaigns/:id/ab/auto-winner': 'campaign.ab_auto_winner_configured',
-  'POST /campaigns/:id/ab/check-winner': { exempt: 'derived-recompute: reads variant stats, no state change' },
+  'POST /campaigns/:id/ab/check-winner': 'campaign.ab_winner_declared',
   'PUT /campaigns/frequency-cap': 'settings.updated',
   'PUT /campaigns/graymail': 'settings.updated',
   'POST /campaigns/graymail/reset/:email': 'campaign.graymail_reset',
