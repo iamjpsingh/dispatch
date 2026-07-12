@@ -6,6 +6,7 @@ export type AuditAction =
   | 'user.login' | 'user.logout' | 'user.register' | 'session.org_switched'
   | 'auth.password_changed' | 'user.profile_updated' | 'user.username_updated'
   | 'user.status_changed' | 'user.deleted'
+  | 'user.password_reset' | 'user.password_change'
   // Org
   | 'org.created' | 'org.updated' | 'org.deleted' | 'org.suspended'
   | 'org.status_changed' | 'org.slug_changed' | 'org.sender_identity_updated'
@@ -17,7 +18,7 @@ export type AuditAction =
   | 'member.suspended' | 'member.added'
   | 'team.created' | 'team.updated' | 'team.deleted' | 'team.member_added' | 'team.member_removed'
   | 'permission.granted' | 'permission.revoked' | 'permission.override_removed'
-  | 'invitation.cancelled' | 'invitation.resent'
+  | 'invitation.cancelled' | 'invitation.resent' | 'invitation.created' | 'invitation.accepted'
   // Settings / SMTP / OAuth / provider / infra
   | 'settings.updated' | 'smtp.created' | 'smtp.updated' | 'smtp.deleted'
   | 'oauth.updated' | 'cloudflare.updated' | 'cloudflare.worker_deployed' | 'cloudflare.worker_undeployed'

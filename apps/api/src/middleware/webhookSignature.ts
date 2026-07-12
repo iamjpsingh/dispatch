@@ -18,7 +18,8 @@ export function verifyMailgunSignature(
     const computed = createHmac('sha256', signingKey)
       .update(timestamp + token)
       .digest('hex')
-    return timingSafeEqual(Buffer.from(computed), Buffer.from(signature))
+    const a = Buffer.from(computed), b = Buffer.from(signature)
+    return a.length === b.length && timingSafeEqual(a, b)
   } catch {
     return false
   }
@@ -58,7 +59,8 @@ export function verifySparkPostSignature(
     const computed = createHmac('sha1', authToken)
       .update(body)
       .digest('hex')
-    return timingSafeEqual(Buffer.from(computed), Buffer.from(signature))
+    const a = Buffer.from(computed), b = Buffer.from(signature)
+    return a.length === b.length && timingSafeEqual(a, b)
   } catch {
     return false
   }

@@ -39,10 +39,10 @@ export const adminAuthManifest = {
   'POST /admin/permissions/:userId/grant': 'permission.granted',
   'POST /admin/permissions/:userId/revoke': 'permission.revoked',
   'DELETE /admin/permissions/:userId/:permission': 'permission.override_removed',
-  'POST /admin/invitations': 'member.invited', // service (invitationService self-audits)
+  'POST /admin/invitations': 'member.invited', // service (invitationService.create logs invitation.created)
   'DELETE /admin/invitations/:id': 'invitation.cancelled', // service (invitationService.cancel)
   'POST /admin/invitations/:id/resend': 'invitation.resent',
-  'POST /admin/invitations/accept/:token': 'member.joined', // service
+  'POST /admin/invitations/accept/:token': 'member.joined', // service (invitationService.accept logs invitation.accepted)
   'POST /admin/contacts/:id/gdpr-erase': 'contacts.erased', // service (gdprService self-audits)
   // auth.ts
   'POST /auth/register': 'user.register', // service (authLocalService self-audits)
@@ -51,7 +51,7 @@ export const adminAuthManifest = {
   'POST /auth/switch-org': 'session.org_switched',
   'POST /auth/forgot-password': { exempt: 'actor-less: unauthenticated; no server-derived actor at route layer' },
   'POST /auth/reset-password': { exempt: 'actor-less: unauthenticated; token-based, no session actor' },
-  'POST /auth/change-password': 'auth.password_changed', // service (authLocalService.updatePassword logs user.password_change — untyped, P8 to reconcile)
+  'POST /auth/change-password': 'auth.password_changed', // service (authLocalService.updatePassword logs user.password_change)
   'PUT /auth/profile': 'user.profile_updated',
   'PUT /auth/profile/username': 'user.username_updated',
 } satisfies Record<string, AuditAction | { exempt: string }>
