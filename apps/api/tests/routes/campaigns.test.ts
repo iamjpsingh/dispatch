@@ -722,6 +722,7 @@ describe('Campaign Routes', () => {
   describe('POST /campaigns/:id/ab/winner', () => {
     it('declares an A/B winner', async () => {
       const app = createApp()
+      vi.mocked(campaignService.get).mockReturnValue(SAMPLE_CAMPAIGN) // M1 ownership guard
       vi.mocked(campaignService.declareWinner).mockReturnValue(true)
 
       const res = await app.fetch(
