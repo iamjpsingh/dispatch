@@ -109,6 +109,12 @@ app.use('/api/v1/auth/login', authRateLimit)
 app.use('/api/v1/auth/register', authRateLimit)
 app.use('/api/v1/send', sendRateLimit)
 app.use('/api/v1/parse-excel', uploadRateLimit)
+app.use('/api/auth/forgot-password', authRateLimit)
+app.use('/api/auth/reset-password', authRateLimit)
+app.use('/api/auth/change-password', authRateLimit)
+app.use('/api/v1/auth/forgot-password', authRateLimit)
+app.use('/api/v1/auth/reset-password', authRateLimit)
+app.use('/api/v1/auth/change-password', authRateLimit)
 
 // Authentication — only protect /api routes; SPA routes are handled by the frontend
 app.use('*', async (c, next) => {

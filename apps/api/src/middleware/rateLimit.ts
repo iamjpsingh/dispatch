@@ -2,6 +2,20 @@
 
 import type { Context, Next } from 'hono'
 
+const TRUSTED_PROXY_HOPS = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS ?? '1') || 1)
+
+/** The trusted client IP for rate-limiting: the XFF entry TRUSTED_PROXY_HOPS from the right
+ *  (the proxy-observed address a client cannot forge), else x-real-ip. */
+export function clientIp(c: Context): string {
+  const xff = c.req.header('x-forwarded-for')
+  if (xff) {
+    const parts = xff.split(',').map((s) => s.trim()).filter(Boolean)
+    const idx = parts.length - TRUSTED_PROXY_HOPS
+    if (idx >= 0 && parts[idx]) return parts[idx]
+  }
+  return c.req.header('x-real-ip') || 'unknown'
+}
+
 interface RateLimitEntry {
   count: number
   resetAt: number
@@ -36,9 +50,7 @@ export function rateLimit(name: string, maxRequests: number, windowMs: number) {
   const store = getStore(name)
 
   return async (c: Context, next: Next) => {
-    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-      || c.req.header('x-real-ip')
-      || 'unknown'
+    const ip = clientIp(c)
 
     const now = Date.now()
     let entry = store.get(ip)
