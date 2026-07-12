@@ -354,8 +354,12 @@ const campaignsRoutes = new Hono()
     return success(c, { variants })
   })
   .post('/campaigns/:id/ab/winner', requirePermission(PERMISSIONS.CAMPAIGNS_MANAGE), zValidator('json', ABWinnerSchema), async (c) => {
+    const orgId = getOrgId(c)
     const campaignId = c.req.param('id')
     const { variant_id } = c.req.valid('json')
+
+    const campaign = await campaignService.get(orgId, campaignId)
+    if (!campaign) return error(c, 'Campaign not found', 404)
 
     const declared = await campaignService.declareWinner(campaignId, variant_id)
     if (!declared) return error(c, 'Variant not found', 404)
