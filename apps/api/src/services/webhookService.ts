@@ -182,8 +182,8 @@ class WebhookService {
 
     const signature = await this.sign(body, webhook.secret)
 
-    // SSRF guard: never deliver to a private/reserved/internal address (defends stored URLs
-    // and DNS-rebinding at the fetch sink, not just the create/update boundary).
+    // SSRF guard: re-check the stored URL at the sink, not just at create/update. Residual:
+    // this cannot stop DNS-rebinding (fetch re-resolves) — tracked as a P9 hardening item.
     if (!(await isPublicHttpUrl(webhook.url))) {
       await this.logDelivery(webhook.id, eventType, 'failed', null, null, 'Blocked: webhook URL is not a public address', Date.now() - startTime)
       return
@@ -192,6 +192,8 @@ class WebhookService {
     try {
       const response = await fetch(webhook.url, {
         method: 'POST',
+        // redirect:'manual' — never follow a 3xx into an internal host (SSRF via redirect).
+        redirect: 'manual',
         headers: {
           'Content-Type': 'application/json',
           'X-Dispatch-Signature': signature,
@@ -311,6 +313,7 @@ class WebhookService {
     try {
       const response = await fetch(webhook.url, {
         method: 'POST',
+        redirect: 'manual', // never follow a 3xx into an internal host (SSRF via redirect)
         headers: {
           'Content-Type': 'application/json',
           'X-Dispatch-Signature': signature,

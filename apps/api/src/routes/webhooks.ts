@@ -7,6 +7,7 @@ import { requireAuth, getOrgId } from '../middleware/auth'
 import { requirePermission } from '../middleware/rbac'
 import { PERMISSIONS } from '../services/rbacService'
 import { webhookService } from '../services/webhookService'
+import { isPublicHttpUrl } from '../utils/ssrfGuard'
 import { parseSES, parseMailgun, parseSendGrid, parsePostmark, parseSparkPost, processBounce } from '../services/bounceProcessor'
 import {
   verifySNSSignature,
@@ -57,6 +58,8 @@ const webhooksRoutes = new Hono()
   const orgId = getOrgId(c)
   const body = c.req.valid('json')
 
+  if (!(await isPublicHttpUrl(body.url))) return error(c, 'Webhook URL must be a public http(s) address', 400)
+
   const webhook = await webhookService.create(orgId, user.id, body)
   auditFromContext(c, { action: 'webhook.created', entityType: 'webhook', entityId: webhook.id })
   return success(c, { ...webhook, secret: webhook.secret.substring(0, 8) + '...' }, 'Webhook created', 201)
@@ -74,6 +77,8 @@ const webhooksRoutes = new Hono()
   const orgId = getOrgId(c)
   const webhookId = c.req.param('id')
   const body = c.req.valid('json')
+
+  if (body.url !== undefined && !(await isPublicHttpUrl(body.url))) return error(c, 'Webhook URL must be a public http(s) address', 400)
 
   const updated = await webhookService.update(orgId, webhookId, body)
   if (!updated) return error(c, 'Webhook not found', 404)

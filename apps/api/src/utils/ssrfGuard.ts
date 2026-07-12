@@ -21,12 +21,14 @@ function isBlockedIpv4(ip: string): boolean {
   return false
 }
 
-/** IPv6 loopback/unspecified/unique-local/link-local, or an IPv4-mapped blocked address. */
+/** IPv6 loopback/unspecified/unique-local/link-local/translation, or an IPv4-mapped blocked address. */
 function isBlockedIpv6(ip: string): boolean {
   const v = ip.toLowerCase().split('%')[0] // strip zone id
   if (v === '::1' || v === '::') return true // loopback / unspecified
   if (v.startsWith('fc') || v.startsWith('fd')) return true // fc00::/7 unique-local
   if (v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb')) return true // fe80::/10 link-local
+  if (v.startsWith('64:ff9b:')) return true // NAT64 well-known prefix (embeds an IPv4 → could reach internal)
+  if (v.startsWith('2002:')) return true // 6to4 (embeds an IPv4)
   const mapped = v.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/) // ::ffff:a.b.c.d
   if (mapped) return isBlockedIpv4(mapped[1])
   return false
@@ -52,7 +54,8 @@ export async function isPublicHttpUrl(rawUrl: string): Promise<boolean> {
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
 
-  const host = u.hostname
+  // URL.hostname keeps the brackets around an IPv6 literal ([::1]); strip them so isIP works.
+  const host = u.hostname.replace(/^\[|\]$/g, '')
   if (isIP(host)) return !isBlockedIp(host)
 
   try {

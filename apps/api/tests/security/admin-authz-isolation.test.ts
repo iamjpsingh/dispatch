@@ -22,6 +22,7 @@ import { and, eq } from 'drizzle-orm'
 const ORG_A = 'org_a'
 const ORG_B = 'org_b'
 const TOK_ADMIN_A = 'tok_admin_a'
+const TOK_MGR_A = 'tok_mgr_a' // manager granted a users.invite override
 const future = () => new Date(Date.now() + 86_400_000).toISOString()
 
 async function seed(db: TestDb) {
@@ -33,16 +34,24 @@ async function seed(db: TestDb) {
   await db.insert(users).values([
     { id: 'u_admin_a', email: 'admin_a@test.com', name: 'Admin A', password_hash: 'x' },
     { id: 'u_member_a', email: 'member_a@test.com', name: 'Member A', password_hash: 'x' },
+    { id: 'u_mgr_a', email: 'mgr_a@test.com', name: 'Manager A', password_hash: 'x' },
     { id: 'u_puppet', email: 'puppet@test.com', name: 'Puppet', password_hash: 'x' },
     { id: 'u_victim_b', email: 'victim_b@test.com', name: 'Victim B', password_hash: 'x' },
   ])
   await db.insert(org_members).values([
     { id: 'om_admin_a', org_id: ORG_A, user_id: 'u_admin_a', role: 'admin', status: 'active' },
     { id: 'om_member_a', org_id: ORG_A, user_id: 'u_member_a', role: 'member', status: 'active' },
+    { id: 'om_mgr_a', org_id: ORG_A, user_id: 'u_mgr_a', role: 'manager', status: 'active' },
     { id: 'om_victim_b', org_id: ORG_B, user_id: 'u_victim_b', role: 'member', status: 'active' },
+  ])
+  // A manager normally lacks users.invite; grant it as an override so the manager can reach the
+  // invite route — the canAssignRole bound must still stop them inviting ABOVE their own level.
+  await db.insert(user_permissions).values([
+    { id: 'up_mgr_invite', org_id: ORG_A, user_id: 'u_mgr_a', permission: 'users.invite', granted: 1, granted_by: 'u_admin_a' },
   ])
   await db.insert(sessions).values([
     { id: 's_admin_a', user_id: 'u_admin_a', token: TOK_ADMIN_A, org_id: ORG_A, expires_at: future() },
+    { id: 's_mgr_a', user_id: 'u_mgr_a', token: TOK_MGR_A, org_id: ORG_A, expires_at: future() },
   ])
   // team_a belongs to org A (admin's own); team_b belongs to org B (cross-tenant target)
   await db.insert(teams).values([
@@ -63,10 +72,10 @@ function buildApp() {
   return app
 }
 
-function req(method: string, path: string, body?: object) {
+function req(method: string, path: string, body?: object, token: string = TOK_ADMIN_A) {
   return new Request(`http://localhost${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOK_ADMIN_A}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: body ? JSON.stringify(body) : undefined,
   })
 }
@@ -142,5 +151,12 @@ describe('P8 T5 — admin RBAC hardening (priv-esc + cross-tenant IDOR)', () => 
     const res = await app.fetch(req('DELETE', '/admin/teams/team_a/members/u_member_a'))
     expect(res.status).toBe(200)
     expect(await teamService.removeMember(ORG_A, 'team_a', 'nobody', 'u_admin_a')).toBe(false)
+  })
+
+  // T7 review: the invitation route was a sibling role-assignment entrypoint that bypassed the
+  // canAssignRole bound — a manager (with a users.invite override) could invite an admin.
+  it('INV: a manager cannot invite a member at a role ABOVE its own level (bypass detector)', async () => {
+    const res = await app.fetch(req('POST', '/admin/invitations', { email: 'x@test.com', role: 'admin' }, TOK_MGR_A))
+    expect(res.status).toBe(403)
   })
 })

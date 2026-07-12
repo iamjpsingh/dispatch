@@ -882,6 +882,11 @@ const adminRoutes = new Hono()
     const orgId = getOrgId(c)
     const { email, role } = c.req.valid('json')
 
+    // Same authority bound as add-member/change-role: cannot invite at a role above your own.
+    if (!(await rbacService.canAssignRole(user.id, orgId, role))) {
+      return error(c, 'You cannot invite a member at a role above your own', 403)
+    }
+
     try {
       const invitation = await invitationService.create(orgId, email, role, user.id)
       return success(c, invitation, 'Invitation sent', 201)

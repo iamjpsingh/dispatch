@@ -74,4 +74,24 @@ describe('P8 T5 — outbound webhook SSRF guard (H4)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(res.success).toBe(true)
   })
+
+  // T7 review: fetch defaults to redirect:'follow', so a public URL 302→internal would bypass
+  // the guard. Delivery must never follow a redirect into an internal host.
+  it('H4: fetch is invoked with redirect:"manual" (no redirect-follow SSRF)', async () => {
+    await seedWebhook(db, 'http://8.8.8.8/hook')
+    await webhookService.testWebhook(ORG, 'wh_1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const opts = (fetchMock.mock.calls[0] as unknown[] | undefined)?.[1] as RequestInit | undefined
+    expect(opts?.redirect).toBe('manual')
+  })
+
+  // T7 review: IPv6-literal handling — URL.hostname keeps the brackets, so isIP failed and the
+  // guard used to reject ALL IPv6 literals (over-block) while blocking loopback only by accident.
+  it('H4: create() accepts a public IPv6-literal URL but rejects loopback/NAT64/6to4 literals', async () => {
+    const ok = await webhookService.create(ORG, 'u1', { name: 'v6', url: 'http://[2606:4700:4700::1111]/hook', events: [] })
+    expect(ok.url).toBe('http://[2606:4700:4700::1111]/hook')
+    for (const bad of ['http://[::1]:9200/', 'http://[64:ff9b::a9fe:a9fe]/', 'http://[2002:a9fe:a9fe::]/']) {
+      await expect(webhookService.create(ORG, 'u1', { name: 'x', url: bad, events: [] })).rejects.toThrow()
+    }
+  })
 })

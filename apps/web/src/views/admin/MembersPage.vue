@@ -213,7 +213,8 @@ onMounted(loadMembers)
               <SelectValue placeholder="Select role" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="r in roleOptions" :key="r" :value="r">{{ r }}</SelectItem>
+              <!-- 'owner' is not assignable via the API (server RoleSchema excludes it) -->
+              <SelectItem v-for="r in roleOptions.filter(r => r !== 'owner')" :key="r" :value="r">{{ r }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
