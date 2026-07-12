@@ -32,12 +32,12 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('creates a webhook with a generated secret and reads it back (shape preserved)', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'Hook', url: 'https://x.test/h', events: ['email_sent', 'email_opened'] })
+    const wh = await webhookService.create(ORG, USER, { name: 'Hook', url: 'https://93.184.216.34/h', events: ['email_sent', 'email_opened'] })
     expect(wh.id).toMatch(/^wh_/)
     expect(wh.org_id).toBe(ORG)
     expect(wh.user_id).toBe(USER)
     expect(wh.name).toBe('Hook')
-    expect(wh.url).toBe('https://x.test/h')
+    expect(wh.url).toBe('https://93.184.216.34/h')
     expect(wh.secret).toMatch(/^[0-9a-f]{64}$/) // 32 random bytes hex
     expect(JSON.parse(wh.events)).toEqual(['email_sent', 'email_opened']) // JSON-as-text
     expect(wh.enabled).toBe(1) // integer flag, default on
@@ -51,7 +51,7 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('encrypts the secret at rest but surfaces plaintext to callers', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'Enc', url: 'https://x.test/e', events: [] })
+    const wh = await webhookService.create(ORG, USER, { name: 'Enc', url: 'https://93.184.216.34/e', events: [] })
     // create() returns plaintext to callers
     expect(wh.secret).toMatch(/^[0-9a-f]{64}$/)
 
@@ -66,18 +66,18 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('honors enabled:false on create (integer 0 flag)', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'Off', url: 'https://x.test/o', events: [], enabled: false })
+    const wh = await webhookService.create(ORG, USER, { name: 'Off', url: 'https://93.184.216.34/o', events: [], enabled: false })
     expect(wh.enabled).toBe(0)
     expect(JSON.parse(wh.events)).toEqual([])
   })
 
   it('updates fields and is tenant-scoped', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'A', url: 'https://x.test/a', events: ['email_sent'] })
+    const wh = await webhookService.create(ORG, USER, { name: 'A', url: 'https://93.184.216.34/a', events: ['email_sent'] })
 
-    expect(await webhookService.update(ORG, wh.id, { name: 'B', url: 'https://x.test/b', events: ['email_clicked'], enabled: false })).toBe(true)
+    expect(await webhookService.update(ORG, wh.id, { name: 'B', url: 'https://93.184.216.34/b', events: ['email_clicked'], enabled: false })).toBe(true)
     const got = await webhookService.get(ORG, wh.id)
     expect(got?.name).toBe('B')
-    expect(got?.url).toBe('https://x.test/b')
+    expect(got?.url).toBe('https://93.184.216.34/b')
     expect(JSON.parse(got!.events)).toEqual(['email_clicked'])
     expect(got?.enabled).toBe(0)
 
@@ -88,7 +88,7 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('toggleEnabled flips the flag and is tenant-scoped', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'T', url: 'https://x.test/t', events: [] })
+    const wh = await webhookService.create(ORG, USER, { name: 'T', url: 'https://93.184.216.34/t', events: [] })
     expect(await webhookService.toggleEnabled(ORG, wh.id, false)).toBe(true)
     expect((await webhookService.get(ORG, wh.id))?.enabled).toBe(0)
     expect(await webhookService.toggleEnabled(ORG, wh.id, true)).toBe(true)
@@ -98,9 +98,9 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('lists webhooks for the org only, newest first', async () => {
-    const a = await webhookService.create(ORG, USER, { name: 'A', url: 'https://x.test/a', events: [] })
-    const b = await webhookService.create(ORG, USER, { name: 'B', url: 'https://x.test/b', events: [] })
-    await webhookService.create(ORG2, USER, { name: 'Other', url: 'https://x.test/other', events: [] })
+    const a = await webhookService.create(ORG, USER, { name: 'A', url: 'https://93.184.216.34/a', events: [] })
+    const b = await webhookService.create(ORG, USER, { name: 'B', url: 'https://93.184.216.34/b', events: [] })
+    await webhookService.create(ORG2, USER, { name: 'Other', url: 'https://93.184.216.34/other', events: [] })
 
     const list = await webhookService.list(ORG)
     expect(list).toHaveLength(2)
@@ -110,7 +110,7 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('deletes a webhook (tenant-scoped) and cascades its logs', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'D', url: 'https://x.test/d', events: [] })
+    const wh = await webhookService.create(ORG, USER, { name: 'D', url: 'https://93.184.216.34/d', events: [] })
     // seed a couple of delivery logs directly, with distinct timestamps so
     // ORDER BY created_at DESC is deterministic (the 'failed' one is newest).
     await db.insert(webhook_logs).values([
@@ -135,7 +135,7 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('getLogs paginates and clearLogs returns the deleted-row count', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'L', url: 'https://x.test/l', events: [] })
+    const wh = await webhookService.create(ORG, USER, { name: 'L', url: 'https://93.184.216.34/l', events: [] })
     await db.insert(webhook_logs).values([
       { id: 'whl_a', webhook_id: wh.id, event_type: 'e1', status: 'success', duration_ms: 1 },
       { id: 'whl_b', webhook_id: wh.id, event_type: 'e2', status: 'success', duration_ms: 2 },
@@ -152,7 +152,7 @@ describe('P2.7a — webhookService (Drizzle/PGlite)', () => {
   })
 
   it('Postgres landing cross-check: create writes a real row with the exact column shape', async () => {
-    const wh = await webhookService.create(ORG, USER, { name: 'Land', url: 'https://x.test/land', events: ['email_bounced'], enabled: false })
+    const wh = await webhookService.create(ORG, USER, { name: 'Land', url: 'https://93.184.216.34/land', events: ['email_bounced'], enabled: false })
     const [row] = await db
       .select()
       .from(webhooks)

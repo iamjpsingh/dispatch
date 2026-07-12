@@ -7,6 +7,7 @@ import { eventBus, type EventType } from './eventBus'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 import { encrypt, decryptOrPlain } from '../utils/crypto'
+import { isPublicHttpUrl } from '../utils/ssrfGuard'
 
 // ============================================================================
 // Types
@@ -58,6 +59,9 @@ class WebhookService {
   // --------------------------------------------------------------------------
 
   async create(orgId: string, userId: string, input: WebhookInput): Promise<Webhook> {
+    if (!(await isPublicHttpUrl(input.url))) {
+      throw new Error('Webhook URL must be a public http(s) address')
+    }
     const db = getDb()
     const id = generateId('wh')
     const secret = this.generateSecret()
@@ -92,6 +96,9 @@ class WebhookService {
   }
 
   async update(orgId: string, webhookId: string, updates: Partial<WebhookInput>): Promise<boolean> {
+    if (updates.url !== undefined && !(await isPublicHttpUrl(updates.url))) {
+      throw new Error('Webhook URL must be a public http(s) address')
+    }
     const values: Partial<typeof webhooks.$inferInsert> = {}
 
     if (updates.name !== undefined) values.name = updates.name
@@ -174,6 +181,13 @@ class WebhookService {
     })
 
     const signature = await this.sign(body, webhook.secret)
+
+    // SSRF guard: never deliver to a private/reserved/internal address (defends stored URLs
+    // and DNS-rebinding at the fetch sink, not just the create/update boundary).
+    if (!(await isPublicHttpUrl(webhook.url))) {
+      await this.logDelivery(webhook.id, eventType, 'failed', null, null, 'Blocked: webhook URL is not a public address', Date.now() - startTime)
+      return
+    }
 
     try {
       const response = await fetch(webhook.url, {
@@ -286,6 +300,11 @@ class WebhookService {
       timestamp: new Date().toISOString(),
       data: { message: 'This is a test webhook from Dispatch' },
     })
+
+    // SSRF guard: refuse to probe a private/reserved/internal address.
+    if (!(await isPublicHttpUrl(webhook.url))) {
+      return { success: false, error: 'Webhook URL is not a public address' }
+    }
 
     const signature = await this.sign(body, webhook.secret)
 
