@@ -8,6 +8,7 @@ import { getDb } from '../db/pg/client'
 import { plugins } from '../db/pg/schema'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
+import { encrypt, decryptOrPlain } from '../utils/crypto'
 
 // ============================================================================
 // Types
@@ -133,12 +134,13 @@ class PluginManager {
       author: input.manifest.author,
       type: input.manifest.type,
       manifest_json: JSON.stringify(input.manifest),
-      settings_json: JSON.stringify(input.settings || {}),
+      // Settings may hold provider secrets (api keys, tokens) — encrypt at rest (R9).
+      settings_json: await encrypt(JSON.stringify(input.settings || {})),
       entry_path: input.manifest.entry || null,
     })
 
     const [row] = await db.select().from(plugins).where(eq(plugins.id, id)).limit(1)
-    return row as Plugin
+    return this.maskRow(row as Plugin)
   }
 
   async get(userId: string, pluginId: string): Promise<Plugin | null> {
@@ -147,7 +149,22 @@ class PluginManager {
       .from(plugins)
       .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
       .limit(1)
-    return (row as Plugin) ?? null
+    return row ? this.maskRow(row as Plugin) : null
+  }
+
+  /**
+   * Return a copy with settings_json replaced by a keys-only masked view — the plaintext secret
+   * values (encrypted at rest) never leave the server. Callers see which keys are configured.
+   */
+  private async maskRow(plugin: Plugin): Promise<Plugin> {
+    let keys: string[] = []
+    try {
+      keys = Object.keys(JSON.parse(await decryptOrPlain(plugin.settings_json)))
+    } catch {
+      keys = []
+    }
+    const masked = Object.fromEntries(keys.map((k) => [k, '***']))
+    return { ...plugin, settings_json: JSON.stringify(masked) }
   }
 
   async list(userId: string, filters?: { type?: string; status?: string }): Promise<Plugin[]> {
@@ -160,7 +177,7 @@ class PluginManager {
       .from(plugins)
       .where(and(...conditions))
       .orderBy(desc(plugins.installed_at))
-    return rows as Plugin[]
+    return Promise.all((rows as Plugin[]).map((r) => this.maskRow(r)))
   }
 
   async activate(userId: string, pluginId: string): Promise<boolean> {
@@ -209,7 +226,7 @@ class PluginManager {
   async updateSettings(userId: string, pluginId: string, settings: Record<string, any>): Promise<boolean> {
     const res = await getDb()
       .update(plugins)
-      .set({ settings_json: JSON.stringify(settings), updated_at: now() })
+      .set({ settings_json: await encrypt(JSON.stringify(settings)), updated_at: now() })
       .where(and(eq(plugins.id, pluginId), eq(plugins.user_id, userId)))
       .returning({ id: plugins.id })
     return res.length > 0

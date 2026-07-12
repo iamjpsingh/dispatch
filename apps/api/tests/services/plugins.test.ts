@@ -55,7 +55,7 @@ describe('P2 — pluginManager (Drizzle/PGlite)', () => {
     expect(typeof p.updated_at).toBe('string')
     // JSON stored as text
     expect(JSON.parse(p.manifest_json)).toEqual(m)
-    expect(JSON.parse(p.settings_json)).toEqual({ api_key: 'k' })
+    expect(JSON.parse(p.settings_json)).toEqual({ api_key: '***' }) // masked on read (M2)
 
     const got = await pluginManager.get(USER, p.id)
     expect(got?.id).toBe(p.id)
@@ -139,7 +139,7 @@ describe('P2 — pluginManager (Drizzle/PGlite)', () => {
     expect(await pluginManager.updateSettings(USER2, p.id, { x: 1 })).toBe(false)
     expect(await pluginManager.updateSettings(USER, p.id, { region: 'eu', n: 3 })).toBe(true)
     const got = await pluginManager.get(USER, p.id)
-    expect(JSON.parse(got!.settings_json)).toEqual({ region: 'eu', n: 3 })
+    expect(JSON.parse(got!.settings_json)).toEqual({ region: '***', n: '***' }) // masked on read (M2)
   })
 
   it('uninstall deletes only the owning user row', async () => {
@@ -165,7 +165,7 @@ describe('P2 — pluginManager (Drizzle/PGlite)', () => {
     expect(installed?.name).toBe('SendGrid')
     expect(installed?.type).toBe('provider')
     expect(installed?.entry_path).toBe('built-in:sendgrid')
-    expect(JSON.parse(installed!.settings_json)).toEqual({ api_key: 'sg' })
+    expect(JSON.parse(installed!.settings_json)).toEqual({ api_key: '***' }) // masked on read (M2)
 
     expect(await pluginManager.installBuiltinProvider(USER, 'Nonexistent', {})).toBeNull()
   })
@@ -181,7 +181,7 @@ describe('P2 — pluginManager (Drizzle/PGlite)', () => {
     expect(row.name).toBe('Durable')
     expect(row.status).toBe('installed')
     expect(row.version).toBe('2.1.0')
-    expect(row.settings_json).toBe('{}')
+    expect(row.settings_json).toMatch(/^v1:/) // encrypted at rest (M2)
     // timestamps are ISO strings (mode: 'string')
     expect(typeof row.installed_at).toBe('string')
     expect(row.installed_at).toBe(p.installed_at)
