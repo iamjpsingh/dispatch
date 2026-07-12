@@ -161,6 +161,17 @@ class RbacService {
     return actorLevel > targetLevel
   }
 
+  /** Check whether an actor may ASSIGN a given role — cannot grant a role above their own level. */
+  async canAssignRole(actorId: string, orgId: string, role: string): Promise<boolean> {
+    if (await this.isPlatformAdmin(actorId)) return true
+    const actorRole = await this.getUserRole(actorId, orgId)
+    if (!actorRole) return false
+    const actorLevel = ROLE_HIERARCHY[actorRole] ?? -1
+    const roleLevel = ROLE_HIERARCHY[role] ?? -1
+    if (roleLevel < 0) return false // unknown role
+    return roleLevel <= actorLevel
+  }
+
   /** Check if user is an active member of an org. */
   async isMember(userId: string, orgId: string): Promise<boolean> {
     const [row] = await getDb()

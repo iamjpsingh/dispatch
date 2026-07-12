@@ -197,7 +197,14 @@ class TeamService {
     return true
   }
 
-  async removeMember(_orgId: string, teamId: string, userId: string, _actorId: string): Promise<boolean> {
+  async removeMember(orgId: string, teamId: string, userId: string, _actorId: string): Promise<boolean> {
+    // Tenant-scope by the owning team: never delete a membership from another org's team.
+    const [owned] = await getDb()
+      .select({ id: teams.id })
+      .from(teams)
+      .where(and(eq(teams.id, teamId), eq(teams.org_id, orgId)))
+      .limit(1)
+    if (!owned) return false
     const res = await getDb()
       .delete(team_members)
       .where(and(eq(team_members.team_id, teamId), eq(team_members.user_id, userId)))

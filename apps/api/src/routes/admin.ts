@@ -43,12 +43,14 @@ const SenderIdentitySchema = z.object({
   postal_address: z.string().max(1000).optional(),
 })
 
+// Roles assignable via member add/change. Excludes 'owner' (set only at org creation) so a
+// non-owner cannot mint one; the level bound in rbacService.canAssignRole is enforced too.
 const AddMemberSchema = z.object({
   email: z.string().email('Valid email is required'),
-  role: z.string().max(50).optional(),
+  role: z.enum(['admin', 'manager', 'member', 'readonly']).optional(),
 })
 
-const RoleSchema = z.object({ role: z.string().min(1, 'Role is required').max(50) })
+const RoleSchema = z.object({ role: z.enum(['admin', 'manager', 'member', 'readonly']) })
 
 const TeamSchema = z.object({
   name: z.string().min(1, 'Team name is required').max(200),
@@ -583,6 +585,10 @@ const adminRoutes = new Hono()
     const existing = await orgService.getMember(orgId, target.id)
     if (existing) return error(c, 'User is already a member of this organization', 400)
 
+    if (!(await rbacService.canAssignRole(user.id, orgId, role || 'member'))) {
+      return error(c, 'You cannot assign a role above your own', 403)
+    }
+
     try {
       const member = await orgService.addMember(orgId, target.id, role || 'member', user.id)
       return success(c, member, 'Member added', 201)
@@ -599,6 +605,9 @@ const adminRoutes = new Hono()
 
     if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
       return error(c, 'You cannot manage a user with equal or higher role', 403)
+    }
+    if (!(await rbacService.canAssignRole(user.id, orgId, role))) {
+      return error(c, 'You cannot assign a role above your own', 403)
     }
 
     try {
@@ -724,6 +733,9 @@ const adminRoutes = new Hono()
     const teamId = c.req.param('teamId')
     const targetId = c.req.param('userId')
 
+    const team = await teamService.get(orgId, teamId)
+    if (!team) return error(c, 'Team not found', 404)
+
     try {
       const removed = await teamService.removeMember(orgId, teamId, targetId, user.id)
       if (!removed) return error(c, 'Team member not found', 404)
@@ -760,6 +772,11 @@ const adminRoutes = new Hono()
 
     if (!(await rbacService.canManageUser(user.id, targetId, orgId))) {
       return error(c, 'You cannot manage permissions for a user with equal or higher role', 403)
+    }
+    // Confused-deputy guard: only grant a permission the actor themselves effectively holds.
+    const actorPerms = await rbacService.getEffectivePermissions(user.id, orgId)
+    if (!actorPerms.includes('*') && !actorPerms.includes(permission)) {
+      return error(c, 'You cannot grant a permission you do not hold', 403)
     }
 
     try {
