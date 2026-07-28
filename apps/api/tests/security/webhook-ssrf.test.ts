@@ -6,6 +6,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 vi.mock('../../src/services/auditService', () => ({ auditService: { log: vi.fn() } }))
 
+// Deterministic resolver so the DNS-rebinding tests don't touch the network. Mirrors reality for
+// the hosts the existing loopback tests use ('localhost' → 127.0.0.1) and adds a public hostname
+// ('rebind.test' → 8.8.8.8) to exercise the host→IP pin. IP-literal cases never call lookup.
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async (host: string) => {
+    if (host === 'localhost') return [{ address: '127.0.0.1', family: 4 }]
+    if (host === 'rebind.test') return [{ address: '8.8.8.8', family: 4 }]
+    throw new Error(`ENOTFOUND ${host}`)
+  }),
+}))
+
 import { freshDbMigrated, type TestDb } from '../helpers/pg'
 import { __setTestDb } from '../../src/db/pg/client'
 import { organizations, users, webhooks } from '../../src/db/pg/schema'
@@ -93,5 +104,33 @@ describe('P8 T5 — outbound webhook SSRF guard (H4)', () => {
     for (const bad of ['http://[::1]:9200/', 'http://[64:ff9b::a9fe:a9fe]/', 'http://[2002:a9fe:a9fe::]/']) {
       await expect(webhookService.create(ORG, 'u1', { name: 'x', url: bad, events: [] })).rejects.toThrow()
     }
+  })
+
+  // P9 T3 — DNS-rebinding pin: an http hostname is fetched at its RESOLVED public IP, with the
+  // original hostname carried in the Host header, so a re-resolve to an internal IP after this
+  // point cannot redirect the connection.
+  it('DNS-pin: http hostname is fetched at the resolved public IP with the original Host header', async () => {
+    await seedWebhook(db, 'http://rebind.test/hook')
+    await webhookService.testWebhook(ORG, 'wh_1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const call = fetchMock.mock.calls[0] as unknown[]
+    expect(String(call[0])).toBe('http://8.8.8.8/hook') // host pinned to the resolved IP
+    const opts = call[1] as RequestInit
+    expect((opts.headers as Record<string, string>).Host).toBe('rebind.test') // original Host preserved
+    expect(opts.redirect).toBe('manual')
+  })
+
+  // The core rebinding defense: host is public at the boundary guard (lookup #1) then flips to a
+  // metadata IP at the pin (lookup #2). The sink MUST block — never fall back to fetching the raw
+  // hostname (which would re-resolve to the internal IP). Fails if the sink fetches on a null pin.
+  it('DNS-pin: a rebind between guard and pin (public→metadata) is blocked, not fetched raw', async () => {
+    const { lookup } = (await import('node:dns/promises')) as unknown as { lookup: ReturnType<typeof vi.fn> }
+    lookup
+      .mockImplementationOnce(async () => [{ address: '8.8.8.8', family: 4 }]) // guard sees public
+      .mockImplementationOnce(async () => [{ address: '169.254.169.254', family: 4 }]) // pin sees metadata
+    await seedWebhook(db, 'http://rebind.test/hook')
+    const res = await webhookService.testWebhook(ORG, 'wh_1')
+    expect(res.success).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

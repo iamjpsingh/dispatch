@@ -7,7 +7,7 @@ import { eventBus, type EventType } from './eventBus'
 import { logger } from '../utils/logger'
 import { generateId } from '../utils/id'
 import { encrypt, decryptOrPlain } from '../utils/crypto'
-import { isPublicHttpUrl } from '../utils/ssrfGuard'
+import { isPublicHttpUrl, resolvePublicHttpTarget } from '../utils/ssrfGuard'
 
 // ============================================================================
 // Types
@@ -170,6 +170,22 @@ class WebhookService {
     }
   }
 
+  /**
+   * Resolve the fetch target for a webhook URL that already passed isPublicHttpUrl. For http, pin
+   * to the vetted resolved IP (defeats DNS rebinding) and carry the original host in a Host header;
+   * if the host no longer resolves to a public address, return null → caller MUST NOT fetch (never
+   * fall back to the raw hostname, which would reopen the rebinding window). For https, the IP
+   * cannot be pinned (TLS SNI/cert) so return the original URL with no Host override and rely on
+   * the isPublicHttpUrl guard + redirect:manual + egress firewall (see p8-security-followups.md).
+   */
+  private async resolveFetchTarget(url: string): Promise<{ fetchUrl: string; hostHeader: Record<string, string> } | null> {
+    const pin = await resolvePublicHttpTarget(url)
+    if (pin) return { fetchUrl: pin.url, hostHeader: { Host: pin.host } }
+    let isHttps = false
+    try { isHttps = new URL(url).protocol === 'https:' } catch { isHttps = false }
+    return isHttps ? { fetchUrl: url, hostHeader: {} } : null
+  }
+
   private async sendWebhook(webhook: Webhook, eventType: string, payload: unknown, attempt = 1): Promise<void> {
     const maxAttempts = 3
     const startTime = Date.now()
@@ -182,19 +198,25 @@ class WebhookService {
 
     const signature = await this.sign(body, webhook.secret)
 
-    // SSRF guard: re-check the stored URL at the sink, not just at create/update. Residual:
-    // this cannot stop DNS-rebinding (fetch re-resolves) — tracked as a P9 hardening item.
+    // SSRF guard: re-check the stored URL at the sink, not just at create/update.
     if (!(await isPublicHttpUrl(webhook.url))) {
       await this.logDelivery(webhook.id, eventType, 'failed', null, null, 'Blocked: webhook URL is not a public address', Date.now() - startTime)
       return
     }
+    // http: pin to the vetted IP (closes the DNS-rebinding gap between the guard and this fetch).
+    const target = await this.resolveFetchTarget(webhook.url)
+    if (!target) {
+      await this.logDelivery(webhook.id, eventType, 'failed', null, null, 'Blocked: webhook host no longer resolves to a public address', Date.now() - startTime)
+      return
+    }
 
     try {
-      const response = await fetch(webhook.url, {
+      const response = await fetch(target.fetchUrl, {
         method: 'POST',
         // redirect:'manual' — never follow a 3xx into an internal host (SSRF via redirect).
         redirect: 'manual',
         headers: {
+          ...target.hostHeader,
           'Content-Type': 'application/json',
           'X-Dispatch-Signature': signature,
           'X-Dispatch-Event': eventType,
@@ -307,14 +329,20 @@ class WebhookService {
     if (!(await isPublicHttpUrl(webhook.url))) {
       return { success: false, error: 'Webhook URL is not a public address' }
     }
+    // http: pin to the vetted IP (closes the DNS-rebinding gap between the guard and this fetch).
+    const target = await this.resolveFetchTarget(webhook.url)
+    if (!target) {
+      return { success: false, error: 'Webhook host no longer resolves to a public address' }
+    }
 
     const signature = await this.sign(body, webhook.secret)
 
     try {
-      const response = await fetch(webhook.url, {
+      const response = await fetch(target.fetchUrl, {
         method: 'POST',
         redirect: 'manual', // never follow a 3xx into an internal host (SSRF via redirect)
         headers: {
+          ...target.hostHeader,
           'Content-Type': 'application/json',
           'X-Dispatch-Signature': signature,
           'X-Dispatch-Event': 'test',

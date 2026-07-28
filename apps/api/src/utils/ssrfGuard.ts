@@ -66,3 +66,39 @@ export async function isPublicHttpUrl(rawUrl: string): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * For an http: URL whose host resolves ONLY to public addresses, return the URL with the host
+ * replaced by the pinned resolved IP (so fetch connects to the vetted address, defeating DNS
+ * rebinding between validation and connect) plus the original host for the Host header. Returns
+ * null for https: (caller keeps default behaviour — TLS SNI/cert validation prevents IP-pinning)
+ * or for a non-public / invalid URL.
+ */
+export async function resolvePublicHttpTarget(rawUrl: string): Promise<{ url: string; host: string } | null> {
+  let u: URL
+  try {
+    u = new URL(rawUrl)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'http:') return null
+
+  const host = u.hostname.replace(/^\[|\]$/g, '')
+  let ip: string
+  if (isIP(host)) {
+    if (isBlockedIp(host)) return null
+    ip = host
+  } else {
+    try {
+      const addrs = await lookup(host, { all: true })
+      if (addrs.length === 0 || addrs.some((a) => isBlockedIp(a.address))) return null
+      ip = addrs[0].address
+    } catch {
+      return null
+    }
+  }
+
+  const pinned = new URL(u.toString())
+  pinned.hostname = isIP(ip) === 6 ? `[${ip}]` : ip
+  return { url: pinned.toString(), host: u.host }
+}
