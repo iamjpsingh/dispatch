@@ -4,6 +4,8 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
+import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { pluginManager } from '../services/pluginManager'
 import { auditFromContext } from '../services/audit/context'
@@ -68,7 +70,7 @@ const pluginsRoutes = new Hono()
     return success(c, plugin)
   })
   // Install plugin from manifest
-  .post('/plugins', zValidator('json', InstallPluginSchema), async (c) => {
+  .post('/plugins', requirePermission(PERMISSIONS.SETTINGS_MANAGE), zValidator('json', InstallPluginSchema), async (c) => {
     const user = requireAuth(c)
     const body = c.req.valid('json')
 
@@ -101,7 +103,7 @@ const pluginsRoutes = new Hono()
     return success(c, plugin, 'Provider plugin installed', 201)
   })
   // Activate plugin
-  .post('/plugins/:id/activate', async (c) => {
+  .post('/plugins/:id/activate', requirePermission(PERMISSIONS.SETTINGS_MANAGE), async (c) => {
     const user = requireAuth(c)
     const pluginId = c.req.param('id')
 
@@ -113,7 +115,7 @@ const pluginsRoutes = new Hono()
     return success(c, null, 'Plugin activated')
   })
   // Disable plugin
-  .post('/plugins/:id/disable', async (c) => {
+  .post('/plugins/:id/disable', requirePermission(PERMISSIONS.SETTINGS_MANAGE), async (c) => {
     const user = requireAuth(c)
     const pluginId = c.req.param('id')
 
@@ -125,7 +127,7 @@ const pluginsRoutes = new Hono()
     return success(c, null, 'Plugin disabled')
   })
   // Update plugin settings
-  .put('/plugins/:id/settings', zValidator('json', PluginSettingsSchema), async (c) => {
+  .put('/plugins/:id/settings', requirePermission(PERMISSIONS.SETTINGS_MANAGE), zValidator('json', PluginSettingsSchema), async (c) => {
     const user = requireAuth(c)
     const pluginId = c.req.param('id')
     const { settings } = c.req.valid('json')
@@ -138,7 +140,7 @@ const pluginsRoutes = new Hono()
     return success(c, null, 'Plugin settings updated')
   })
   // Uninstall plugin
-  .delete('/plugins/:id', async (c) => {
+  .delete('/plugins/:id', requirePermission(PERMISSIONS.SETTINGS_MANAGE), async (c) => {
     const user = requireAuth(c)
     const pluginId = c.req.param('id')
 

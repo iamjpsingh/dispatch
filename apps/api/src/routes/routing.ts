@@ -4,6 +4,8 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
+import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { routingEngine } from '../services/routingEngine'
 import { auditFromContext } from '../services/audit/context'
@@ -71,7 +73,7 @@ const routingRoutes = new Hono()
     return success(c, { config })
   })
   // Update routing config
-  .put('/routing/config', zValidator('json', RoutingConfigSchema), async (c) => {
+  .put('/routing/config', requirePermission(PERMISSIONS.SMTP_MANAGE), zValidator('json', RoutingConfigSchema), async (c) => {
     const user = requireAuth(c)
     const body = c.req.valid('json')
 
@@ -80,7 +82,7 @@ const routingRoutes = new Hono()
     return success(c, null, 'Routing config updated')
   })
   // Initialize a provider for routing
-  .post('/routing/providers/init', zValidator('json', InitProviderSchema), async (c) => {
+  .post('/routing/providers/init', requirePermission(PERMISSIONS.SMTP_MANAGE), zValidator('json', InitProviderSchema), async (c) => {
     const user = requireAuth(c)
     const { configId, providerType, configName, dailyLimit } = c.req.valid('json')
 
@@ -89,7 +91,7 @@ const routingRoutes = new Hono()
     return success(c, null, 'Provider initialized for routing')
   })
   // Mark provider healthy/unhealthy
-  .post('/routing/providers/:configId/health', zValidator('json', ProviderHealthSchema), async (c) => {
+  .post('/routing/providers/:configId/health', requirePermission(PERMISSIONS.SMTP_MANAGE), zValidator('json', ProviderHealthSchema), async (c) => {
     const user = requireAuth(c)
     const configId = c.req.param('configId')
     const { healthy, error: errorMsg } = c.req.valid('json')
@@ -104,7 +106,7 @@ const routingRoutes = new Hono()
     return success(c, null, `Provider marked ${healthy ? 'healthy' : 'unhealthy'}`)
   })
   // Trigger manual failover
-  .post('/routing/failover', zValidator('json', FailoverSchema), async (c) => {
+  .post('/routing/failover', requirePermission(PERMISSIONS.SMTP_MANAGE), zValidator('json', FailoverSchema), async (c) => {
     const user = requireAuth(c)
     const { failedConfigId, reason } = c.req.valid('json')
 

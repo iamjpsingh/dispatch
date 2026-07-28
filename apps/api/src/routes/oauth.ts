@@ -6,6 +6,8 @@ import { Hono } from 'hono'
 import { oauthService } from '../services/oauthService'
 import { d1UserDatabase } from '../services/d1UserDatabase'
 import { requireAuth } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
+import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { systemSettingsService } from '../services/systemSettingsService'
 import { logger } from '../utils/logger'
@@ -96,7 +98,7 @@ const oauthRoutes = new Hono()
    * Disconnect OAuth account
    * DELETE /oauth/:configId/disconnect
    */
-  .delete('/oauth/:configId/disconnect', async (c) => {
+  .delete('/oauth/:configId/disconnect', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) => {
     try {
       const user = requireAuth(c)
       const configId = c.req.param('configId')
@@ -125,7 +127,7 @@ const oauthRoutes = new Hono()
    * Test OAuth connection
    * POST /oauth/:configId/test
    */
-  .post('/oauth/:configId/test', async (c) => {
+  .post('/oauth/:configId/test', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) => {
     try {
       const user = requireAuth(c)
       const configId = c.req.param('configId')

@@ -4,6 +4,8 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
+import { PERMISSIONS } from '../services/rbacService'
 import { success, error } from '../utils/response'
 import { warmupService } from '../services/warmupService'
 import { auditFromContext } from '../services/audit/context'
@@ -53,7 +55,7 @@ const warmupRoutes = new Hono()
     return success(c, progress)
   })
   // Create warmup plan
-  .post('/warmup', zValidator('json', CreateWarmupSchema), async (c) => {
+  .post('/warmup', requirePermission(PERMISSIONS.SMTP_MANAGE), zValidator('json', CreateWarmupSchema), async (c) => {
     const user = requireAuth(c)
     const body = c.req.valid('json')
 
@@ -70,7 +72,7 @@ const warmupRoutes = new Hono()
     return success(c, plan, 'Warmup plan created', 201)
   })
   // Pause warmup
-  .post('/warmup/:id/pause', async (c) => {
+  .post('/warmup/:id/pause', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) => {
     const user = requireAuth(c)
     const planId = c.req.param('id')
 
@@ -82,7 +84,7 @@ const warmupRoutes = new Hono()
     return success(c, null, 'Warmup plan paused')
   })
   // Resume warmup
-  .post('/warmup/:id/resume', async (c) => {
+  .post('/warmup/:id/resume', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) => {
     const user = requireAuth(c)
     const planId = c.req.param('id')
 
@@ -94,7 +96,7 @@ const warmupRoutes = new Hono()
     return success(c, null, 'Warmup plan resumed')
   })
   // Cancel warmup
-  .post('/warmup/:id/cancel', async (c) => {
+  .post('/warmup/:id/cancel', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) => {
     const user = requireAuth(c)
     const planId = c.req.param('id')
 
@@ -106,7 +108,7 @@ const warmupRoutes = new Hono()
     return success(c, null, 'Warmup plan cancelled')
   })
   // Delete warmup (only completed/cancelled)
-  .delete('/warmup/:id', async (c) => {
+  .delete('/warmup/:id', requirePermission(PERMISSIONS.SMTP_MANAGE), async (c) => {
     const user = requireAuth(c)
     const planId = c.req.param('id')
 
