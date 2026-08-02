@@ -5,6 +5,10 @@ info:
   description: |
     Open-source bulk email campaign platform with tracking, multi-provider support, and batch processing.
 
+    > **Note:** This spec is maintained by hand and may lag the implementation. Treat the live API
+    > (and the route handlers under `apps/api/src/routes`) as the source of truth. Browse it interactively
+    > at `/docs` (Swagger UI) on any running instance.
+
     ## Authentication
     Most endpoints require authentication via a `session_token` cookie obtained from the login endpoint.
     Alternatively, an API key can be passed via the `X-API-Key` header.
@@ -3852,3 +3856,110 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
+
+  # =========================================================================
+  # Admin — org settings, sender identity, audit/activity logs, GDPR (P7–P8).
+  # Added in the P9 freshness pass; see the note in info.description. All admin
+  # routes are tenant-scoped and RBAC-gated (permission shown per operation).
+  # =========================================================================
+  /admin/org/sender-identity:
+    get:
+      tags: [Admin]
+      summary: Get the org sender identity (CAN-SPAM postal address, from-name/email)
+      operationId: getSenderIdentity
+      description: Requires the `org.view` permission.
+      responses:
+        '200':
+          description: Sender identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+    put:
+      tags: [Admin]
+      summary: Update the org sender identity
+      operationId: updateSenderIdentity
+      description: Requires the `org.manage` permission. Postal address is required for CAN-SPAM compliance before launching campaigns.
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: List the org audit log (append-only security/compliance events)
+      operationId: listAuditLogs
+      description: Requires the `audit.view` permission.
+      responses:
+        '200':
+          description: Array of audit-log entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  /admin/activity-logs:
+    get:
+      tags: [Admin]
+      summary: List the org activity feed (user-facing actions)
+      operationId: listActivityLogs
+      description: Requires the `logs.view` permission.
+      responses:
+        '200':
+          description: Array of activity entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  /admin/contacts/{id}/gdpr-export:
+    get:
+      tags: [Admin]
+      summary: GDPR DSAR export — all stored data for one contact
+      operationId: gdprExportContact
+      description: Requires the `gdpr.manage` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The contact's exported data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Contact not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/contacts/{id}/gdpr-erase:
+    post:
+      tags: [Admin]
+      summary: GDPR right-to-erasure — anonymize a contact and suppress by hash
+      operationId: gdprEraseContact
+      description: Requires the `gdpr.manage` permission. Anonymizes the contact, cascades to related rows, and adds the email hash to the suppression list so it can never be re-imported.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Erased.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Contact not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

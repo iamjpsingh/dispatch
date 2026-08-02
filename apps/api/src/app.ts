@@ -3,13 +3,16 @@
  * Clean, modular architecture following enterprise standards
  */
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { logger as honoLogger } from 'hono/logger'
 import { serveStatic } from 'hono/bun'
 import { getCookie } from 'hono/cookie'
 import { mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
+import { absolutePath as swaggerUiAssetPath } from 'swagger-ui-dist'
 
 // Configuration
 import { SERVER, CORS, AUTH, API, DIRECTORIES, ENV, COOKIE, WORKERS } from './config'
@@ -213,6 +216,42 @@ app.get('/api/user/info', async (c) => {
     user: { id: session.user.id, email: session.user.email, name: session.user.name },
   })
 })
+
+// ============================================================================
+// API Documentation — OpenAPI spec + self-contained Swagger UI (public, no CDN)
+// ============================================================================
+
+// The canonical spec is the hand-maintained repo-root docs/openapi.yaml. The API runs with
+// CWD = apps/api (dev: `bun run index.ts`; Docker WORKDIR /app/apps/api), so it resolves at
+// ../../docs/openapi.yaml. A missing file returns a clean 404 — it never breaks boot.
+const OPENAPI_CANDIDATES = ['../../docs/openapi.yaml', 'docs/openapi.yaml']
+app.get('/openapi.yaml', (c) => {
+  const found = OPENAPI_CANDIDATES.find((p) => existsSync(p))
+  if (!found) return c.json({ success: false, message: 'openapi.yaml not found' }, 404)
+  return c.body(readFileSync(found, 'utf-8'), 200, { 'Content-Type': 'application/yaml; charset=utf-8' })
+})
+
+// Swagger UI assets are served same-origin from the installed swagger-ui-dist package.
+const serveSwaggerAsset = (file: string, contentType: string) => (c: Context) => {
+  try {
+    return c.body(readFileSync(join(swaggerUiAssetPath(), file), 'utf-8'), 200, { 'Content-Type': contentType })
+  } catch {
+    return c.json({ success: false, message: `asset not found: ${file}` }, 404)
+  }
+}
+app.get('/docs-assets/swagger-ui.css', serveSwaggerAsset('swagger-ui.css', 'text/css; charset=utf-8'))
+app.get('/docs-assets/swagger-ui-bundle.js', serveSwaggerAsset('swagger-ui-bundle.js', 'application/javascript; charset=utf-8'))
+app.get('/docs', (c) =>
+  c.html(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dispatch API</title>
+<link rel="stylesheet" href="/docs-assets/swagger-ui.css"></head>
+<body><div id="swagger-ui"></div>
+<script src="/docs-assets/swagger-ui-bundle.js"></script>
+<script>window.onload = () => SwaggerUIBundle({ url: '/openapi.yaml', dom_id: '#swagger-ui' })</script>
+</body></html>`)
+)
 
 // ============================================================================
 // SPA Fallback — serve frontend/dist in production

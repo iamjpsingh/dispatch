@@ -26,6 +26,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock turbo.json ./
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
+# The API serves the hand-maintained OpenAPI spec at /openapi.yaml (resolved ../../docs from apps/api)
+COPY docs ./docs
 # Serve the built SPA from the api (static assets)
 COPY --from=web-build /app/apps/web/dist ./apps/web/dist
 WORKDIR /app/apps/api

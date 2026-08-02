@@ -105,6 +105,14 @@ This creates the invisible platform admin account. Log in and configure the syst
 
 ---
 
+## Documentation
+
+- **[Self-Hosting Guide](docs/SELF-HOSTING.md)** — Docker deploy, environment variables, migrations, backup/restore, and network egress hardening.
+- **[Deliverability Guide](docs/DELIVERABILITY.md)** — SPF/DKIM/DMARC, domain verification, IP/domain warmup, suppression, CAN-SPAM, and one-click unsubscribe.
+- **API reference** — a running instance serves interactive Swagger UI at **`/docs`** and the raw OpenAPI spec at **`/openapi.yaml`** (source: [`docs/openapi.yaml`](docs/openapi.yaml)).
+
+---
+
 ## Email Providers
 
 Dispatch supports 8 email providers. Platform admin configures the system mailer (for transactional emails like password resets and invitations). Users configure their own sending accounts for campaigns.
