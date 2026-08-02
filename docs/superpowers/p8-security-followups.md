@@ -39,14 +39,14 @@ T4 discovery sweep — this list will grow with additional Medium/Low findings a
   `timingSafeEqual`'s length-mismatch throw into `false`. Behavior is unchanged; this
   removes reliance on exception control flow for a security-relevant check.
 
-## Deferred from the T4 discovery sweep → P9 hardening (confirmed, not fixed in P8)
+## Deferred from the T4 discovery sweep → ✅ RESOLVED in P9
 
 Full confirmed/refuted detail is in `p8-sweep-findings.md`. Per the agreed P8 fix bar, the
 Highs plus the R9-structural Mediums (cross-tenant IDOR M1, plaintext-secret M2, grant-bound
-M3) were fixed in T5; the three below are real but were deferred to P9 because their correct
-fix is either larger-surface or deploy-topology-dependent.
+M3) were fixed in T5; the three below were deferred to P9 (larger-surface or deploy-topology-
+dependent) and have now all been **fixed in P9** — each item is annotated with its commit below.
 
-- **M4 — sensitive mutating routes gate on `requireAuth` only, not `requirePermission`**
+- **✅ RESOLVED in P9 T2 (`048a3fe`).** **M4 — sensitive mutating routes gate on `requireAuth` only, not `requirePermission`**
   (`routes/routing.ts`, `plugins.ts`, `oauth.ts`, `warmup.ts`). A `readonly`/`member` role can
   mutate routing config, force provider failover, install plugins, disconnect/test OAuth
   accounts, and manage warmup plans. Every operation is scoped to the acting `user.id` (no
@@ -56,19 +56,19 @@ fix is either larger-surface or deploy-topology-dependent.
   handler (the SMTP/provider/warmup manage permissions already exist and gate `config.ts`).
   ~12 handlers across 4 files.
 
-- **M5 — rate limiter keys on the spoofable leftmost `X-Forwarded-For`**
-  (`middleware/rateLimit.ts:39`). An unauthenticated attacker rotates the XFF header to get a
+- **✅ RESOLVED in P9 T1 (`867ddb6`).** **M5 — rate limiter keys on the spoofable leftmost `X-Forwarded-For`**
+  (`middleware/rateLimit.ts`). An unauthenticated attacker rotates the XFF header to get a
   fresh bucket per request, defeating the login/register/send/upload throttles (the only
-  anti-brute-force control; there is no account lockout). **Fix (P9):** derive the client IP
-  from a trusted position for the actual deploy topology (rightmost hop behind the known proxy
-  count, or a platform header like `cf-connecting-ip`), rather than the client-controlled
-  leftmost token. Deferred because the correct source depends on the production proxy chain.
+  anti-brute-force control; there is no account lockout). **Fixed:** `clientIp()` now keys on the
+  XFF entry `TRUSTED_PROXY_HOPS` positions from the right (default 1), defeating leftmost-spoof;
+  applied to all four limiters. Set `TRUSTED_PROXY_HOPS` to the real proxy-chain depth (see
+  SELF-HOSTING.md).
 
-- **L1 — no rate limit on `POST /auth/forgot-password`** (`routes/auth.ts:192`;
-  `reset-password`/`change-password` likewise). Enables inbox email-bombing + shared
-  system-mailer quota/reputation abuse. Reachable only with a (trivially self-registered)
-  session — `forgot-password` sits behind `authMiddleware` — and leaks no data (the reset token
-  is never returned), so it is Low. **Fix (P9):** add a per-email cooldown / rate-limit.
+- **✅ RESOLVED in P9 T1 (`867ddb6`).** **L1 — no rate limit on `POST /auth/forgot-password`**
+  (`routes/auth.ts`; `reset-password`/`change-password` likewise). Enables inbox email-bombing +
+  shared system-mailer quota/reputation abuse. Reachable only with a (trivially self-registered)
+  session and leaks no data, so it is Low. **Fixed:** `authRateLimit` is now wired onto
+  forgot/reset/change-password (and their `/api/v1` twins) in `app.ts`.
 
 ## T7 final-review outcomes
 
@@ -91,20 +91,29 @@ several residuals:
 - Webhook create/update with a non-public URL now returns a clean 400 (was an unhandled 500).
 - `MembersPage.vue` change-role dropdown no longer offers `owner` (the server rejects it).
 
-**Deferred to P9** (accepted residual under the P8 bar):
+**Deferred to P9 → ✅ RESOLVED in P9 T3 (`4aad483`):**
 - **DNS-rebinding TOCTOU (Medium)** — `isPublicHttpUrl` resolves the host, then `fetch` re-resolves
   independently, so an attacker controlling authoritative DNS (TTL 0) can pass a public A-record to
-  the guard and serve an internal IP to the connect. A check-then-reconnect pattern cannot
-  structurally prevent this; the correct fix is resolve-once + pin the vetted IP via a custom undici
-  dispatcher (`lookup`), which is runtime/deploy-dependent — same class as M5. The boundary + sink
-  re-check still closes the original open-SSRF; this is defense-in-depth hardening.
-- IPv6 Teredo (`2001:0::/32`) and other exotic translation ranges on the DNS-resolved path (Low).
+  the guard and serve an internal IP to the connect. **Fixed for `http`:** `resolvePublicHttpTarget`
+  resolves once and pins the connection to the vetted public IP (URL host → IP), carrying the original
+  hostname in the `Host` header; a rebind between the guard lookup and the pin lookup is **blocked, not
+  fetched raw**. **Residual (genuinely post-GA):** `https` is intentionally NOT pinned — TLS SNI/cert
+  validation needs the original hostname, so connection-time IP-pinning would break delivery. `https`
+  rebinding relies on the boundary guard + `redirect:'manual'` + the **network egress firewall**
+  documented in SELF-HOSTING.md (block RFC1918 / `169.254.0.0/16` / metadata from the api/worker egress).
+
+**Still deferred (genuinely post-GA, Low):**
+- IPv6 Teredo (`2001:0::/32`) and other exotic translation ranges on the DNS-resolved path.
+- Full DNS-pin for `https` (needs a custom TLS dispatcher that pins the IP while presenting the original
+  SNI — runtime/deploy-dependent; mitigated by the egress firewall above).
 
 ## Refuted during the T4 sweep (checked, not vulnerabilities)
 
 Recorded for the audit trail — see `p8-sweep-findings.md` for full rationale. Notable: the
 `templateService.renderPreview` dynamic-RegExp is **not** a ReDoS under the deployed Bun/JSC
 runtime (would become a real High only if the API were ever moved to Node/V8 — track if that
-migration is ever considered); `segmentService.buildQuery` is doubly-dormant (echo-only +
-never populated) and fully parameterized; the automation-step and RSS-feed SSRF paths are
-unreachable dead code (add a URL allowlist if either feature is ever wired to a route/worker).
+migration is ever considered); `segmentService.buildQuery` was doubly-dormant (echo-only +
+never populated) and fully parameterized — **removed outright in P9 T4 (`5919781`)** along with
+the dormant `rssService` (the RSS-feed SSRF path), so those two are now moot. The automation-step
+SSRF path remains unreachable dead code (add a URL allowlist if that feature is ever wired to a
+route/worker).
