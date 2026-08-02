@@ -26,10 +26,11 @@ cd apps/api && bun run dev
 cd apps/web && bun run dev
 ```
 
-Run the test suite from `apps/api`:
+Run the test suite from `apps/api` (the suite runs under Vitest — use `bun run test`, **not**
+`bun test`, which invokes Bun's native runner and cannot resolve the `vitest` mocking helpers):
 
 ```bash
-cd apps/api && bun test
+cd apps/api && bun run test
 ```
 
 See **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** for the full environment/deploy reference and
