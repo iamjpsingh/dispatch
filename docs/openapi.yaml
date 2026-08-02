@@ -62,6 +62,8 @@ tags:
     description: Email logs, stats, and exports
   - name: Dashboard
     description: Dashboard stats and polling
+  - name: Admin
+    description: Org/platform administration — sender identity, audit/activity logs, GDPR (DSAR export + erasure)
 
 # ---------------------------------------------------------------------------
 # Security Schemes

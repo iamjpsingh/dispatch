@@ -38,7 +38,6 @@ Set these in a `.env` file at the repo root (compose reads it via `env_file`). T
 | `ENCRYPTION_KEY` | 32-byte **base64** key for AES-256-GCM encryption of secrets at rest (SMTP/provider keys, OAuth tokens, webhook secrets). Boot fails without it. |
 | `DATABASE_URL` | Postgres connection string, e.g. `postgres://dispatch:dispatch@postgres:5432/dispatch`. |
 | `REDIS_URL` | Valkey/Redis connection string for BullMQ, e.g. `redis://valkey:6379`. |
-| `SESSION_SECRET` | Signing secret for session cookies. |
 | `SUPPRESSION_HASH_SECRET` | HMAC key for the GDPR suppression list (emails are stored only as salted hashes). Boot asserts it is set. |
 
 ### Object storage (S3 / R2 / MinIO)
@@ -56,7 +55,7 @@ Set these in a `.env` file at the repo root (compose reads it via `env_file`). T
 |---|---|---|
 | `FALLBACK_ENCRYPTION_KEY` | — | Old key kept readable during **key rotation** — new writes use `ENCRYPTION_KEY`, reads fall back to this. |
 | `TRUSTED_PROXY_HOPS` | `1` | Number of reverse-proxy hops in front of the API. Rate limiting reads the client IP this many entries from the right of `X-Forwarded-For`, defeating left-most spoofing. Set to the real depth of your proxy chain. |
-| `RETENTION_DAYS` | — | Data-retention window for the daily purge job. |
+| `RETENTION_DAYS` | `730` | Data-retention window for the purge job, which runs **daily at 02:00 regardless** — data older than this many days is deleted. Defaults to 730 (2 years) if unset; raise/lower to match your policy. |
 | `PORT` | `5500` | API listen port. |
 | `NODE_ENV` | — | Set to `production` in deploys. |
 | `BASE_URL` / `FRONTEND_URL` | — | Public URLs used in links (tracking, unsubscribe, OAuth redirects). |
