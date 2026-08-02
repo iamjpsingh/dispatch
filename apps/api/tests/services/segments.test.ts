@@ -1,5 +1,5 @@
 // P2.2 net — segmentService on real (PGlite) Postgres. CRUD, static membership,
-// contact_count maintenance, tenant isolation, and the pure buildQuery helper.
+// contact_count maintenance, and tenant isolation.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 vi.mock('../../src/utils/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), startup: vi.fn() } }))
@@ -84,18 +84,5 @@ describe('P2.2 — segmentService (Drizzle/PGlite)', () => {
     await segmentService.addContacts(seg.id, ['con1'])
     await segmentService.delete(ORG, seg.id)
     expect(await segmentService.getStaticMembers(seg.id)).toEqual([])
-  })
-
-  it('buildQuery is a pure synchronous helper', () => {
-    const { sql, params } = segmentService.buildQuery({
-      operator: 'AND',
-      conditions: [
-        { field: 'status', operator: 'eq', value: 'active' },
-        { field: 'score', operator: 'gte', value: 50 },
-      ],
-    })
-    expect(sql).toContain('status = ?')
-    expect(sql).toContain('engagement_score >= ?')
-    expect(params).toEqual(['active', 50])
   })
 })

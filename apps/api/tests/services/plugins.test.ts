@@ -157,19 +157,6 @@ describe('P2 — pluginManager (Drizzle/PGlite)', () => {
     expect(await pluginManager.updateSettings(USER, 'plg_nope', {})).toBe(false)
   })
 
-  it('installs a built-in provider and rejects an unknown one', async () => {
-    const providers = pluginManager.getAvailableProviders()
-    expect(providers.map((p) => p.name)).toContain('SendGrid')
-
-    const installed = await pluginManager.installBuiltinProvider(USER, 'SendGrid', { api_key: 'sg' })
-    expect(installed?.name).toBe('SendGrid')
-    expect(installed?.type).toBe('provider')
-    expect(installed?.entry_path).toBe('built-in:sendgrid')
-    expect(JSON.parse(installed!.settings_json)).toEqual({ api_key: '***' }) // masked on read (M2)
-
-    expect(await pluginManager.installBuiltinProvider(USER, 'Nonexistent', {})).toBeNull()
-  })
-
   it('Postgres landing cross-check: install writes exactly one durable row matching the return shape', async () => {
     const p = await pluginManager.install(USER, { manifest: manifest({ name: 'Durable' }) })
 

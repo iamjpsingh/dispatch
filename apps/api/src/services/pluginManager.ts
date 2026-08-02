@@ -65,48 +65,6 @@ interface HookHandler {
   handler: (data: any) => Promise<any>
 }
 
-// ============================================================================
-// Built-in Provider Plugin Definitions
-// ============================================================================
-
-const BUILT_IN_PROVIDERS: PluginManifest[] = [
-  {
-    name: 'Amazon SES',
-    version: '1.0.0',
-    description: 'Send emails via Amazon Simple Email Service',
-    author: 'Dispatch',
-    type: 'provider',
-    entry: 'built-in:ses',
-    settings: [
-      { key: 'aws_region', label: 'AWS Region', type: 'string', default: 'us-east-1', required: true },
-      { key: 'aws_access_key_id', label: 'Access Key ID', type: 'string', required: true },
-      { key: 'aws_secret_access_key', label: 'Secret Access Key', type: 'string', required: true },
-    ],
-  },
-  {
-    name: 'SendGrid',
-    version: '1.0.0',
-    description: 'Send emails via SendGrid API',
-    author: 'Dispatch',
-    type: 'provider',
-    entry: 'built-in:sendgrid',
-    settings: [
-      { key: 'api_key', label: 'API Key', type: 'string', required: true },
-    ],
-  },
-  {
-    name: 'Postmark',
-    version: '1.0.0',
-    description: 'Send emails via Postmark API',
-    author: 'Dispatch',
-    type: 'provider',
-    entry: 'built-in:postmark',
-    settings: [
-      { key: 'server_token', label: 'Server Token', type: 'string', required: true },
-    ],
-  },
-]
-
 const now = () => new Date().toISOString()
 const PLUGINS_DIR = './plugins'
 
@@ -288,21 +246,6 @@ class PluginManager {
       result[event] = handlers.map(h => h.pluginName)
     }
     return result
-  }
-
-  // --------------------------------------------------------------------------
-  // Built-in Providers
-  // --------------------------------------------------------------------------
-
-  getAvailableProviders(): PluginManifest[] {
-    return BUILT_IN_PROVIDERS
-  }
-
-  async installBuiltinProvider(userId: string, providerName: string, settings: Record<string, any>): Promise<Plugin | null> {
-    const manifest = BUILT_IN_PROVIDERS.find(p => p.name === providerName)
-    if (!manifest) return null
-
-    return this.install(userId, { manifest, settings })
   }
 
   // --------------------------------------------------------------------------

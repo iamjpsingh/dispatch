@@ -31,5 +31,4 @@ export const contentManifest = {
   'DELETE /segments/:id': 'segment.deleted',
   'POST /segments/:id/contacts': 'segment.members_added',
   'DELETE /segments/:id/contacts': 'segment.members_removed',
-  'POST /segments/:id/preview': { exempt: 'preview-test-validate: previews matching contacts' },
 } satisfies Record<string, AuditAction | { exempt: string }>

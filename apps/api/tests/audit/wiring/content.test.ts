@@ -57,7 +57,6 @@ vi.mock('../../../src/services/segmentService', () => ({
     addContacts: vi.fn(),
     removeContacts: vi.fn(),
     getStaticMembers: vi.fn(),
-    buildQuery: vi.fn(),
   },
 }))
 

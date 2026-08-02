@@ -14,6 +14,18 @@ import { pluginManager } from '../../src/services/pluginManager'
 
 const SECRET = 'AKIA-super-secret-value-123'
 
+// A provider-plugin manifest whose settings carry a secret (api_key). The encrypt-at-rest +
+// keys-only mask under test lives in pluginManager.install()/maskRow(), exercised directly here.
+const SENDGRID = {
+  name: 'SendGrid',
+  version: '1.0.0',
+  description: 'Send emails via SendGrid API',
+  author: 'Dispatch',
+  type: 'provider' as const,
+  entry: 'built-in:sendgrid',
+}
+const installSendgrid = () => pluginManager.install('u1', { manifest: SENDGRID, settings: { api_key: SECRET } })
+
 describe('P8 T5 — plugin secret exposure (M2)', () => {
   let db: TestDb
   beforeEach(async () => {
@@ -27,17 +39,17 @@ describe('P8 T5 — plugin secret exposure (M2)', () => {
   })
 
   it('M2: provider secret is encrypted at rest (not plaintext in settings_json)', async () => {
-    const plugin = await pluginManager.installBuiltinProvider('u1', 'SendGrid', { api_key: SECRET })
-    const [row] = await db.select().from(plugins).where(eq(plugins.id, plugin!.id)).limit(1)
+    const plugin = await installSendgrid()
+    const [row] = await db.select().from(plugins).where(eq(plugins.id, plugin.id)).limit(1)
     expect(row.settings_json).not.toContain(SECRET)
     expect(row.settings_json).toMatch(/^v1:/) // encrypted envelope, like whatsapp/webhook secrets
   })
 
   it('M2: install/get/list do NOT return the plaintext secret to callers', async () => {
-    const plugin = await pluginManager.installBuiltinProvider('u1', 'SendGrid', { api_key: SECRET })
-    expect(plugin!.settings_json).not.toContain(SECRET) // install response masked
+    const plugin = await installSendgrid()
+    expect(plugin.settings_json).not.toContain(SECRET) // install response masked
 
-    const got = await pluginManager.get('u1', plugin!.id)
+    const got = await pluginManager.get('u1', plugin.id)
     expect(got!.settings_json).not.toContain(SECRET)
 
     const list = await pluginManager.list('u1')
@@ -45,8 +57,8 @@ describe('P8 T5 — plugin secret exposure (M2)', () => {
   })
 
   it('M2: masked read still shows WHICH keys are configured (not over-hidden)', async () => {
-    const plugin = await pluginManager.installBuiltinProvider('u1', 'SendGrid', { api_key: SECRET })
-    const got = await pluginManager.get('u1', plugin!.id)
+    const plugin = await installSendgrid()
+    const got = await pluginManager.get('u1', plugin.id)
     const parsed = JSON.parse(got!.settings_json)
     expect(Object.keys(parsed)).toContain('api_key')
     expect(parsed.api_key).toBe('***')

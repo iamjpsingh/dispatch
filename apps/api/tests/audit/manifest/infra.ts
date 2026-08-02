@@ -24,7 +24,6 @@ export const infraManifest = {
   'POST /routing/failover': 'routing.failover_triggered',
   // plugins.ts
   'POST /plugins': 'plugin.installed',
-  'POST /plugins/providers/install': 'provider.connected',
   'POST /plugins/:id/activate': 'plugin.enabled',
   'POST /plugins/:id/disable': 'plugin.disabled',
   'PUT /plugins/:id/settings': 'plugin.settings_updated',

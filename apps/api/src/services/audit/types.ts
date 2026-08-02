@@ -22,7 +22,7 @@ export type AuditAction =
   // Settings / SMTP / OAuth / provider / infra
   | 'settings.updated' | 'smtp.created' | 'smtp.updated' | 'smtp.deleted'
   | 'oauth.updated' | 'cloudflare.updated' | 'cloudflare.worker_deployed' | 'cloudflare.worker_undeployed'
-  | 'provider.connected' | 'provider.disconnected'
+  | 'provider.disconnected'
   // Campaigns
   | 'campaign.created' | 'campaign.updated' | 'campaign.deleted' | 'campaign.launched'
   | 'campaign.paused' | 'campaign.cancelled' | 'campaign.scheduled' | 'campaign.rescheduled'

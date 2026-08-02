@@ -118,29 +118,6 @@ const segmentsRoutes = new Hono()
     const contactIds = await segmentService.getStaticMembers(segmentId, limit, offset)
     return success(c, { contact_ids: contactIds, total: segment.contact_count })
   })
-  // ==========================================================================
-  // Dynamic Segment Query
-  // ==========================================================================
-  .post('/segments/:id/preview', requirePermission(PERMISSIONS.SEGMENTS_VIEW), async (c) => {
-    const orgId = getOrgId(c)
-    const segmentId = c.req.param('id')
-
-    const segment = await segmentService.get(orgId, segmentId)
-    if (!segment) return error(c, 'Segment not found', 404)
-
-    if (segment.type !== 'dynamic' || !segment.rules_json) {
-      return error(c, 'Not a dynamic segment or no rules defined', 400)
-    }
-
-    const rules = JSON.parse(segment.rules_json)
-    const query = segmentService.buildQuery(rules)
-
-    return success(c, {
-      sql_preview: query.sql,
-      param_count: query.params.length,
-      contact_count: segment.contact_count,
-    })
-  })
 
 export default segmentsRoutes
 export type SegmentsRoutes = typeof segmentsRoutes

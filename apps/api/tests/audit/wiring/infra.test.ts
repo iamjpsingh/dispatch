@@ -51,12 +51,10 @@ vi.mock('../../../src/services/queueEngine', () => ({
 vi.mock('../../../src/services/pluginManager', () => ({
   pluginManager: {
     list: vi.fn(),
-    getAvailableProviders: vi.fn(),
     discoverLocalPlugins: vi.fn(),
     getRegisteredHooks: vi.fn(),
     get: vi.fn(),
     install: vi.fn(),
-    installBuiltinProvider: vi.fn(),
     activate: vi.fn(),
     disable: vi.fn(),
     updateSettings: vi.fn(),

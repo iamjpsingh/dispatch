@@ -24,11 +24,6 @@ const InstallPluginSchema = z.object({
   settings: z.record(z.string(), z.unknown()).optional(),
 })
 
-const InstallProviderSchema = z.object({
-  providerName: z.string().min(1, 'providerName is required'),
-  settings: z.record(z.string(), z.unknown()).optional(),
-})
-
 const PluginSettingsSchema = z.object({
   settings: z.record(z.string(), z.unknown()),
 })
@@ -41,12 +36,6 @@ const pluginsRoutes = new Hono()
     const status = c.req.query('status') || undefined
     const plugins = await pluginManager.list(user.id, { type, status })
     return success(c, { plugins })
-  })
-  // Get available (built-in) providers
-  .get('/plugins/providers', async (c) => {
-    requireAuth(c)
-    const providers = pluginManager.getAvailableProviders()
-    return success(c, { providers })
   })
   // Discover local plugins
   .get('/plugins/discover', async (c) => {
@@ -87,20 +76,6 @@ const pluginsRoutes = new Hono()
       }
       throw err
     }
-  })
-  // Install built-in provider plugin
-  .post('/plugins/providers/install', zValidator('json', InstallProviderSchema), async (c) => {
-    const user = requireAuth(c)
-    const { providerName, settings } = c.req.valid('json')
-
-    const plugin = await pluginManager.installBuiltinProvider(user.id, providerName, settings || {})
-
-    if (!plugin) {
-      return error(c, `Provider "${providerName}" not found`, 404)
-    }
-
-    auditFromContext(c, { action: 'provider.connected', entityType: 'plugin', entityId: plugin.id })
-    return success(c, plugin, 'Provider plugin installed', 201)
   })
   // Activate plugin
   .post('/plugins/:id/activate', requirePermission(PERMISSIONS.SETTINGS_MANAGE), async (c) => {

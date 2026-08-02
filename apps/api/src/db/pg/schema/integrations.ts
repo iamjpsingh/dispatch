@@ -121,29 +121,7 @@ export const landing_pages = pgTable(
   (t) => [unique('uq_lp_org_slug').on(t.org_id, t.slug), index('idx_lp_org').on(t.org_id)]
 )
 
-export const rss_feeds = pgTable(
-  'rss_feeds',
-  {
-    id: text('id').primaryKey(),
-    org_id: text('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
-    user_id: text('user_id').notNull(),
-    name: text('name').notNull(),
-    url: text('url').notNull(),
-    check_interval: integer('check_interval').notNull().default(60),
-    template_id: text('template_id'),
-    list_id: text('list_id'),
-    last_checked_at: ts('last_checked_at'),
-    last_item_guid: text('last_item_guid'),
-    status: text('status').notNull().default('active'),
-    error_message: text('error_message'),
-    created_at: ts('created_at').notNull().defaultNow(),
-    updated_at: ts('updated_at').notNull().defaultNow(),
-  },
-  (t) => [index('idx_rss_org').on(t.org_id)]
-)
-
 export type WebhookRow = typeof webhooks.$inferSelect
 export type PluginRow = typeof plugins.$inferSelect
 export type FormEndpointRow = typeof form_endpoints.$inferSelect
 export type LandingPageRow = typeof landing_pages.$inferSelect
-export type RssFeedRow = typeof rss_feeds.$inferSelect
