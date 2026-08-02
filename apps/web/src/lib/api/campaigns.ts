@@ -10,7 +10,7 @@ const client = hc<CampaignsRoutes>(rpcBase(), { fetch: rpcFetch })
 
 // The web CampaignType union and the server CreateCampaignSchema `type` enum
 // have pre-existing drift (web: one_time/recurring/automation; server:
-// regular/automated/rss). The loose ApiClient never type-checked this; RPC
+// regular/ab_test/automated). The loose ApiClient never type-checked this; RPC
 // does. Bridge create/update payloads to the server-inferred json shape at the
 // boundary and reconcile the enums post-P6.
 type CreateCampaignJson = InferRequestType<typeof client.campaigns.$post>['json']

@@ -5,7 +5,7 @@ export const CreateCampaignSchema = z.object({
   subject: z.string().min(1, 'Subject is required').max(500),
   from_email: z.string().email('Valid from_email is required'),
   from_name: z.string().min(1, 'from_name is required').max(200),
-  type: z.enum(['regular', 'ab_test', 'automated', 'rss']).optional(),
+  type: z.enum(['regular', 'ab_test', 'automated']).optional(),
   template_id: z.string().optional(),
   html_content: z.string().optional(),
   text_content: z.string().optional(),
