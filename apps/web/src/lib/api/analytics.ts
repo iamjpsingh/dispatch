@@ -518,22 +518,11 @@ export const pluginsApi = {
     if (!body.success) throw new Error(body.message ?? 'Not found')
     return body.data as PluginInfo
   },
-  getProviders: async () => {
-    const res = await pluginsClient.plugins.providers.$get()
-    const body = await res.json()
-    return (body.data as { providers: any[] } | undefined)?.providers || []
-  },
   install: async (manifest: any, settings?: Record<string, any>): Promise<PluginInfo> => {
     const res = await pluginsClient.plugins.$post({ json: { manifest, settings } })
     const body = await res.json()
     if (!body.success) throw new Error(body.message ?? 'Failed')
     return body.data as PluginInfo
-  },
-  installProvider: async (providerName: string, settings: Record<string, any>) => {
-    const res = await pluginsClient.plugins.providers.install.$post({ json: { providerName, settings } })
-    const body = await res.json()
-    if (!body.success) throw new Error(body.message ?? 'Failed')
-    return body.data
   },
   activate: async (id: string) => {
     await pluginsClient.plugins[':id'].activate.$post({ param: { id } })

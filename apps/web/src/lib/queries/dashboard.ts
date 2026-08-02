@@ -191,14 +191,6 @@ export function usePlugins(type?: string) {
   })
 }
 
-export function useAvailableProviders() {
-  return useQuery({
-    queryKey: queryKeys.plugins.providers,
-    queryFn: pluginsApi.getProviders,
-    staleTime: 5 * 60 * 1000,
-  })
-}
-
 export function useInstallPlugin() {
   const queryClient = useQueryClient()
   return useMutation({

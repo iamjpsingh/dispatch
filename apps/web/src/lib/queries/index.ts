@@ -95,7 +95,6 @@ export {
   useDeviceAnalytics,
   useTimeAnalysis,
   usePlugins,
-  useAvailableProviders,
   useInstallPlugin,
   useActivatePlugin,
   useDisablePlugin,

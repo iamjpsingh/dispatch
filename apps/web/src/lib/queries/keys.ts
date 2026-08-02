@@ -83,6 +83,5 @@ export const queryKeys = {
   plugins: {
     all: ['plugins'] as const,
     list: (type?: string) => ['plugins', 'list', type] as const,
-    providers: ['plugins', 'providers'] as const,
   },
 }
