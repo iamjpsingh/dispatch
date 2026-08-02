@@ -7,30 +7,9 @@ import { requireAuth, getOrgId } from '../middleware/auth'
 import { logService } from '../services/logService'
 import { queueEngine } from '../services/queueEngine'
 import type { QueueJob } from '../services/queueEngine'
+import { schedulerService } from '../services/schedulerService'
 import { success, error } from '../utils/response'
 import { logger } from '../utils/logger'
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface SchedulerServiceLike {
-  getScheduledJobs(orgId: string): Promise<Array<{ status: string | null; [key: string]: unknown }>>
-}
-
-// Lazy-loaded services
-let schedulerService: SchedulerServiceLike | null = null
-
-function getSchedulerService(): SchedulerServiceLike | null {
-  if (!schedulerService) {
-    try {
-      schedulerService = require('../services/schedulerService').schedulerService
-    } catch {
-      return null
-    }
-  }
-  return schedulerService
-}
 
 const dashboardRoutes = new Hono()
   /**
@@ -42,8 +21,7 @@ const dashboardRoutes = new Hono()
     const orgId = getOrgId(c)
 
     try {
-      const scheduler = getSchedulerService()
-      const scheduledJobs = (await scheduler?.getScheduledJobs(orgId)) ?? []
+      const scheduledJobs = (await schedulerService.getScheduledJobs(orgId)) ?? []
       const allLogs = (await logService.getLogs(orgId)) ?? []
 
       // Queue stats from persistent engine
@@ -100,8 +78,7 @@ const dashboardRoutes = new Hono()
     const orgId = getOrgId(c)
 
     try {
-      const scheduler = getSchedulerService()
-      const scheduledJobs = (await scheduler?.getScheduledJobs(orgId)) ?? []
+      const scheduledJobs = (await schedulerService.getScheduledJobs(orgId)) ?? []
 
       const queueStats = await queueEngine.getStats(user.id)
       const hasActiveJobs = queueStats.running > 0
@@ -166,8 +143,7 @@ const dashboardRoutes = new Hono()
     const orgId = getOrgId(c)
 
     try {
-      const scheduler = getSchedulerService()
-      const scheduledJobs = ((await scheduler?.getScheduledJobs(orgId)) ?? [])
+      const scheduledJobs = ((await schedulerService.getScheduledJobs(orgId)) ?? [])
         .filter((j) => j.status === 'scheduled' || j.status === 'running')
         .slice(0, 5)
 

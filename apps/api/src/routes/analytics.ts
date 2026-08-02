@@ -405,12 +405,13 @@ const analyticsRoutes = new Hono()
       const meta = event.metadata ? JSON.parse(event.metadata) : {}
       switch (event.event_type) {
         case 'email_sent': emailsSent++; break
-        case 'email_opened':
+        case 'email_opened': {
           emailsOpened++
           if (meta.campaign_id) campaignsEngaged.add(meta.campaign_id)
           const hour = new Date(event.created_at).getHours()
           openHours[hour] = (openHours[hour] || 0) + 1
           break
+        }
         case 'link_clicked':
           linksClicked++
           if (meta.url) linksClickedUrls[meta.url] = (linksClickedUrls[meta.url] || 0) + 1

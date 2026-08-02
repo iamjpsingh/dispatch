@@ -41,13 +41,15 @@ const eventsRoutes = new Hono()
       }, 30000)
 
       // Clean up on disconnect
+      let aborted = false
       stream.onAbort(() => {
+        aborted = true
         clearInterval(heartbeat)
         unsubscribe()
       })
 
-      // Keep the stream open
-      while (true) {
+      // Keep the stream open until the client disconnects
+      while (!aborted) {
         await new Promise(resolve => setTimeout(resolve, 1000))
       }
     })
