@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref, computed, nextTick } from 'vue'
 
-// Mock the auth store
+// Mock the auth store. useAuth must expose everything the navigation guard reads —
+// isPlatformAdmin (platform-vs-org routing) and role were added in P7; omitting them
+// makes the guard throw `undefined.value`.
 const mockIsAuthenticated = ref(false)
 const mockIsInitialized = ref(false)
+const mockIsPlatformAdmin = ref(false)
+const mockRole = ref<string | null>(null)
 const mockInitializeAuth = vi.fn()
 
 vi.mock('../../src/stores/auth', () => ({
@@ -11,6 +15,8 @@ vi.mock('../../src/stores/auth', () => ({
     isAuthenticated: mockIsAuthenticated,
     isInitialized: mockIsInitialized,
     initializeAuth: mockInitializeAuth,
+    isPlatformAdmin: mockIsPlatformAdmin,
+    role: mockRole,
   }),
 }))
 
@@ -20,7 +26,6 @@ vi.mock('../../src/views/DashboardView.vue', () => ({ default: { template: '<div
 vi.mock('../../src/views/ComposeView.vue', () => ({ default: { template: '<div>Compose</div>' } }))
 vi.mock('../../src/views/ReportsView.vue', () => ({ default: { template: '<div>Reports</div>' } }))
 vi.mock('../../src/views/ContactsView.vue', () => ({ default: { template: '<div>Contacts</div>' } }))
-vi.mock('../../src/views/ConfigsView.vue', () => ({ default: { template: '<div>Configs</div>' } }))
 vi.mock('../../src/views/TemplatesView.vue', () => ({ default: { template: '<div>Templates</div>' } }))
 vi.mock('../../src/views/CampaignsView.vue', () => ({ default: { template: '<div>Campaigns</div>' } }))
 vi.mock('../../src/views/CampaignDetailView.vue', () => ({ default: { template: '<div>CampaignDetail</div>' } }))
@@ -35,6 +40,8 @@ describe('Router', () => {
     vi.clearAllMocks()
     mockIsAuthenticated.value = false
     mockIsInitialized.value = false
+    mockIsPlatformAdmin.value = false
+    mockRole.value = null
     mockInitializeAuth.mockResolvedValue(undefined)
   })
 
@@ -46,25 +53,24 @@ describe('Router', () => {
       expect(loginRoute?.meta.guest).toBe(true)
     })
 
+    // requiresAuth lives on the MainLayout parent route, so assert on the resolved
+    // route (merged meta across matched records), not the leaf record's own meta.
     it('should have a dashboard route at /', () => {
-      const dashRoute = router.getRoutes().find((r) => r.path === '/')
-      expect(dashRoute).toBeDefined()
-      expect(dashRoute?.name).toBe('Dashboard')
-      expect(dashRoute?.meta.requiresAuth).toBe(true)
+      const resolved = router.resolve('/')
+      expect(resolved.name).toBe('Dashboard')
+      expect(resolved.meta.requiresAuth).toBe(true)
     })
 
     it('should have a compose route', () => {
-      const route = router.getRoutes().find((r) => r.path === '/compose')
-      expect(route).toBeDefined()
-      expect(route?.name).toBe('Compose')
-      expect(route?.meta.requiresAuth).toBe(true)
+      const resolved = router.resolve('/compose')
+      expect(resolved.name).toBe('Compose')
+      expect(resolved.meta.requiresAuth).toBe(true)
     })
 
     it('should have a reports route', () => {
-      const route = router.getRoutes().find((r) => r.path === '/reports')
-      expect(route).toBeDefined()
-      expect(route?.name).toBe('Reports')
-      expect(route?.meta.requiresAuth).toBe(true)
+      const resolved = router.resolve('/reports')
+      expect(resolved.name).toBe('Reports')
+      expect(resolved.meta.requiresAuth).toBe(true)
     })
 
     it('should have a contacts route', () => {
@@ -73,11 +79,11 @@ describe('Router', () => {
       expect(route?.name).toBe('Contacts')
     })
 
-    it('should have a configs route', () => {
-      const route = router.getRoutes().find((r) => r.path === '/configs')
-      expect(route).toBeDefined()
-      expect(route?.name).toBe('Configs')
-      expect(route?.meta.requiresAuth).toBe(true)
+    it('should have a settings route (requires auth)', () => {
+      // '/configs' was replaced by the unified '/settings/*' section in P7.
+      const resolved = router.resolve('/settings/delivery-servers')
+      expect(resolved.name).toBe('SettingsDeliveryServers')
+      expect(resolved.meta.requiresAuth).toBe(true)
     })
 
     it('should have a templates route', () => {
