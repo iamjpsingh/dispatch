@@ -138,13 +138,16 @@ const analyticsRoutes = new Hono()
     const orgId = getOrgId(c)
     const summary = await analyticsService.getSummary(orgId)
 
-    // Calculate rates from summary data
-    const totalSent = summary.totalSent || 1
-    const bounceRate = ((summary.totalBounced || 0) / totalSent) * 100
-    const complaintRate = ((summary.totalComplaints || 0) / totalSent) * 100
-    const unsubRate = ((summary.totalUnsubscribed || 0) / totalSent) * 100
-    const openRate = ((summary.totalOpened || 0) / totalSent) * 100
-    const clickRate = ((summary.totalClicked || 0) / totalSent) * 100
+    // getSummary returns per-campaign-averaged rates (already percentages) + total_emails_sent.
+    // (The old code read total* count fields that don't exist on AnalyticsSummary, so every rate
+    // computed to 0 and the score was always 100.) Complaint rate isn't tracked in the summary,
+    // so it's reported as 0 (no penalty).
+    const totalSent = summary.total_emails_sent || 0
+    const bounceRate = summary.avg_bounce_rate
+    const complaintRate = 0
+    const unsubRate = summary.avg_unsubscribe_rate
+    const openRate = summary.avg_open_rate
+    const clickRate = summary.avg_click_rate
 
     // Score: Excellent (90+), Good (70-89), Needs Improvement (50-69), Poor (<50)
     let score = 100
@@ -370,8 +373,11 @@ const analyticsRoutes = new Hono()
     const events = ((await analyticsService.getRawEvents?.(orgId, campaignId)) || []).filter((e: any) => e.event_type === 'click')
     const sources: Record<string, { count: number; medium: string }> = {}
 
+    // Referral source is not a captured column on event_analytics yet (and getRawEvents is a
+    // stub), so this stays empty until referral tracking is wired — read defensively to stay
+    // type-safe rather than assume a field the row doesn't have.
     for (const event of events) {
-      const ref = detectReferralSource(event.referrer || '')
+      const ref = detectReferralSource((event as Record<string, unknown>).referrer as string | undefined ?? '')
       if (!sources[ref.source]) sources[ref.source] = { count: 0, medium: ref.medium }
       sources[ref.source].count++
     }
@@ -401,23 +407,25 @@ const analyticsRoutes = new Hono()
     const linksClickedUrls: Record<string, number> = {}
     const openHours: Record<number, number> = {}
 
+    // EngagementEvent (scoringEngine) carries event_type ('opened'|'clicked'|'bounced'|…) +
+    // campaign_id directly — there is no 'sent' event and no url/metadata. The old code switched
+    // on 'email_*'/'link_clicked' values that are not in the union, so every count stayed 0.
     for (const event of events) {
-      const meta = event.metadata ? JSON.parse(event.metadata) : {}
       switch (event.event_type) {
-        case 'email_sent': emailsSent++; break
-        case 'email_opened': {
+        case 'opened': {
           emailsOpened++
-          if (meta.campaign_id) campaignsEngaged.add(meta.campaign_id)
+          if (event.campaign_id) campaignsEngaged.add(event.campaign_id)
           const hour = new Date(event.created_at).getHours()
           openHours[hour] = (openHours[hour] || 0) + 1
           break
         }
-        case 'link_clicked':
+        case 'clicked':
           linksClicked++
-          if (meta.url) linksClickedUrls[meta.url] = (linksClickedUrls[meta.url] || 0) + 1
-          if (meta.campaign_id) campaignsEngaged.add(meta.campaign_id)
+          if (event.campaign_id) campaignsEngaged.add(event.campaign_id)
           break
-        case 'bounced': bounced++; break
+        case 'bounced':
+          bounced++
+          break
       }
     }
 

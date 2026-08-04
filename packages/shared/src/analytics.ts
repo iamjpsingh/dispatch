@@ -13,7 +13,16 @@ export const RecordEventSchema = z.object({
 export const SeedSchema = z.object({
   campaignId: z.string().min(1, 'campaignId is required'),
   campaignName: z.string().optional(),
-  stats: z.record(z.string(), z.unknown()),
+  // Typed to match analyticsService.seedFromCampaign's stats param (was z.record — too loose).
+  stats: z.object({
+    total_sent: z.number(),
+    delivered: z.number().optional(),
+    failed: z.number().optional(),
+    opened: z.number().optional(),
+    clicked: z.number().optional(),
+    bounced: z.number().optional(),
+    unsubscribed: z.number().optional(),
+  }),
 })
 
 export const CustomReportSchema = z.object({
