@@ -11,8 +11,10 @@ vi.mock('@tanstack/vue-query', () => ({
   useQueryClient: () => mockQueryClient,
 }))
 
-// Mock the query composables
-const mockUserData = ref<{ id: string; email: string; name: string } | null>(null)
+// Mock the query composables. useCurrentUser().data is the auth CONTEXT ({ user, orgId, role,
+// orgs }) since the P6 Vue-Query rewrite — useAuth reads authCtx.value?.user, so the mock data
+// must wrap the user object, not be the user itself.
+const mockUserData = ref<{ user: { id: string; email: string; name: string } } | null>(null)
 const mockUserLoading = ref(false)
 const mockUserFetched = ref(false)
 const mockLoginMutateAsync = vi.fn()
@@ -59,7 +61,7 @@ describe('useAuth', () => {
     })
 
     it('should return true when user is loaded', () => {
-      mockUserData.value = { id: '1', email: 'test@test.com', name: 'Test User' }
+      mockUserData.value = { user: { id: '1', email: 'test@test.com', name: 'Test User' } }
       const { isAuthenticated } = useAuth()
       expect(isAuthenticated.value).toBe(true)
     })
@@ -72,7 +74,7 @@ describe('useAuth', () => {
     })
 
     it('should return user data when available', () => {
-      mockUserData.value = { id: '1', email: 'test@test.com', name: 'Test User' }
+      mockUserData.value = { user: { id: '1', email: 'test@test.com', name: 'Test User' } }
       const { user } = useAuth()
       expect(user.value).toEqual({ id: '1', email: 'test@test.com', name: 'Test User' })
     })
@@ -174,7 +176,7 @@ describe('useAuth', () => {
     })
 
     it('should return true when authenticated', () => {
-      mockUserData.value = { id: '1', email: 'test@test.com', name: 'Test' }
+      mockUserData.value = { user: { id: '1', email: 'test@test.com', name: 'Test' } }
       const { requireAuth } = useAuth()
       expect(requireAuth()).toBe(true)
     })
