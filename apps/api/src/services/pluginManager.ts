@@ -16,11 +16,12 @@ import { encrypt, decryptOrPlain } from '../utils/crypto'
 
 export interface PluginManifest {
   name: string
-  version: string
-  description: string
-  author: string
-  type: 'provider' | 'hook' | 'template' | 'analytics'
-  entry: string
+  // User-supplied manifests may omit these; install() applies defaults. type is free-text in the DB.
+  version?: string
+  description?: string
+  author?: string
+  type: string
+  entry?: string
   hooks?: string[]
   settings?: PluginSetting[]
   requires?: string[]
@@ -87,9 +88,9 @@ class PluginManager {
       id,
       user_id: userId,
       name: input.manifest.name,
-      version: input.manifest.version,
-      description: input.manifest.description,
-      author: input.manifest.author,
+      version: input.manifest.version || '1.0.0',
+      description: input.manifest.description || '',
+      author: input.manifest.author || '',
       type: input.manifest.type,
       manifest_json: JSON.stringify(input.manifest),
       // Settings may hold provider secrets (api keys, tokens) — encrypt at rest (R9).

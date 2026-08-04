@@ -10,7 +10,9 @@ import { generateId } from '../utils/id'
 // ============================================================================
 
 export interface FormAction {
-  type: 'add_to_list' | 'add_tag' | 'enroll_automation' | 'send_email' | 'webhook' | 'update_score'
+  // Free-text in the DB (actions are stored as JSON); the action handler dispatches on known
+  // values and ignores the rest. Validated loosely by the route's zod schema.
+  type: string
   listId?: string
   tag?: string
   automationId?: string

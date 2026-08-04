@@ -172,8 +172,6 @@ const templatesRoutes = new Hono()
         secure: config.secure,
         username: config.username,
         password: config.password,
-        from_email: config.from_email,
-        from_name: config.from_name,
         api_key: config.api_key,
         api_secret: config.api_secret,
         api_region: config.api_region,
@@ -247,7 +245,7 @@ const templatesRoutes = new Hono()
     const body = c.req.valid('json')
 
     try {
-      const result = mjml2html(body.mjml, {
+      const result = await mjml2html(body.mjml, {
         validationLevel: 'soft',
         minify: false,
       })
@@ -268,7 +266,7 @@ const templatesRoutes = new Hono()
     const body = c.req.valid('json')
 
     try {
-      const result = mjml2html(body.mjml, { validationLevel: 'soft' })
+      const result = await mjml2html(body.mjml, { validationLevel: 'soft' })
       const template = await templateService.create(orgId, user.id, {
         name: body.name,
         html_content: result.html,

@@ -160,12 +160,8 @@ const formsRoutes = new Hono()
       }
     }
 
-    // Emit event for automation triggers
-    eventBus.emit('form:submitted', {
-      formId,
-      orgId: form.org_id,
-      data: contactData,
-    })
+    // Notify the form owner (feeds SSE + the webhook wildcard subscriber)
+    eventBus.emit('form_submitted', form.user_id, { formId, orgId: form.org_id, data: contactData })
 
     // Execute form actions (tag contacts, etc.)
     const actions = JSON.parse(form.actions || '[]')
@@ -285,7 +281,7 @@ const formsRoutes = new Hono()
       }
     }
 
-    eventBus.emit('form:submitted', { formId, orgId: form.org_id, data: contactData, source: 'webhook' })
+    eventBus.emit('form_submitted', form.user_id, { formId, orgId: form.org_id, data: contactData, source: 'webhook' })
 
     return c.json({ success: true, message: form.success_message })
   })

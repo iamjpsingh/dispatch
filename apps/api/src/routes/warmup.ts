@@ -17,14 +17,13 @@ import { auditFromContext } from '../services/audit/context'
 const CreateWarmupSchema = z.object({
   config_id: z.string().min(1, 'config_id is required'),
   config_name: z.string().optional(),
-  schedule_type: z.enum(['conservative', 'moderate', 'aggressive', 'custom'], {
-    errorMap: () => ({ message: 'Valid schedule_type required: conservative, moderate, aggressive, or custom' }),
-  }),
+  schedule_type: z.enum(['conservative', 'moderate', 'aggressive', 'custom']),
   starting_volume: z.number().optional(),
   target_volume: z.number().optional(),
   custom_schedule: z.array(z.object({
     day: z.number(),
-    volume: z.number(),
+    target: z.number(),
+    increment_pct: z.number(),
   })).optional(),
 })
 

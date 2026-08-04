@@ -31,7 +31,7 @@ export interface Webhook {
 export interface WebhookInput {
   name: string
   url: string
-  events: EventType[]
+  events: string[]
   enabled?: boolean
 }
 

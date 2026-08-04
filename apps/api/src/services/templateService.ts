@@ -33,7 +33,7 @@ export type TemplateCategory = 'newsletter' | 'promotional' | 'transactional' | 
 export interface TemplateInput {
   name: string
   description?: string
-  category?: TemplateCategory
+  category?: string
   subject?: string
   html_content: string
   text_content?: string
@@ -41,7 +41,7 @@ export interface TemplateInput {
 }
 
 export interface TemplateFilters {
-  category?: TemplateCategory
+  category?: string
   search?: string
   page?: number
   limit?: number

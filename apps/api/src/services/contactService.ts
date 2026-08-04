@@ -145,10 +145,13 @@ class ContactService {
     return (row as ContactList) ?? null
   }
 
-  async updateList(orgId: string, listId: string, name: string, description?: string): Promise<boolean> {
+  async updateList(orgId: string, listId: string, name?: string, description?: string): Promise<boolean> {
+    const values: Partial<typeof contact_lists.$inferInsert> = { updated_at: new Date().toISOString() }
+    if (name !== undefined) values.name = name
+    if (description !== undefined) values.description = description
     const res = await getDb()
       .update(contact_lists)
-      .set({ name, description: description ?? null, updated_at: new Date().toISOString() })
+      .set(values)
       .where(and(eq(contact_lists.id, listId), eq(contact_lists.org_id, orgId)))
       .returning({ id: contact_lists.id })
     return res.length > 0

@@ -52,7 +52,9 @@ export interface CampaignRecord {
 
 export interface CampaignInput {
   name: string
-  type?: CampaignType
+  // Free-text in the DB; the route validates it via the shared zod enum. (The CampaignType
+  // union and that enum use different vocabularies — pre-existing P6 debt — so keep this string.)
+  type?: string
   template_id?: string
   list_id?: string
   segment_id?: string

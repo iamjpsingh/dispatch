@@ -371,11 +371,13 @@ class CloudflareService {
   }
 
   getAllDeployments(orgId: string): TrackingDeployment[] {
-    const all = systemSettingsService.getAll()
+    // getAll() returns an array of { key, value, updated_at } rows — filter by the real key and
+    // parse the row's value. (The old code Object.entries'd it as a Record, so the keys were array
+    // indices and it JSON.parse'd the row object — getAllDeployments returned nothing.)
     const prefix = `cloudflare_deployment_${orgId}_`
-    return Object.entries(all)
-      .filter(([key]) => key.startsWith(prefix))
-      .map(([, value]) => JSON.parse(value) as TrackingDeployment)
+    return systemSettingsService.getAll()
+      .filter((row) => row.key.startsWith(prefix))
+      .map((row) => JSON.parse(row.value) as TrackingDeployment)
   }
 
   // ---------- D1 Analytics ----------

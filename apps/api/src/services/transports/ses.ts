@@ -143,7 +143,8 @@ export class SesTransport implements EmailTransport {
 
   private async hmac(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
     const cryptoKey = await crypto.subtle.importKey(
-      'raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+      // key is always ArrayBuffer-backed here; cast past the TS 5.7 typed-array/SharedArrayBuffer union.
+      'raw', key as BufferSource, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
     )
     return crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(data))
   }

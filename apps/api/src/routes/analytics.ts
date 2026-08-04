@@ -402,7 +402,9 @@ const analyticsRoutes = new Hono()
     const events = await scoringEngine.getContactEvents(contactId, 100)
 
     // Aggregate stats
-    let emailsSent = 0, emailsOpened = 0, linksClicked = 0, bounced = 0
+    // Engagement events don't include a 'sent' type, so emails_sent isn't derivable here.
+    const emailsSent = 0
+    let emailsOpened = 0, linksClicked = 0, bounced = 0
     const campaignsEngaged = new Set<string>()
     const linksClickedUrls: Record<string, number> = {}
     const openHours: Record<number, number> = {}

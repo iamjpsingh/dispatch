@@ -263,25 +263,25 @@ export async function processBounce(userId: string, event: BounceEvent): Promise
   switch (type) {
     case 'hard_bounce':
       await queueEngine.suppress(userId, email,'hard_bounce', `${event.provider}:webhook`)
-      eventBus.emit('email_bounced', { userId, email, bounceType: 'hard', reason })
+      eventBus.emit('email_bounced', userId, { email, bounceType: 'hard', reason })
       logger.info(`[Bounce] Hard bounce: ${email} — suppressed (${event.provider})`)
       break
 
     case 'soft_bounce':
       // Don't suppress on first soft bounce — queue engine tracks retries
-      eventBus.emit('email_bounced', { userId, email, bounceType: 'soft', reason })
+      eventBus.emit('email_bounced', userId, { email, bounceType: 'soft', reason })
       logger.info(`[Bounce] Soft bounce: ${email} (${event.provider})`)
       break
 
     case 'complaint':
       await queueEngine.suppress(userId, email,'complaint', `${event.provider}:webhook`)
-      eventBus.emit('email_unsubscribed', { userId, email, reason: 'complaint' })
+      eventBus.emit('email_unsubscribed', userId, { email, reason: 'complaint' })
       logger.info(`[Bounce] Complaint: ${email} — suppressed (${event.provider})`)
       break
 
     case 'unsubscribe':
       await queueEngine.suppress(userId, email,'unsubscribe', `${event.provider}:webhook`)
-      eventBus.emit('email_unsubscribed', { userId, email, reason: 'unsubscribe' })
+      eventBus.emit('email_unsubscribed', userId, { email, reason: 'unsubscribe' })
       logger.info(`[Bounce] Unsubscribe: ${email} — suppressed (${event.provider})`)
       break
   }

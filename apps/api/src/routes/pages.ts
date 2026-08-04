@@ -28,7 +28,16 @@ const pagesRoutes = new Hono()
     const body = c.req.valid('json')
 
     try {
-      const page = await landingPageService.create(orgId, user.id, body)
+      // Map the request field names to LandingPageInput (css→css_content, template_id→template).
+      const page = await landingPageService.create(orgId, user.id, {
+        title: body.title,
+        slug: body.slug,
+        html_content: body.html_content || '',
+        css_content: body.css,
+        template: body.template_id,
+        meta_description: body.meta_description,
+        meta_image: body.meta_image,
+      })
       auditFromContext(c, { action: 'page.created', entityType: 'page', entityId: page.id })
       activityFromContext(c, { action: 'page.created', entityType: 'page', entityId: page.id, description: `Created page ${page.id}` })
       return success(c, page, 'Landing page created')

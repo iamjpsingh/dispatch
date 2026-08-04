@@ -10,6 +10,7 @@ type EventType =
   | 'automation_step_completed' | 'automation_enrolled'
   | 'campaign_launched' | 'campaign_completed'
   | 'template_created' | 'template_updated'
+  | 'form_submitted'
   | 'stats_update'
 
 interface EventPayload {

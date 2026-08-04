@@ -47,7 +47,8 @@ export interface Automation {
 export interface AutomationInput {
   name: string
   description?: string
-  trigger_type: TriggerType
+  // Free-text in the DB; validated by the route's zod schema (the TriggerType union is advisory).
+  trigger_type: string
   trigger_config?: Record<string, unknown>
   entry_list_id?: string
   flow?: AutomationFlow
