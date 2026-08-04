@@ -71,9 +71,9 @@ These are enforced in review; PRs that break them will be sent back.
 
 1. Ensure `bun typecheck`, `bun lint`, and the test suite all pass locally.
 2. Open a PR against `main` with a clear description of what changed and why.
-3. CI must be green. The **required** jobs are: Build, Test (api + worker), Secret scan
-   (gitleaks), and Compose validate. The Quality (typecheck/lint/web-tests) and Security-scan
-   (`bun audit`, CodeQL) jobs are advisory today — don't add new problems to them.
+3. CI must be green. The **required** jobs are: Build, Test (api + worker), Lint + web tests,
+   Secret scan (gitleaks), and Compose validate. The Quality (typecheck + API coverage) and
+   Security-scan (`bun audit`, CodeQL) jobs are advisory today — don't add new problems to them.
 4. A maintainer reviews for correctness, the R1–R9 rules above, and security.
 
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).

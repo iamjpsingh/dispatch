@@ -35,6 +35,20 @@ jobs:
       - name: Run enforced test suites
         run: bunx turbo run test --filter=@dispatch/api --filter=dispatch-tracker
 
+  lint-web-tests:
+    name: Lint + web tests (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.2'
+      - run: bun install --frozen-lockfile
+      - name: Lint (eslint — 0 errors enforced; warnings still tracked)
+        run: bunx turbo run lint
+      - name: Web tests
+        run: bunx turbo run test --filter=@dispatch/web
+
   quality:
     name: Quality (advisory — tracked debt, not yet blocking)
     runs-on: ubuntu-latest
@@ -44,14 +58,8 @@ jobs:
         with:
           bun-version: '1.2.2'
       - run: bun install --frozen-lockfile
-      - name: Typecheck (advisory)
+      - name: Typecheck (advisory — pre-existing api tsc debt)
         run: bunx turbo run typecheck
-        continue-on-error: true
-      - name: Lint (advisory)
-        run: bunx turbo run lint
-        continue-on-error: true
-      - name: Web tests (advisory — 64 pre-existing failures)
-        run: bunx turbo run test --filter=@dispatch/web
         continue-on-error: true
       - name: API coverage (advisory — thresholds in apps/api/vitest.config.ts)
         run: cd apps/api && bun run test:coverage
